@@ -1,16 +1,25 @@
 #!/usr/bin/env node
 import fs from "node:fs";
 import net from "node:net";
-import os from "node:os";
 import pty from "node-pty";
-import { APP_DIR, SOCKET_PATH, resolveDefaultShell } from "./config.js";
+import {
+  APP_DIR,
+  LOGS_DIR,
+  SOCKET_PATH,
+  getSessionLogPath,
+  resolveDefaultShell,
+} from "./config.js";
 import { createJsonLineReader, sendJson } from "./protocol.js";
-import { loadState, saveState } from "./store.js";
+import { ensureAppDir, loadState, saveState } from "./store.js";
 import type { ClientMessage, ServerMessage, SessionRecord } from "./types.js";
+
+const MAX_BUFFER_SIZE = 64 * 1024;
 
 interface SessionRuntime {
   record: SessionRecord;
   ptyProcess: pty.IPty;
+  logStream: fs.WriteStream;
+  recentOutput: string;
   attachedClient?: net.Socket;
 }
 
@@ -19,7 +28,7 @@ const sessions = new Map<string, SessionRuntime>();
 bootstrap();
 
 function bootstrap(): void {
-  fs.mkdirSync(APP_DIR, { recursive: true });
+  ensureAppDir();
 
   if (process.platform !== "win32" && fs.existsSync(SOCKET_PATH)) {
     fs.rmSync(SOCKET_PATH, { force: true });
@@ -54,15 +63,18 @@ function restoreKnownSessions(): void {
   const state = loadState();
 
   for (const session of state.sessions) {
-    if (session.status === "stopped") {
+    if (session.status === "stopped" || sessions.has(session.name)) {
       continue;
     }
 
-    const runtime = spawnSession(session.name, session.cwd, session.shell);
+    const runtime = spawnSession(session.name, session.cwd, session.shell, {
+      createdAt: session.createdAt,
+    });
     runtime.record.createdAt = session.createdAt;
     runtime.record.updatedAt = new Date().toISOString();
-    persist();
   }
+
+  persist();
 }
 
 function handleMessage(socket: net.Socket, message: ClientMessage): void {
@@ -102,6 +114,17 @@ function handleMessage(socket: net.Socket, message: ClientMessage): void {
         sessions: [...sessions.values()].map((entry) => entry.record),
       } satisfies ServerMessage);
       return;
+    case "restoreSessions": {
+      const before = sessions.size;
+      restoreKnownSessions();
+      const restored = sessions.size - before;
+      sendJson(socket, {
+        type: "success",
+        message: restored > 0 ? `Restored ${restored} sessions.` : "No sessions to restore.",
+        sessions: [...sessions.values()].map((entry) => entry.record),
+      } satisfies ServerMessage);
+      return;
+    }
     case "killSession": {
       const runtime = sessions.get(message.name);
 
@@ -115,6 +138,7 @@ function handleMessage(socket: net.Socket, message: ClientMessage): void {
 
       runtime.record.status = "stopped";
       runtime.ptyProcess.kill();
+      runtime.logStream.end();
       sessions.delete(message.name);
       persist();
 
@@ -153,6 +177,12 @@ function handleMessage(socket: net.Socket, message: ClientMessage): void {
         type: "attached",
         session: runtime.record,
       } satisfies ServerMessage);
+      if (runtime.recentOutput) {
+        sendJson(socket, {
+          type: "output",
+          data: Buffer.from(runtime.recentOutput, "utf8").toString("base64"),
+        } satisfies ServerMessage);
+      }
       return;
     }
     case "stdin": {
@@ -173,10 +203,27 @@ function handleMessage(socket: net.Socket, message: ClientMessage): void {
       detachSocket(socket);
       return;
     }
+    case "readLogs": {
+      const logPath = getSessionLogPath(message.name);
+      const log = readTail(logPath, message.lines);
+      sendJson(socket, {
+        type: "success",
+        message: `Read logs for '${message.name}'.`,
+        log,
+      } satisfies ServerMessage);
+      return;
+    }
   }
 }
 
-function spawnSession(name: string, cwd: string, shell: string): SessionRuntime {
+function spawnSession(
+  name: string,
+  cwd: string,
+  shell: string,
+  options?: { createdAt?: string },
+): SessionRuntime {
+  ensureAppDir();
+  const logPath = getSessionLogPath(name);
   const ptyProcess = pty.spawn(shell, [], {
     name: "xterm-color",
     cols: 120,
@@ -189,20 +236,27 @@ function spawnSession(name: string, cwd: string, shell: string): SessionRuntime 
   });
 
   const now = new Date().toISOString();
+  const logStream = fs.createWriteStream(logPath, { flags: "a" });
   const runtime: SessionRuntime = {
     record: {
       name,
       shell,
       cwd,
       pid: ptyProcess.pid,
-      createdAt: now,
+      logPath,
+      createdAt: options?.createdAt ?? now,
       updatedAt: now,
       status: "running",
     },
     ptyProcess,
+    logStream,
+    recentOutput: readRecentLog(logPath),
   };
 
   ptyProcess.onData((data) => {
+    runtime.logStream.write(data);
+    runtime.recentOutput = appendRecentOutput(runtime.recentOutput, data);
+
     if (runtime.attachedClient && !runtime.attachedClient.destroyed) {
       sendJson(runtime.attachedClient, {
         type: "output",
@@ -220,6 +274,7 @@ function spawnSession(name: string, cwd: string, shell: string): SessionRuntime 
       } satisfies ServerMessage);
     }
 
+    runtime.logStream.end();
     sessions.delete(name);
     persist();
   });
@@ -254,4 +309,36 @@ function detachSocket(socket: net.Socket): void {
 
 function persist(): void {
   saveState([...sessions.values()].map((entry) => entry.record));
+}
+
+function appendRecentOutput(current: string, next: string): string {
+  const combined = `${current}${next}`;
+  if (combined.length <= MAX_BUFFER_SIZE) {
+    return combined;
+  }
+
+  return combined.slice(combined.length - MAX_BUFFER_SIZE);
+}
+
+function readRecentLog(logPath: string): string {
+  if (!fs.existsSync(logPath)) {
+    return "";
+  }
+
+  const content = fs.readFileSync(logPath, "utf8");
+  if (content.length <= MAX_BUFFER_SIZE) {
+    return content;
+  }
+
+  return content.slice(content.length - MAX_BUFFER_SIZE);
+}
+
+function readTail(logPath: string, lines: number): string {
+  if (!fs.existsSync(logPath)) {
+    return "";
+  }
+
+  const content = fs.readFileSync(logPath, "utf8");
+  const safeLineCount = Math.max(1, Math.min(lines, 5000));
+  return content.split(/\r?\n/).slice(-safeLineCount).join("\n");
 }

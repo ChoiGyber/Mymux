@@ -51,9 +51,10 @@ program
       return;
     }
 
+    process.stdout.write("NAME\tSTATUS\tPID\tSHELL\tCWD\n");
     for (const session of sessions) {
       process.stdout.write(
-        `${session.name}\t${session.status}\t${session.shell}\t${session.cwd}\n`,
+        `${session.name}\t${session.status}\t${session.pid}\t${session.shell}\t${session.cwd}\n`,
       );
     }
   });
@@ -77,6 +78,38 @@ program
 
     assertSuccess(response);
     process.stdout.write(`${response.message}\n`);
+  });
+
+program
+  .command("restore")
+  .description("Restore saved sessions into the daemon")
+  .action(async () => {
+    const response = await request({
+      type: "restoreSessions",
+    });
+
+    assertSuccess(response);
+    process.stdout.write(`${response.message}\n`);
+  });
+
+program
+  .command("logs")
+  .argument("<name>", "session name")
+  .option("--lines <number>", "number of lines to print", "50")
+  .action(async (name, options) => {
+    const lines = Number.parseInt(options.lines, 10);
+    if (!Number.isFinite(lines) || lines <= 0) {
+      throw new Error("--lines must be a positive integer.");
+    }
+
+    const response = await request({
+      type: "readLogs",
+      name,
+      lines,
+    });
+
+    assertSuccess(response);
+    process.stdout.write(`${response.log ?? ""}\n`);
   });
 
 program

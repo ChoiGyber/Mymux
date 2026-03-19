@@ -3,6 +3,7 @@ export interface SessionRecord {
   shell: string;
   cwd: string;
   pid: number;
+  logPath: string;
   createdAt: string;
   updatedAt: string;
   status: "running" | "attached" | "stopped";
@@ -21,6 +22,9 @@ export type ClientMessage =
     }
   | {
       type: "listSessions";
+    }
+  | {
+      type: "restoreSessions";
     }
   | {
       type: "killSession";
@@ -46,6 +50,11 @@ export type ClientMessage =
     }
   | {
       type: "health";
+    }
+  | {
+      type: "readLogs";
+      name: string;
+      lines: number;
     };
 
 export type ServerMessage =
@@ -58,6 +67,7 @@ export type ServerMessage =
       message: string;
       session?: SessionRecord;
       sessions?: SessionRecord[];
+      log?: string;
     }
   | {
       type: "error";

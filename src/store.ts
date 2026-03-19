@@ -1,9 +1,10 @@
 import fs from "node:fs";
-import { APP_DIR, STATE_FILE } from "./config.js";
+import { APP_DIR, LOGS_DIR, STATE_FILE } from "./config.js";
 import type { PersistedState, SessionRecord } from "./types.js";
 
 export function ensureAppDir(): void {
   fs.mkdirSync(APP_DIR, { recursive: true });
+  fs.mkdirSync(LOGS_DIR, { recursive: true });
 }
 
 export function loadState(): PersistedState {

@@ -103,6 +103,22 @@ export async function attachSession(name: string): Promise<void> {
   };
 
   await new Promise<void>((resolve, reject) => {
+    let settled = false;
+
+    const finishResolve = () => {
+      if (!settled) {
+        settled = true;
+        resolve();
+      }
+    };
+
+    const finishReject = (error: Error) => {
+      if (!settled) {
+        settled = true;
+        reject(error);
+      }
+    };
+
     socket.on(
       "data",
       createJsonLineReader((message) => {
@@ -111,7 +127,7 @@ export async function attachSession(name: string): Promise<void> {
         if (payload.type === "error") {
           cleanup();
           socket.end();
-          reject(new Error(payload.message));
+          finishReject(new Error(payload.message));
           return;
         }
 
@@ -131,21 +147,24 @@ export async function attachSession(name: string): Promise<void> {
           process.stdout.write(
             `\n[mycli] session '${payload.name}' exited with code ${payload.exitCode}\n`,
           );
-          resolve();
+          finishResolve();
         }
       }),
     );
 
     socket.on("error", (error) => {
       cleanup();
-      reject(error);
+      finishReject(error);
     });
 
     socket.on("close", () => {
       cleanup();
       if (detached) {
-        resolve();
+        finishResolve();
+        return;
       }
+
+      finishReject(new Error(`Session '${name}' connection closed.`));
     });
 
     sendJson(socket, {

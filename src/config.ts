@@ -4,6 +4,7 @@ import path from "node:path";
 
 export const APP_DIR = path.join(os.homedir(), ".mycli");
 export const STATE_FILE = path.join(APP_DIR, "sessions.json");
+export const LOGS_DIR = path.join(APP_DIR, "logs");
 export const SOCKET_PATH =
   process.platform === "win32"
     ? "\\\\.\\pipe\\mycli-daemon"
@@ -26,4 +27,8 @@ export function resolveDefaultShell(shell?: string): string {
   }
 
   return process.env.SHELL ?? "/bin/bash";
+}
+
+export function getSessionLogPath(name: string): string {
+  return path.join(LOGS_DIR, `${name}.log`);
 }
