@@ -276,12 +276,33 @@ profileCommand
     }
   });
 
+profileCommand.command("template").action(() => {
+  const template = {
+    cwd: process.cwd(),
+    shell: resolveDefaultShell(),
+    env: {
+      EXAMPLE_ENV: "value",
+    },
+  };
+
+  process.stdout.write(`${JSON.stringify(template, null, 2)}\n`);
+});
+
 const configCommand = program.command("config").description("Manage project config files");
 
 configCommand.command("export").action(() => {
   const config = loadProjectConfig(process.cwd());
   process.stdout.write(`${JSON.stringify(config, null, 2)}\n`);
 });
+
+configCommand
+  .command("backup")
+  .option("--file <path>", "backup file path", ".\\mycli.config.backup.json")
+  .action((options) => {
+    const config = loadProjectConfig(process.cwd());
+    fs.writeFileSync(options.file, `${JSON.stringify(config, null, 2)}\n`);
+    process.stdout.write(`Backed up config to ${options.file}\n`);
+  });
 
 configCommand
   .command("import")
@@ -302,6 +323,16 @@ configCommand
     const incoming = loadProjectConfigFromFile(resolvedPath);
     const diff = buildConfigDiff(current, incoming);
     process.stdout.write(`${JSON.stringify(diff, null, 2)}\n`);
+  });
+
+configCommand
+  .command("restore")
+  .argument("<filePath>", "path to a backup config JSON file")
+  .action((filePath) => {
+    const resolvedPath = fs.realpathSync(filePath);
+    const imported = loadProjectConfigFromFile(resolvedPath);
+    const configPath = writeProjectConfig(process.cwd(), imported);
+    process.stdout.write(`Restored config from ${resolvedPath} into ${configPath}\n`);
   });
 
 program
@@ -403,6 +434,33 @@ sessionCommand
     }
 
     process.stdout.write(`${payload}\n`);
+  });
+
+sessionCommand
+  .command("import")
+  .argument("<filePath>", "path to exported session JSON")
+  .option("--prefix <text>", "prefix imported session names", "imported")
+  .action(async (filePath, options) => {
+    const resolvedPath = fs.realpathSync(filePath);
+    const imported = JSON.parse(fs.readFileSync(resolvedPath, "utf8")) as SessionRecord[];
+
+    let importedCount = 0;
+    for (const session of imported) {
+      const nextName = `${options.prefix}-${session.name}`;
+      const response = await request({
+        type: "createSession",
+        name: nextName,
+        cwd: session.cwd,
+        shell: session.shell,
+        profileName: session.profileName,
+        env: session.env,
+      });
+
+      assertSuccess(response);
+      importedCount += 1;
+    }
+
+    process.stdout.write(`Imported ${importedCount} sessions from ${resolvedPath}\n`);
   });
 
 const daemon = program.command("daemon").description("Manage the background daemon");
