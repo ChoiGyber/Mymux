@@ -91,6 +91,12 @@ body {
   font: inherit;
 }
 
+.field-row {
+  display: grid;
+  grid-template-columns: 1fr 108px;
+  gap: 10px;
+}
+
 .panel input {
   padding: 12px 14px;
   color: var(--text);
@@ -115,6 +121,10 @@ button.primary {
   background: linear-gradient(135deg, var(--accent), var(--accent-strong));
   color: #08110f;
   font-weight: 700;
+}
+
+button.secondary {
+  background: rgba(15, 22, 35, 0.98);
 }
 
 .status-card {

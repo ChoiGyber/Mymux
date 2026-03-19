@@ -20,7 +20,10 @@
           <label>Name</label>
           <input id="session-name" placeholder="work" />
           <label>Working Directory</label>
-          <input id="session-cwd" placeholder="E:\Project\MyCli" />
+          <div class="field-row">
+            <input id="session-cwd" placeholder="E:\Project\MyCli" />
+            <button id="browse-cwd" type="button" class="secondary">Browse</button>
+          </div>
           <label>Shell</label>
           <input id="session-shell" placeholder="C:\Windows\System32\cmd.exe" />
           <button id="create-session" class="primary">Create</button>

@@ -1,6 +1,6 @@
 const path = require("node:path");
 const { pathToFileURL } = require("node:url");
-const { app, BrowserWindow, ipcMain } = require("electron");
+const { app, BrowserWindow, dialog, ipcMain } = require("electron");
 const { spawn } = require("node:child_process");
 
 let mainWindow;
@@ -150,4 +150,16 @@ ipcMain.handle("sessions:attach", async (_event, name) => {
 ipcMain.handle("daemon:status", async () => {
   const client = await loadClientModule();
   return await client.daemonStatus();
+});
+
+ipcMain.handle("dialog:select-directory", async () => {
+  const result = await dialog.showOpenDialog(mainWindow, {
+    properties: ["openDirectory"],
+  });
+
+  if (result.canceled || result.filePaths.length === 0) {
+    return null;
+  }
+
+  return result.filePaths[0];
 });

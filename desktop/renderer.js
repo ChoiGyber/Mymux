@@ -9,14 +9,26 @@ const detailNameEl = document.getElementById("detail-name");
 const detailEl = document.getElementById("session-detail");
 const daemonStatusEl = document.getElementById("daemon-status");
 const toastEl = document.getElementById("toast");
+const cwdInputEl = document.getElementById("session-cwd");
 
 document.getElementById("refresh-sessions").addEventListener("click", () => {
   refreshAll();
 });
 
+document.getElementById("browse-cwd").addEventListener("click", async () => {
+  try {
+    const selectedPath = await window.mycliDesktop.selectDirectory();
+    if (selectedPath) {
+      cwdInputEl.value = selectedPath;
+    }
+  } catch (error) {
+    showToast(error.message);
+  }
+});
+
 document.getElementById("create-session").addEventListener("click", async () => {
   const name = document.getElementById("session-name").value.trim();
-  const cwd = document.getElementById("session-cwd").value.trim();
+  const cwd = cwdInputEl.value.trim();
   const shell = document.getElementById("session-shell").value.trim();
 
   if (!name) {
