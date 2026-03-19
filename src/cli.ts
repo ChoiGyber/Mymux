@@ -4,7 +4,13 @@ import fs from "node:fs";
 import process from "node:process";
 import { attachSession, daemonStatus, ensureDaemon, request, stopDaemon } from "./client.js";
 import { renderPowerShellCompletion } from "./completion.js";
-import { getSessionLogPath, resolveDefaultShell } from "./config.js";
+import {
+  APP_DIR,
+  LOGS_DIR,
+  STATE_FILE,
+  getSessionLogPath,
+  resolveDefaultShell,
+} from "./config.js";
 import { stripAnsi } from "./ansi.js";
 import {
   createDefaultConfig,
@@ -109,7 +115,8 @@ program
 program
   .command("inspect")
   .argument("<name>", "session name")
-  .action(async (name) => {
+  .option("--logs <number>", "include recent clean log lines", "0")
+  .action(async (name, options) => {
     const response = await request({
       type: "listSessions",
     });
@@ -120,7 +127,24 @@ program
       throw new Error(`Session '${name}' not found.`);
     }
 
-    process.stdout.write(`${JSON.stringify(session, null, 2)}\n`);
+    const logLines = Number.parseInt(options.logs, 10);
+    if (!Number.isFinite(logLines) || logLines < 0) {
+      throw new Error("--logs must be zero or a positive integer.");
+    }
+
+    const payload: Record<string, unknown> = { ...session };
+    if (logLines > 0) {
+      const logResponse = await request({
+        type: "readLogs",
+        name,
+        lines: logLines,
+        clean: true,
+      });
+      assertSuccess(logResponse);
+      payload.logPreview = logResponse.log ?? "";
+    }
+
+    process.stdout.write(`${JSON.stringify(payload, null, 2)}\n`);
   });
 
 program
@@ -178,6 +202,19 @@ profileCommand
 
     const configPath = removeProfile(cwd, name);
     process.stdout.write(`Removed profile '${name}' from ${configPath}\n`);
+  });
+
+profileCommand
+  .command("show")
+  .argument("<name>", "profile name")
+  .action((name) => {
+    const config = loadProjectConfig(process.cwd());
+    const profile = getProfile(config, name);
+    if (!profile) {
+      throw new Error(`Profile '${name}' not found.`);
+    }
+
+    process.stdout.write(`${JSON.stringify(profile, null, 2)}\n`);
   });
 
 program
@@ -280,6 +317,61 @@ daemon.command("restart").action(async () => {
   await ensureDaemon();
   const status = await daemonStatus();
   process.stdout.write(`running\tpid=${status.pid}\tsessions=${status.sessions?.length ?? 0}\n`);
+});
+
+daemon.command("doctor").action(async () => {
+  const cwd = process.cwd();
+  const configPath = getProjectConfigPath(cwd);
+  const checks: Array<{ name: string; ok: boolean; detail: string }> = [];
+
+  checks.push({
+    name: "appDir",
+    ok: fs.existsSync(APP_DIR),
+    detail: APP_DIR,
+  });
+  checks.push({
+    name: "logsDir",
+    ok: fs.existsSync(LOGS_DIR),
+    detail: LOGS_DIR,
+  });
+  checks.push({
+    name: "stateFile",
+    ok: fs.existsSync(STATE_FILE),
+    detail: STATE_FILE,
+  });
+  checks.push({
+    name: "projectConfig",
+    ok: fs.existsSync(configPath),
+    detail: configPath,
+  });
+  checks.push({
+    name: "cwd",
+    ok: fs.existsSync(cwd),
+    detail: cwd,
+  });
+
+  let daemonDetail = "not running";
+  let daemonOk = false;
+  try {
+    const status = await daemonStatus();
+    daemonOk = true;
+    daemonDetail = `pid=${status.pid}, sessions=${status.sessions?.length ?? 0}`;
+  } catch (error) {
+    daemonDetail = error instanceof Error ? error.message : "Daemon is not running.";
+  }
+
+  checks.push({
+    name: "daemon",
+    ok: daemonOk,
+    detail: daemonDetail,
+  });
+
+  const maxName = Math.max(...checks.map((check) => check.name.length));
+  for (const check of checks) {
+    process.stdout.write(
+      `${check.ok ? "ok " : "bad"} ${check.name.padEnd(maxName)}  ${check.detail}\n`,
+    );
+  }
 });
 
 program

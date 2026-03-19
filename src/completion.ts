@@ -44,9 +44,20 @@ Register-ArgumentCompleter -Native -CommandName mycli -ScriptBlock {
   }
 
   if ($subcommand -eq 'profile') {
-    $profileCommands = @('add', 'remove')
+    $profileCommands = @('add', 'remove', 'show')
     if ($commandElements.Count -le 3) {
       $profileCommands |
+        Where-Object { $_ -like "$wordToComplete*" } |
+        ForEach-Object {
+          [System.Management.Automation.CompletionResult]::new($_, $_, 'ParameterValue', $_)
+        }
+    }
+  }
+
+  if ($subcommand -eq 'daemon') {
+    $daemonCommands = @('status', 'stop', 'restart', 'doctor')
+    if ($commandElements.Count -le 3) {
+      $daemonCommands |
         Where-Object { $_ -like "$wordToComplete*" } |
         ForEach-Object {
           [System.Management.Automation.CompletionResult]::new($_, $_, 'ParameterValue', $_)
