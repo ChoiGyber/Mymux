@@ -40,6 +40,42 @@ export function createDefaultConfig(cwd: string): MyCliConfig {
   };
 }
 
+export function createPresetConfig(
+  cwd: string,
+  preset: "minimal" | "backend" | "frontend",
+): MyCliConfig {
+  switch (preset) {
+    case "backend":
+      return {
+        profiles: {
+          backend: {
+            cwd,
+            shell: "C:\\Windows\\System32\\cmd.exe",
+            env: {
+              NODE_ENV: "development",
+            },
+          },
+        },
+      };
+    case "frontend":
+      return {
+        profiles: {
+          frontend: {
+            cwd,
+            shell: "C:\\Windows\\System32\\cmd.exe",
+            env: {
+              NODE_ENV: "development",
+              BROWSER: "none",
+            },
+          },
+        },
+      };
+    case "minimal":
+    default:
+      return createDefaultConfig(cwd);
+  }
+}
+
 export function upsertProfile(
   cwd: string,
   name: string,

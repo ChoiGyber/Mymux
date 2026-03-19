@@ -55,7 +55,7 @@ Register-ArgumentCompleter -Native -CommandName mycli -ScriptBlock {
   }
 
   if ($subcommand -eq 'daemon') {
-    $daemonCommands = @('status', 'stop', 'restart', 'doctor')
+    $daemonCommands = @('status', 'stop', 'restart', 'doctor', 'autostart')
     if ($commandElements.Count -le 3) {
       $daemonCommands |
         Where-Object { $_ -like "$wordToComplete*" } |
@@ -80,6 +80,17 @@ Register-ArgumentCompleter -Native -CommandName mycli -ScriptBlock {
     $sessionCommands = @('export', 'import')
     if ($commandElements.Count -le 3) {
       $sessionCommands |
+        Where-Object { $_ -like "$wordToComplete*" } |
+        ForEach-Object {
+          [System.Management.Automation.CompletionResult]::new($_, $_, 'ParameterValue', $_)
+        }
+    }
+  }
+
+  if ($subcommand -eq 'daemon' -and $commandElements[2] -eq 'autostart') {
+    $autostartCommands = @('enable', 'disable', 'status')
+    if ($commandElements.Count -le 4) {
+      $autostartCommands |
         Where-Object { $_ -like "$wordToComplete*" } |
         ForEach-Object {
           [System.Management.Automation.CompletionResult]::new($_, $_, 'ParameterValue', $_)

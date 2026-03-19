@@ -6,6 +6,7 @@ import { attachSession, daemonStatus, ensureDaemon, request, stopDaemon } from "
 import { renderPowerShellCompletion } from "./completion.js";
 import {
   APP_DIR,
+  AUTOSTART_FILE,
   LOGS_DIR,
   STATE_FILE,
   getSessionLogPath,
@@ -14,6 +15,7 @@ import {
 import { stripAnsi } from "./ansi.js";
 import {
   createDefaultConfig,
+  createPresetConfig,
   getProfile,
   getProjectConfigPath,
   importProjectConfig,
@@ -37,6 +39,7 @@ program
 program
   .command("init")
   .option("--force", "overwrite existing mycli.config.json")
+  .option("--preset <name>", "config preset: minimal, backend, frontend", "minimal")
   .action((options) => {
     const cwd = process.cwd();
     const configPath = getProjectConfigPath(cwd);
@@ -45,7 +48,8 @@ program
       throw new Error(`Config already exists at ${configPath}. Use --force to overwrite.`);
     }
 
-    writeProjectConfig(cwd, createDefaultConfig(cwd));
+    const preset = normalizePreset(options.preset);
+    writeProjectConfig(cwd, createPresetConfig(cwd, preset));
     process.stdout.write(`Created ${configPath}\n`);
   });
 
@@ -440,13 +444,25 @@ sessionCommand
   .command("import")
   .argument("<filePath>", "path to exported session JSON")
   .option("--prefix <text>", "prefix imported session names", "imported")
+  .option("--skip-existing", "skip imported names that already exist")
   .action(async (filePath, options) => {
     const resolvedPath = fs.realpathSync(filePath);
     const imported = JSON.parse(fs.readFileSync(resolvedPath, "utf8")) as SessionRecord[];
+    const existingResponse = await request({
+      type: "listSessions",
+    });
+    assertSuccess(existingResponse);
+    const existingNames = new Set((existingResponse.sessions ?? []).map((session) => session.name));
 
     let importedCount = 0;
+    let skippedCount = 0;
     for (const session of imported) {
       const nextName = `${options.prefix}-${session.name}`;
+      if (options.skipExisting && existingNames.has(nextName)) {
+        skippedCount += 1;
+        continue;
+      }
+
       const response = await request({
         type: "createSession",
         name: nextName,
@@ -458,9 +474,14 @@ sessionCommand
 
       assertSuccess(response);
       importedCount += 1;
+      existingNames.add(nextName);
     }
 
-    process.stdout.write(`Imported ${importedCount} sessions from ${resolvedPath}\n`);
+    process.stdout.write(
+      `Imported ${importedCount} sessions from ${resolvedPath}` +
+        (options.skipExisting ? `, skipped ${skippedCount} existing` : "") +
+        "\n",
+    );
   });
 
 const daemon = program.command("daemon").description("Manage the background daemon");
@@ -541,6 +562,25 @@ daemon.command("doctor").action(async () => {
       `${check.ok ? "ok " : "bad"} ${check.name.padEnd(maxName)}  ${check.detail}\n`,
     );
   }
+});
+
+const autostart = daemon.command("autostart").description("Manage daemon autostart preference");
+
+autostart.command("enable").action(() => {
+  ensureAppSettingsDir();
+  fs.writeFileSync(AUTOSTART_FILE, `${JSON.stringify({ enabled: true }, null, 2)}\n`);
+  process.stdout.write(`Autostart enabled in ${AUTOSTART_FILE}\n`);
+});
+
+autostart.command("disable").action(() => {
+  ensureAppSettingsDir();
+  fs.writeFileSync(AUTOSTART_FILE, `${JSON.stringify({ enabled: false }, null, 2)}\n`);
+  process.stdout.write(`Autostart disabled in ${AUTOSTART_FILE}\n`);
+});
+
+autostart.command("status").action(() => {
+  const enabled = readAutostartEnabled();
+  process.stdout.write(`${enabled ? "enabled" : "disabled"}\n`);
 });
 
 program
@@ -759,4 +799,29 @@ function buildConfigDiff(
     removed,
     changed,
   };
+}
+
+function normalizePreset(value: string): "minimal" | "backend" | "frontend" {
+  if (value === "minimal" || value === "backend" || value === "frontend") {
+    return value;
+  }
+
+  throw new Error("Invalid preset. Use one of: minimal, backend, frontend.");
+}
+
+function ensureAppSettingsDir(): void {
+  fs.mkdirSync(APP_DIR, { recursive: true });
+}
+
+function readAutostartEnabled(): boolean {
+  if (!fs.existsSync(AUTOSTART_FILE)) {
+    return false;
+  }
+
+  try {
+    const parsed = JSON.parse(fs.readFileSync(AUTOSTART_FILE, "utf8")) as { enabled?: boolean };
+    return Boolean(parsed.enabled);
+  } catch {
+    return false;
+  }
 }
