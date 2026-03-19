@@ -104,3 +104,7 @@ export function importProjectConfig(
     profiles,
   });
 }
+
+export function loadProjectConfigFromFile(filePath: string): MyCliConfig {
+  return JSON.parse(fs.readFileSync(filePath, "utf8")) as MyCliConfig;
+}

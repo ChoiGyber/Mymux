@@ -44,7 +44,7 @@ Register-ArgumentCompleter -Native -CommandName mycli -ScriptBlock {
   }
 
   if ($subcommand -eq 'profile') {
-    $profileCommands = @('add', 'remove', 'show', 'rename')
+    $profileCommands = @('add', 'remove', 'show', 'rename', 'validate')
     if ($commandElements.Count -le 3) {
       $profileCommands |
         Where-Object { $_ -like "$wordToComplete*" } |
@@ -66,7 +66,7 @@ Register-ArgumentCompleter -Native -CommandName mycli -ScriptBlock {
   }
 
   if ($subcommand -eq 'config') {
-    $configCommands = @('export', 'import')
+    $configCommands = @('export', 'import', 'diff')
     if ($commandElements.Count -le 3) {
       $configCommands |
         Where-Object { $_ -like "$wordToComplete*" } |

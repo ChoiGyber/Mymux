@@ -17,6 +17,7 @@ import {
   getProfile,
   getProjectConfigPath,
   importProjectConfig,
+  loadProjectConfigFromFile,
   loadProjectConfig,
   removeProfile,
   renameProfile,
@@ -237,6 +238,44 @@ profileCommand
     process.stdout.write(`Renamed profile '${name}' to '${nextName}' in ${configPath}\n`);
   });
 
+profileCommand
+  .command("validate")
+  .argument("[name]", "optional profile name")
+  .action((name) => {
+    const config = loadProjectConfig(process.cwd());
+    const profiles = config.profiles ?? {};
+
+    if (name) {
+      const profile = profiles[name];
+      if (!profile) {
+        throw new Error(`Profile '${name}' not found.`);
+      }
+
+      const issues = validateProfile(name, profile);
+      renderValidationResult(name, issues);
+      return;
+    }
+
+    const names = Object.keys(profiles).sort();
+    if (names.length === 0) {
+      process.stdout.write("No profiles found in mycli.config.json.\n");
+      return;
+    }
+
+    let hasIssues = false;
+    for (const profileName of names) {
+      const issues = validateProfile(profileName, profiles[profileName]);
+      if (issues.length > 0) {
+        hasIssues = true;
+      }
+      renderValidationResult(profileName, issues);
+    }
+
+    if (!hasIssues) {
+      process.stdout.write("All profiles are valid.\n");
+    }
+  });
+
 const configCommand = program.command("config").description("Manage project config files");
 
 configCommand.command("export").action(() => {
@@ -252,6 +291,17 @@ configCommand
     const resolvedPath = fs.realpathSync(filePath);
     const configPath = importProjectConfig(process.cwd(), resolvedPath, Boolean(options.replace));
     process.stdout.write(`Imported config from ${resolvedPath} into ${configPath}\n`);
+  });
+
+configCommand
+  .command("diff")
+  .argument("<filePath>", "path to a config JSON file")
+  .action((filePath) => {
+    const resolvedPath = fs.realpathSync(filePath);
+    const current = loadProjectConfig(process.cwd());
+    const incoming = loadProjectConfigFromFile(resolvedPath);
+    const diff = buildConfigDiff(current, incoming);
+    process.stdout.write(`${JSON.stringify(diff, null, 2)}\n`);
   });
 
 program
@@ -333,22 +383,27 @@ program
 
 const sessionCommand = program.command("session").description("Inspect or export session data");
 
-sessionCommand.command("export").option("--json", "print session JSON").action(async (options) => {
-  const response = await request({
-    type: "listSessions",
-  });
+sessionCommand
+  .command("export")
+  .option("--json", "print session JSON")
+  .option("--file <path>", "write session JSON to a file")
+  .action(async (options) => {
+    const response = await request({
+      type: "listSessions",
+    });
 
-  assertSuccess(response);
-  const sessions = response.sessions ?? [];
-  const payload = JSON.stringify(sessions, null, 2);
+    assertSuccess(response);
+    const sessions = response.sessions ?? [];
+    const payload = JSON.stringify(sessions, null, 2);
 
-  if (options.json) {
+    if (options.file) {
+      fs.writeFileSync(options.file, `${payload}\n`);
+      process.stdout.write(`Exported ${sessions.length} sessions to ${options.file}\n`);
+      return;
+    }
+
     process.stdout.write(`${payload}\n`);
-    return;
-  }
-
-  process.stdout.write(`${payload}\n`);
-});
+  });
 
 const daemon = program.command("daemon").description("Manage the background daemon");
 
@@ -576,4 +631,74 @@ function formatTimestamp(value: string): string {
   }
 
   return date.toISOString().replace("T", " ").replace(/\.\d{3}Z$/, "Z");
+}
+
+function validateProfile(
+  name: string,
+  profile: { cwd?: string; shell?: string; env?: Record<string, string> },
+): string[] {
+  const issues: string[] = [];
+
+  if (profile.cwd && !fs.existsSync(profile.cwd)) {
+    issues.push(`cwd does not exist: ${profile.cwd}`);
+  }
+
+  if (profile.shell && !fs.existsSync(profile.shell)) {
+    issues.push(`shell does not exist: ${profile.shell}`);
+  }
+
+  if (profile.env) {
+    for (const [key, value] of Object.entries(profile.env)) {
+      if (!key.trim()) {
+        issues.push("env contains an empty key");
+      }
+      if (typeof value !== "string") {
+        issues.push(`env '${key}' must be a string`);
+      }
+    }
+  }
+
+  if (!profile.cwd && !profile.shell && !profile.env) {
+    issues.push("profile has no cwd, shell, or env values");
+  }
+
+  return issues;
+}
+
+function renderValidationResult(name: string, issues: string[]): void {
+  if (issues.length === 0) {
+    process.stdout.write(`ok  ${name}\n`);
+    return;
+  }
+
+  process.stdout.write(`bad ${name}\n`);
+  for (const issue of issues) {
+    process.stdout.write(`  - ${issue}\n`);
+  }
+}
+
+function buildConfigDiff(
+  current: { profiles?: Record<string, unknown> },
+  incoming: { profiles?: Record<string, unknown> },
+): Record<string, unknown> {
+  const currentProfiles = current.profiles ?? {};
+  const incomingProfiles = incoming.profiles ?? {};
+  const currentNames = new Set(Object.keys(currentProfiles));
+  const incomingNames = new Set(Object.keys(incomingProfiles));
+
+  const added = [...incomingNames].filter((name) => !currentNames.has(name)).sort();
+  const removed = [...currentNames].filter((name) => !incomingNames.has(name)).sort();
+  const changed = [...incomingNames]
+    .filter(
+      (name) =>
+        currentNames.has(name) &&
+        JSON.stringify(currentProfiles[name]) !== JSON.stringify(incomingProfiles[name]),
+    )
+    .sort();
+
+  return {
+    added,
+    removed,
+    changed,
+  };
 }
