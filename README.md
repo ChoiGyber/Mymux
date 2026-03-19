@@ -39,6 +39,7 @@ Detach from an attached session with `Ctrl+P`.
 - The current MVP keeps sessions alive through the background daemon process.
 - If the daemon stops, shell processes stop with it.
 - Recent output is replayed when you re-attach to a session.
+- Non-interactive `attach` runs detach automatically when piped stdin closes.
 - `mycli daemon restart` starts a fresh daemon and rehydrates saved sessions.
 - `mycli logs --follow` tails the underlying session log file.
 - `mycli logs --since` accepts ISO timestamps or relative values like `10m`, `2h`, `1d`.

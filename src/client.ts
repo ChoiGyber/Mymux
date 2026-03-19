@@ -131,20 +131,31 @@ export async function attachSession(name: string): Promise<void> {
   let attachedSession: SessionRecord | undefined;
 
   let detached = false;
+  let sessionExited = false;
+  let attachReady = false;
   let stdinHandler: ((chunk: Buffer) => void) | undefined;
+  let stdinEndHandler: (() => void) | undefined;
   let resizeHandler: (() => void) | undefined;
+  let detachTimer: NodeJS.Timeout | undefined;
 
   const cleanup = () => {
     if (stdinHandler) {
       process.stdin.off("data", stdinHandler);
     }
+    if (stdinEndHandler) {
+      process.stdin.off("end", stdinEndHandler);
+    }
     if (resizeHandler) {
       process.stdout.off("resize", resizeHandler);
     }
+    if (detachTimer) {
+      clearTimeout(detachTimer);
+      detachTimer = undefined;
+    }
     if (process.stdin.isTTY) {
       process.stdin.setRawMode(false);
-      process.stdin.pause();
     }
+    process.stdin.pause();
   };
 
   await new Promise<void>((resolve, reject) => {
@@ -178,6 +189,7 @@ export async function attachSession(name: string): Promise<void> {
 
         if (payload.type === "attached") {
           attachedSession = payload.session;
+          attachReady = true;
           return;
         }
 
@@ -187,6 +199,7 @@ export async function attachSession(name: string): Promise<void> {
         }
 
         if (payload.type === "sessionExit") {
+          sessionExited = true;
           cleanup();
           socket.end();
           process.stdout.write(
@@ -204,7 +217,7 @@ export async function attachSession(name: string): Promise<void> {
 
     socket.on("close", () => {
       cleanup();
-      if (detached) {
+      if (detached || sessionExited) {
         finishResolve();
         return;
       }
@@ -243,6 +256,32 @@ export async function attachSession(name: string): Promise<void> {
       } satisfies ClientMessage);
     };
 
+    stdinEndHandler = () => {
+      if (process.stdin.isTTY || detached || sessionExited) {
+        return;
+      }
+
+      const detachAfterFlush = () => {
+        if (detached || sessionExited) {
+          return;
+        }
+
+        detached = true;
+        sendJson(socket, { type: "detach" } satisfies ClientMessage);
+        socket.end();
+        if (attachedSession) {
+          process.stdout.write(`\n[mycli] detached from '${attachedSession.name}'\n`);
+        }
+      };
+
+      if (attachReady) {
+        detachTimer = setTimeout(detachAfterFlush, 200);
+        return;
+      }
+
+      detachTimer = setTimeout(detachAfterFlush, 400);
+    };
+
     resizeHandler = () => {
       sendJson(socket, {
         type: "resize",
@@ -252,6 +291,7 @@ export async function attachSession(name: string): Promise<void> {
     };
 
     process.stdin.on("data", stdinHandler);
+    process.stdin.on("end", stdinEndHandler);
     process.stdout.on("resize", resizeHandler);
   });
 }
