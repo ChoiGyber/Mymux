@@ -71,6 +71,7 @@ function restoreKnownSessions(): void {
     const runtime = spawnSession(session.name, session.cwd, session.shell, session.env, {
       createdAt: session.createdAt,
       profileName: session.profileName,
+      startupCommand: session.startupCommand,
     });
     runtime.record.createdAt = session.createdAt;
     runtime.record.updatedAt = new Date().toISOString();
@@ -113,6 +114,7 @@ function handleMessage(socket: net.Socket, message: ClientMessage): void {
         message.env,
         {
           profileName: message.profileName,
+          startupCommand: message.startupCommand,
         },
       );
 
@@ -266,7 +268,7 @@ function spawnSession(
   cwd: string,
   shell: string,
   envOverrides?: Record<string, string>,
-  options?: { createdAt?: string; profileName?: string },
+  options?: { createdAt?: string; profileName?: string; startupCommand?: string },
 ): SessionRuntime {
   ensureAppDir();
   const logPath = getSessionLogPath(name);
@@ -296,6 +298,7 @@ function spawnSession(
       logPath,
       profileName: options?.profileName,
       env: envOverrides,
+      startupCommand: options?.startupCommand,
       createdAt: options?.createdAt ?? now,
       updatedAt: now,
       status: "running",
@@ -320,6 +323,12 @@ function spawnSession(
       } satisfies ServerMessage);
     }
   });
+
+  if (options?.startupCommand) {
+    setTimeout(() => {
+      ptyProcess.write(`${options.startupCommand}\r`);
+    }, 120);
+  }
 
   ptyProcess.onExit(({ exitCode }) => {
     if (runtime.attachedClient && !runtime.attachedClient.destroyed) {

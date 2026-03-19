@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en">
+<html lang="ko">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
@@ -10,52 +10,96 @@
     <div class="app-shell">
       <aside class="sidebar">
         <div class="brand">
-          <span class="eyebrow">Portable Desktop</span>
+          <div class="topbar">
+            <span class="eyebrow" data-i18n="brandEyebrow">Portable Desktop</span>
+            <select id="language-select" class="language-select" aria-label="Language">
+              <option value="ko">한국어</option>
+              <option value="en">English</option>
+            </select>
+          </div>
           <h1>MyCli</h1>
-          <p>Manage persistent shell sessions and open attach consoles on demand.</p>
+          <p data-i18n="brandDescription">
+            Manage persistent shell sessions and open attach consoles on demand.
+          </p>
         </div>
 
         <section class="panel">
-          <h2>Create Session</h2>
-          <label>Name</label>
-          <input id="session-name" placeholder="work" />
-          <label>Working Directory</label>
+          <h2 data-i18n="createSessionTitle">Create Session</h2>
+          <label for="session-name" data-i18n="sessionNameLabel">Name</label>
+          <input id="session-name" placeholder="work" data-i18n-placeholder="sessionNamePlaceholder" />
+          <label for="session-cwd" data-i18n="workingDirectoryLabel">Working Directory</label>
           <div class="field-row">
-            <input id="session-cwd" placeholder="E:\Project\MyCli" />
-            <button id="browse-cwd" type="button" class="secondary">Browse</button>
+            <input
+              id="session-cwd"
+              placeholder="E:\Project\MyCli"
+              data-i18n-placeholder="workingDirectoryPlaceholder"
+            />
+            <button id="browse-cwd" type="button" class="secondary" data-i18n="browseButton">
+              Browse
+            </button>
           </div>
-          <label>Terminal Type</label>
+          <label for="session-shell-select" data-i18n="terminalTypeLabel">Terminal Type</label>
           <select id="session-shell-select">
-            <option value="auto">Auto (Recommended)</option>
-            <option value="pwsh">PowerShell 7 (pwsh)</option>
-            <option value="powershell">Windows PowerShell</option>
-            <option value="cmd">Command Prompt (cmd)</option>
-            <option value="custom">Custom executable...</option>
+            <option value="auto" data-i18n="shellAuto">Auto (Recommended)</option>
+            <option value="pwsh" data-i18n="shellPwsh">PowerShell 7 (pwsh)</option>
+            <option value="powershell" data-i18n="shellWindowsPowerShell">Windows PowerShell</option>
+            <option value="cmd" data-i18n="shellCmd">Command Prompt (cmd)</option>
+            <option value="custom" data-i18n="shellCustom">Custom executable...</option>
           </select>
           <div id="custom-shell-row" class="field-row hidden-row">
-            <input id="session-shell-custom" placeholder="C:\Windows\System32\cmd.exe" />
-            <button id="browse-shell" type="button" class="secondary">Browse</button>
+            <input
+              id="session-shell-custom"
+              placeholder="C:\Windows\System32\cmd.exe"
+              data-i18n-placeholder="customShellPlaceholder"
+            />
+            <button id="browse-shell" type="button" class="secondary" data-i18n="browseButton">
+              Browse
+            </button>
           </div>
-          <button id="create-session" class="primary">Create</button>
+          <button id="create-session" class="primary" data-i18n="createButton">Create</button>
         </section>
 
         <section class="panel">
-          <h2>Daemon</h2>
-          <div id="daemon-status" class="status-card">Loading...</div>
-          <button id="refresh-sessions">Refresh</button>
+          <h2 data-i18n="serverConnectTitle">Connect Server</h2>
+          <label for="server-name" data-i18n="serverSessionNameLabel">Session Name</label>
+          <input id="server-name" placeholder="prod-server" data-i18n-placeholder="serverNamePlaceholder" />
+          <label for="server-host" data-i18n="serverHostLabel">Host</label>
+          <input id="server-host" placeholder="192.168.0.10 or example.com" data-i18n-placeholder="serverHostPlaceholder" />
+          <div class="split-fields">
+            <div>
+              <label for="server-user" data-i18n="serverUserLabel">User</label>
+              <input id="server-user" placeholder="ubuntu" data-i18n-placeholder="serverUserPlaceholder" />
+            </div>
+            <div>
+              <label for="server-port" data-i18n="serverPortLabel">Port</label>
+              <input id="server-port" placeholder="22" value="22" />
+            </div>
+          </div>
+          <p class="helper-text" data-i18n="serverHelperText">
+            This opens an SSH session in a persistent terminal session.
+          </p>
+          <button id="create-server-session" class="primary" data-i18n="serverConnectButton">
+            Connect with SSH
+          </button>
+        </section>
+
+        <section class="panel">
+          <h2 data-i18n="daemonTitle">Daemon</h2>
+          <div id="daemon-status" class="status-card" data-i18n="loading">Loading...</div>
+          <button id="refresh-sessions" data-i18n="refreshButton">Refresh</button>
         </section>
       </aside>
 
       <main class="content">
         <section class="hero">
-          <h2>Sessions</h2>
-          <p>Open, inspect, rename, kill, and attach from one place.</p>
+          <h2 data-i18n="sessionsTitle">Sessions</h2>
+          <p data-i18n="sessionsDescription">Open, inspect, rename, kill, and attach from one place.</p>
         </section>
 
         <section class="grid">
           <div class="panel sessions-panel">
             <div class="panel-header">
-              <h3>Session List</h3>
+              <h3 data-i18n="sessionListTitle">Session List</h3>
               <span id="session-count">0 sessions</span>
             </div>
             <div id="session-list" class="session-list"></div>
@@ -63,10 +107,12 @@
 
           <div class="panel detail-panel">
             <div class="panel-header">
-              <h3>Session Detail</h3>
-              <span id="detail-name">No selection</span>
+              <h3 data-i18n="sessionDetailTitle">Session Detail</h3>
+              <span id="detail-name" data-i18n="noSelection">No selection</span>
             </div>
-            <pre id="session-detail" class="detail-view">Select a session to inspect it.</pre>
+            <pre id="session-detail" class="detail-view" data-i18n="selectSessionHint">
+Select a session to inspect it.
+            </pre>
           </div>
         </section>
       </main>

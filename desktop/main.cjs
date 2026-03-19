@@ -68,6 +68,7 @@ ipcMain.handle("sessions:create", async (_event, payload) => {
     name: payload.name,
     cwd: payload.cwd,
     shell: payload.shell,
+    startupCommand: payload.startupCommand,
   });
 
   if (response.type !== "success") {

@@ -6,6 +6,7 @@ export interface SessionRecord {
   logPath: string;
   profileName?: string;
   env?: Record<string, string>;
+  startupCommand?: string;
   createdAt: string;
   updatedAt: string;
   status: "running" | "attached" | "stopped";
@@ -23,6 +24,7 @@ export type ClientMessage =
       cwd?: string;
       profileName?: string;
       env?: Record<string, string>;
+      startupCommand?: string;
     }
   | {
       type: "listSessions";

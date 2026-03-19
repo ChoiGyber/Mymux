@@ -51,13 +51,30 @@ body {
   margin: 0 0 10px;
 }
 
+.topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+
 .eyebrow {
   display: inline-block;
-  margin-bottom: 10px;
   font-size: 12px;
   letter-spacing: 0.14em;
   text-transform: uppercase;
   color: var(--accent);
+}
+
+.language-select {
+  width: auto;
+  min-width: 112px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  border: 1px solid var(--border);
+  color: var(--text);
+  background: rgba(11, 16, 27, 0.94);
 }
 
 .brand p,
@@ -98,6 +115,12 @@ body {
   gap: 10px;
 }
 
+.split-fields {
+  display: grid;
+  grid-template-columns: 1fr 120px;
+  gap: 12px;
+}
+
 .hidden-row {
   display: none;
 }
@@ -112,6 +135,13 @@ body {
   padding: 12px 14px;
   color: var(--text);
   background: rgba(11, 16, 27, 0.94);
+}
+
+.helper-text {
+  margin: 12px 0 0;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.5;
 }
 
 button {
@@ -253,6 +283,10 @@ button.secondary {
   }
 
   .grid {
+    grid-template-columns: 1fr;
+  }
+
+  .split-fields {
     grid-template-columns: 1fr;
   }
 }
