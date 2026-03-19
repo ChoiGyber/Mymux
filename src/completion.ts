@@ -3,7 +3,7 @@ export function renderPowerShellCompletion(): string {
 Register-ArgumentCompleter -Native -CommandName mycli -ScriptBlock {
   param($wordToComplete, $commandAst, $cursorPosition)
 
-  $commands = @('init', 'open', 'list', 'attach', 'kill', 'rename', 'restore', 'logs', 'daemon', 'profiles', 'profile', 'completion')
+  $commands = @('init', 'open', 'list', 'inspect', 'attach', 'kill', 'rename', 'restore', 'logs', 'daemon', 'profiles', 'profile', 'completion')
   $commandElements = $commandAst.CommandElements | ForEach-Object { $_.Extent.Text }
 
   if ($commandElements.Count -le 2) {
@@ -16,7 +16,7 @@ Register-ArgumentCompleter -Native -CommandName mycli -ScriptBlock {
   }
 
   $subcommand = $commandElements[1]
-  if ($subcommand -in @('attach', 'kill', 'rename', 'logs')) {
+  if ($subcommand -in @('attach', 'inspect', 'kill', 'rename', 'logs')) {
     try {
       $sessions = mycli list --json | ConvertFrom-Json
       $sessions |

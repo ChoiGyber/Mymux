@@ -98,12 +98,29 @@ program
       return;
     }
 
-    process.stdout.write("NAME\tSTATUS\tPID\tSHELL\tCWD\n");
+    process.stdout.write("NAME\tSTATUS\tPID\tPROFILE\tUPDATED\tSHELL\tCWD\n");
     for (const session of sessions) {
       process.stdout.write(
-        `${session.name}\t${session.status}\t${session.pid}\t${session.shell}\t${session.cwd}\n`,
+        `${session.name}\t${session.status}\t${session.pid}\t${session.profileName ?? "-"}\t${formatTimestamp(session.updatedAt)}\t${session.shell}\t${session.cwd}\n`,
       );
     }
+  });
+
+program
+  .command("inspect")
+  .argument("<name>", "session name")
+  .action(async (name) => {
+    const response = await request({
+      type: "listSessions",
+    });
+
+    assertSuccess(response);
+    const session = (response.sessions ?? []).find((entry) => entry.name === name);
+    if (!session) {
+      throw new Error(`Session '${name}' not found.`);
+    }
+
+    process.stdout.write(`${JSON.stringify(session, null, 2)}\n`);
   });
 
 program
@@ -236,7 +253,7 @@ program
     process.stdout.write(`${response.log ?? ""}\n`);
 
     if (options.follow) {
-      await followLogs(name, Boolean(options.clean));
+      await followLogs(name, Boolean(options.clean), options.since);
     }
   });
 
@@ -341,9 +358,9 @@ function filterSessions(
   });
 }
 
-async function followLogs(name: string, clean: boolean): Promise<void> {
+async function followLogs(name: string, clean: boolean, since?: string): Promise<void> {
   const logPath = getSessionLogPath(name);
-  let offset = fs.existsSync(logPath) ? fs.statSync(logPath).size : 0;
+  let offset = determineFollowOffset(logPath, since);
 
   process.stdout.write(`[mycli] following ${logPath}. Press Ctrl+C to stop.\n`);
 
@@ -388,4 +405,27 @@ async function followLogs(name: string, clean: boolean): Promise<void> {
 
     process.on("SIGINT", stop);
   });
+}
+
+function determineFollowOffset(logPath: string, since?: string): number {
+  if (!fs.existsSync(logPath)) {
+    return 0;
+  }
+
+  if (!since) {
+    return fs.statSync(logPath).size;
+  }
+
+  // The initial `logs --since` output already printed historical content,
+  // so follow mode should continue from the current end of the file.
+  return fs.statSync(logPath).size;
+}
+
+function formatTimestamp(value: string): string {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return value;
+  }
+
+  return date.toISOString().replace("T", " ").replace(/\.\d{3}Z$/, "Z");
 }

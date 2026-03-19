@@ -22,6 +22,7 @@ mycli open work --cwd E:\Project
 mycli open api --profile backend
 mycli open web --env NODE_ENV=development --env PORT=3000
 mycli list --status running --match api
+mycli inspect api
 mycli rename api api-dev
 mycli attach work
 mycli logs work --lines 100 --clean --since 10m --follow
