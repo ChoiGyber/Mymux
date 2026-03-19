@@ -75,12 +75,32 @@
               <input id="server-port" placeholder="22" value="22" />
             </div>
           </div>
+          <label for="server-key-path" data-i18n="serverKeyLabel">SSH Key</label>
+          <div class="field-row">
+            <input id="server-key-path" placeholder="Optional private key path" data-i18n-placeholder="serverKeyPlaceholder" />
+            <button id="browse-server-key" type="button" class="secondary" data-i18n="browseButton">
+              Browse
+            </button>
+          </div>
           <p class="helper-text" data-i18n="serverHelperText">
             This opens an SSH session in a persistent terminal session.
           </p>
-          <button id="create-server-session" class="primary" data-i18n="serverConnectButton">
-            Connect with SSH
-          </button>
+          <div class="server-actions">
+            <button id="save-server-profile" type="button" class="secondary" data-i18n="saveServerButton">
+              Save Server
+            </button>
+            <button id="create-server-session" class="primary" data-i18n="serverConnectButton">
+              Connect with SSH
+            </button>
+          </div>
+        </section>
+
+        <section class="panel">
+          <div class="panel-header">
+            <h2 data-i18n="savedServersTitle">Saved Servers</h2>
+            <span id="server-count">0</span>
+          </div>
+          <div id="server-profile-list" class="server-profile-list"></div>
         </section>
 
         <section class="panel">
@@ -109,6 +129,12 @@
             <div class="panel-header">
               <h3 data-i18n="sessionDetailTitle">Session Detail</h3>
               <span id="detail-name" data-i18n="noSelection">No selection</span>
+            </div>
+            <div class="command-row">
+              <input id="session-command" placeholder="pwd" data-i18n-placeholder="commandPlaceholder" />
+              <button id="run-session-command" type="button" class="primary" data-i18n="runCommandButton">
+                Run
+              </button>
             </div>
             <pre id="session-detail" class="detail-view" data-i18n="selectSessionHint">
 Select a session to inspect it.

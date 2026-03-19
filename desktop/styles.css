@@ -239,9 +239,34 @@ button.secondary {
   margin-top: 14px;
 }
 
+.command-row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 10px;
+}
+
+.server-actions {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(96px, 1fr));
+  gap: 10px;
+}
+
+.server-profile-list {
+  display: grid;
+  gap: 12px;
+  margin-top: 16px;
+}
+
+.server-card {
+  padding: 16px;
+  border-radius: 18px;
+  border: 1px solid var(--border);
+  background: rgba(10, 15, 24, 0.92);
+}
+
 .detail-view {
   min-height: 520px;
-  margin: 16px 0 0;
+  margin: 12px 0 0;
   padding: 18px;
   overflow: auto;
   border-radius: 18px;

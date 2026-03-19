@@ -260,6 +260,26 @@ function handleMessage(socket: net.Socket, message: ClientMessage): void {
       } satisfies ServerMessage);
       return;
     }
+    case "runCommand": {
+      const runtime = sessions.get(message.name);
+      if (!runtime) {
+        sendJson(socket, {
+          type: "error",
+          message: `Session '${message.name}' not found.`,
+        } satisfies ServerMessage);
+        return;
+      }
+
+      runtime.ptyProcess.write(`${message.command}\r`);
+      runtime.record.updatedAt = new Date().toISOString();
+      persist();
+      sendJson(socket, {
+        type: "success",
+        message: `Command sent to '${message.name}'.`,
+        session: runtime.record,
+      } satisfies ServerMessage);
+      return;
+    }
   }
 }
 

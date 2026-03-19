@@ -1,5 +1,6 @@
 const state = {
   sessions: [],
+  serverProfiles: [],
   selectedName: null,
   locale: "ko",
 };
@@ -30,8 +31,17 @@ const translations = {
     serverUserLabel: "사용자",
     serverUserPlaceholder: "ubuntu",
     serverPortLabel: "포트",
+    serverKeyLabel: "SSH 키",
+    serverKeyPlaceholder: "선택 사항: 개인 키 파일 경로",
     serverHelperText: "지속 세션 안에서 SSH 접속 명령을 자동으로 시작합니다.",
     serverConnectButton: "SSH로 접속",
+    saveServerButton: "서버 저장",
+    savedServersTitle: "저장된 서버",
+    savedServersEmpty: "저장된 서버가 없습니다.",
+    openServerButton: "불러오기",
+    connectSavedServerButton: "접속",
+    deleteSavedServerButton: "삭제",
+    savedServersCount: "{count}개",
     daemonTitle: "데몬",
     loading: "불러오는 중...",
     refreshButton: "새로고침",
@@ -39,6 +49,8 @@ const translations = {
     sessionsDescription: "한 곳에서 열고, 확인하고, 이름을 바꾸고, 종료하고, attach 할 수 있습니다.",
     sessionListTitle: "세션 목록",
     sessionDetailTitle: "세션 상세",
+    commandPlaceholder: "예: pwd, dir, npm run dev",
+    runCommandButton: "실행",
     noSelection: "선택 없음",
     selectSessionHint: "세션을 선택하면 상세 정보를 볼 수 있습니다.",
     noActiveSessions: "활성 세션이 없습니다.",
@@ -50,14 +62,19 @@ const translations = {
     killButton: "종료",
     createSessionSuccess: "'{name}' 세션을 만들었습니다.",
     createServerSuccess: "'{name}' 서버 세션을 만들었습니다.",
+    saveServerSuccess: "'{name}' 서버를 저장했습니다.",
+    deleteServerSuccess: "'{name}' 서버를 삭제했습니다.",
     attachOpened: "'{name}' attach 콘솔을 열었습니다.",
     renamePrompt: "새 세션 이름",
     renameSuccess: "'{from}' 세션 이름을 '{to}'로 바꿨습니다.",
     killSuccess: "'{name}' 세션을 종료했습니다.",
+    runCommandSuccess: "'{name}' 세션에 명령을 보냈습니다.",
+    commandRequired: "보낼 명령을 입력하세요.",
     sessionNameRequired: "세션 이름이 필요합니다.",
     serverHostRequired: "서버 호스트를 입력하세요.",
     customShellRequired: "사용자 지정 셸을 선택하거나 자동 선택으로 돌리세요.",
     detailMissing: "세션을 선택하면 상세 정보를 볼 수 있습니다.",
+    serverProfileNameRequired: "저장할 서버 이름이 필요합니다.",
   },
   en: {
     brandEyebrow: "Portable Desktop",
@@ -84,8 +101,17 @@ const translations = {
     serverUserLabel: "User",
     serverUserPlaceholder: "ubuntu",
     serverPortLabel: "Port",
+    serverKeyLabel: "SSH Key",
+    serverKeyPlaceholder: "Optional private key file path",
     serverHelperText: "This automatically starts an SSH command inside a persistent session.",
     serverConnectButton: "Connect with SSH",
+    saveServerButton: "Save Server",
+    savedServersTitle: "Saved Servers",
+    savedServersEmpty: "No saved servers.",
+    openServerButton: "Load",
+    connectSavedServerButton: "Connect",
+    deleteSavedServerButton: "Delete",
+    savedServersCount: "{count}",
     daemonTitle: "Daemon",
     loading: "Loading...",
     refreshButton: "Refresh",
@@ -93,6 +119,8 @@ const translations = {
     sessionsDescription: "Open, inspect, rename, kill, and attach from one place.",
     sessionListTitle: "Session List",
     sessionDetailTitle: "Session Detail",
+    commandPlaceholder: "Example: pwd, dir, npm run dev",
+    runCommandButton: "Run",
     noSelection: "No selection",
     selectSessionHint: "Select a session to inspect it.",
     noActiveSessions: "No active sessions.",
@@ -104,14 +132,19 @@ const translations = {
     killButton: "Kill",
     createSessionSuccess: "Created '{name}'.",
     createServerSuccess: "Created server session '{name}'.",
+    saveServerSuccess: "Saved server '{name}'.",
+    deleteServerSuccess: "Deleted server '{name}'.",
     attachOpened: "Opened attach console for '{name}'.",
     renamePrompt: "New session name",
     renameSuccess: "Renamed '{from}' to '{to}'.",
     killSuccess: "Killed '{name}'.",
+    runCommandSuccess: "Sent command to '{name}'.",
+    commandRequired: "Enter a command to send.",
     sessionNameRequired: "Session name is required.",
     serverHostRequired: "Server host is required.",
     customShellRequired: "Choose a custom shell executable or switch back to Auto.",
     detailMissing: "Select a session to inspect it.",
+    serverProfileNameRequired: "A server profile name is required.",
   },
 };
 
@@ -121,6 +154,8 @@ const detailNameEl = document.getElementById("detail-name");
 const detailEl = document.getElementById("session-detail");
 const daemonStatusEl = document.getElementById("daemon-status");
 const toastEl = document.getElementById("toast");
+const serverCountEl = document.getElementById("server-count");
+const serverProfileListEl = document.getElementById("server-profile-list");
 const cwdInputEl = document.getElementById("session-cwd");
 const shellSelectEl = document.getElementById("session-shell-select");
 const customShellRowEl = document.getElementById("custom-shell-row");
@@ -131,6 +166,8 @@ const serverNameInputEl = document.getElementById("server-name");
 const serverHostInputEl = document.getElementById("server-host");
 const serverUserInputEl = document.getElementById("server-user");
 const serverPortInputEl = document.getElementById("server-port");
+const serverKeyPathInputEl = document.getElementById("server-key-path");
+const sessionCommandInputEl = document.getElementById("session-command");
 
 const SHELL_PRESETS = {
   auto: undefined,
@@ -169,6 +206,17 @@ document.getElementById("browse-shell").addEventListener("click", async () => {
   }
 });
 
+document.getElementById("browse-server-key").addEventListener("click", async () => {
+  try {
+    const selectedPath = await window.mycliDesktop.selectSshKey();
+    if (selectedPath) {
+      serverKeyPathInputEl.value = selectedPath;
+    }
+  } catch (error) {
+    showToast(error.message);
+  }
+});
+
 document.getElementById("create-session").addEventListener("click", async () => {
   const name = sessionNameInputEl.value.trim();
   const cwd = cwdInputEl.value.trim();
@@ -187,42 +235,42 @@ document.getElementById("create-session").addEventListener("click", async () => 
     });
     showToast(t("createSessionSuccess", { name }));
     sessionNameInputEl.value = "";
-    refreshAll();
+    await refreshAll();
   } catch (error) {
     showToast(error.message);
   }
 });
 
-document.getElementById("create-server-session").addEventListener("click", async () => {
-  const name = serverNameInputEl.value.trim();
-  const host = serverHostInputEl.value.trim();
-  const user = serverUserInputEl.value.trim();
-  const port = serverPortInputEl.value.trim();
-  const shell = resolveShellSelection();
+document.getElementById("run-session-command").addEventListener("click", async () => {
+  await runSelectedCommand();
+});
 
-  if (!name) {
-    showToast(t("sessionNameRequired"));
+sessionCommandInputEl.addEventListener("keydown", async (event) => {
+  if (event.key === "Enter") {
+    event.preventDefault();
+    await runSelectedCommand();
+  }
+});
+
+document.getElementById("create-server-session").addEventListener("click", async () => {
+  await createServerSession();
+});
+
+document.getElementById("save-server-profile").addEventListener("click", async () => {
+  const profile = collectServerForm();
+  if (!profile.name) {
+    showToast(t("serverProfileNameRequired"));
     return;
   }
-
-  if (!host) {
+  if (!profile.host) {
     showToast(t("serverHostRequired"));
     return;
   }
 
   try {
-    await window.mycliDesktop.createSession({
-      name,
-      cwd: cwdInputEl.value.trim() || undefined,
-      shell: shell || undefined,
-      startupCommand: buildSshCommand({ host, user, port }),
-    });
-    showToast(t("createServerSuccess", { name }));
-    serverNameInputEl.value = "";
-    serverHostInputEl.value = "";
-    serverUserInputEl.value = "";
-    serverPortInputEl.value = "22";
-    refreshAll();
+    await window.mycliDesktop.saveServerProfile(profile);
+    showToast(t("saveServerSuccess", { name: profile.name }));
+    await loadServerProfiles();
   } catch (error) {
     showToast(error.message);
   }
@@ -232,12 +280,13 @@ languageSelectEl.addEventListener("change", () => {
   state.locale = languageSelectEl.value;
   applyTranslations();
   renderSessions();
+  renderServerProfiles();
   renderDetailPlaceholderIfNeeded();
   loadDaemonStatus();
 });
 
 async function refreshAll() {
-  await Promise.all([loadDaemonStatus(), loadSessions()]);
+  await Promise.all([loadDaemonStatus(), loadSessions(), loadServerProfiles()]);
 }
 
 async function loadDaemonStatus() {
@@ -276,6 +325,15 @@ async function loadSessions() {
   }
 }
 
+async function loadServerProfiles() {
+  try {
+    state.serverProfiles = await window.mycliDesktop.listServerProfiles();
+    renderServerProfiles();
+  } catch (error) {
+    showToast(error.message);
+  }
+}
+
 function renderSessions() {
   sessionCountEl.textContent = t("sessionCount", { count: String(state.sessions.length) });
   sessionListEl.innerHTML = "";
@@ -306,47 +364,129 @@ function renderSessions() {
     const actions = document.createElement("div");
     actions.className = "session-actions";
 
-    const inspectButton = makeButton(t("inspectButton"), async () => {
-      await selectSession(session.name);
-    });
-    const attachButton = makeButton(t("attachButton"), async () => {
-      await window.mycliDesktop.attachSession(session.name);
-      showToast(t("attachOpened", { name: session.name }));
-    });
-    const renameButton = makeButton(t("renameButton"), async () => {
-      const nextName = window.prompt(t("renamePrompt"), session.name);
-      if (!nextName || nextName === session.name) {
-        return;
-      }
-
-      try {
-        await window.mycliDesktop.renameSession({
-          name: session.name,
-          nextName,
-        });
-        showToast(t("renameSuccess", { from: session.name, to: nextName }));
-        state.selectedName = nextName;
-        await refreshAll();
-      } catch (error) {
-        showToast(error.message);
-      }
-    });
-    const killButton = makeButton(t("killButton"), async () => {
-      try {
-        await window.mycliDesktop.killSession(session.name);
-        showToast(t("killSuccess", { name: session.name }));
-        if (state.selectedName === session.name) {
-          state.selectedName = null;
+    actions.append(
+      makeButton(t("inspectButton"), async () => {
+        await selectSession(session.name);
+      }),
+      makeButton(t("attachButton"), async () => {
+        await window.mycliDesktop.attachSession(session.name);
+        showToast(t("attachOpened", { name: session.name }));
+      }),
+      makeButton(t("renameButton"), async () => {
+        const nextName = window.prompt(t("renamePrompt"), session.name);
+        if (!nextName || nextName === session.name) {
+          return;
         }
-        await refreshAll();
-      } catch (error) {
-        showToast(error.message);
-      }
-    });
 
-    actions.append(inspectButton, attachButton, renameButton, killButton);
+        try {
+          await window.mycliDesktop.renameSession({
+            name: session.name,
+            nextName,
+          });
+          showToast(t("renameSuccess", { from: session.name, to: nextName }));
+          state.selectedName = nextName;
+          await refreshAll();
+        } catch (error) {
+          showToast(error.message);
+        }
+      }),
+      makeButton(t("killButton"), async () => {
+        try {
+          await window.mycliDesktop.killSession(session.name);
+          showToast(t("killSuccess", { name: session.name }));
+          if (state.selectedName === session.name) {
+            state.selectedName = null;
+          }
+          await refreshAll();
+        } catch (error) {
+          showToast(error.message);
+        }
+      }),
+    );
+
     card.append(header, meta, actions);
     sessionListEl.appendChild(card);
+  }
+}
+
+function renderServerProfiles() {
+  serverCountEl.textContent = t("savedServersCount", {
+    count: String(state.serverProfiles.length),
+  });
+  serverProfileListEl.innerHTML = "";
+
+  if (state.serverProfiles.length === 0) {
+    const empty = document.createElement("div");
+    empty.className = "empty-state";
+    empty.textContent = t("savedServersEmpty");
+    serverProfileListEl.appendChild(empty);
+    return;
+  }
+
+  for (const profile of state.serverProfiles) {
+    const card = document.createElement("div");
+    card.className = "server-card";
+
+    const header = document.createElement("div");
+    header.className = "session-card-header";
+    header.innerHTML = `<strong>${profile.name}</strong><span>${profile.user ? `${profile.user}@` : ""}${profile.host}</span>`;
+
+    const meta = document.createElement("div");
+    meta.className = "session-meta";
+    const details = [`port ${profile.port || "22"}`];
+    if (profile.keyPath) {
+      details.push(profile.keyPath);
+    }
+    meta.textContent = details.join(" • ");
+
+    const actions = document.createElement("div");
+    actions.className = "server-actions";
+    actions.append(
+      makeButton(t("openServerButton"), () => {
+        fillServerForm(profile);
+      }),
+      makeButton(t("connectSavedServerButton"), async () => {
+        fillServerForm(profile);
+        await createServerSession();
+      }),
+      makeButton(t("deleteSavedServerButton"), async () => {
+        await window.mycliDesktop.deleteServerProfile(profile.name);
+        showToast(t("deleteServerSuccess", { name: profile.name }));
+        await loadServerProfiles();
+      }),
+    );
+
+    card.append(header, meta, actions);
+    serverProfileListEl.append(card);
+  }
+}
+
+async function createServerSession() {
+  const profile = collectServerForm();
+  const shell = resolveShellSelection();
+
+  if (!profile.name) {
+    showToast(t("sessionNameRequired"));
+    return;
+  }
+
+  if (!profile.host) {
+    showToast(t("serverHostRequired"));
+    return;
+  }
+
+  try {
+    await window.mycliDesktop.createSession({
+      name: profile.name,
+      cwd: cwdInputEl.value.trim() || undefined,
+      shell: shell || undefined,
+      startupCommand: buildSshCommand(profile),
+    });
+    showToast(t("createServerSuccess", { name: profile.name }));
+    clearServerForm();
+    await refreshAll();
+  } catch (error) {
+    showToast(error.message);
   }
 }
 
@@ -357,6 +497,57 @@ async function selectSession(name) {
     const detail = await window.mycliDesktop.inspectSession({ name, logs: 20 });
     detailNameEl.textContent = name;
     detailEl.textContent = JSON.stringify(detail, null, 2);
+  } catch (error) {
+    showToast(error.message);
+  }
+}
+
+function collectServerForm() {
+  return {
+    name: serverNameInputEl.value.trim(),
+    host: serverHostInputEl.value.trim(),
+    user: serverUserInputEl.value.trim(),
+    port: serverPortInputEl.value.trim(),
+    keyPath: serverKeyPathInputEl.value.trim(),
+  };
+}
+
+function fillServerForm(profile) {
+  serverNameInputEl.value = profile.name ?? "";
+  serverHostInputEl.value = profile.host ?? "";
+  serverUserInputEl.value = profile.user ?? "";
+  serverPortInputEl.value = profile.port ?? "22";
+  serverKeyPathInputEl.value = profile.keyPath ?? "";
+}
+
+function clearServerForm() {
+  serverNameInputEl.value = "";
+  serverHostInputEl.value = "";
+  serverUserInputEl.value = "";
+  serverPortInputEl.value = "22";
+  serverKeyPathInputEl.value = "";
+}
+
+async function runSelectedCommand() {
+  if (!state.selectedName) {
+    showToast(t("detailMissing"));
+    return;
+  }
+
+  const command = sessionCommandInputEl.value.trim();
+  if (!command) {
+    showToast(t("commandRequired"));
+    return;
+  }
+
+  try {
+    await window.mycliDesktop.runSessionCommand({
+      name: state.selectedName,
+      command,
+    });
+    sessionCommandInputEl.value = "";
+    showToast(t("runCommandSuccess", { name: state.selectedName }));
+    await selectSession(state.selectedName);
   } catch (error) {
     showToast(error.message);
   }
@@ -374,9 +565,9 @@ function renderDetailPlaceholderIfNeeded() {
 function makeButton(label, handler) {
   const button = document.createElement("button");
   button.textContent = label;
-  button.addEventListener("click", (event) => {
+  button.addEventListener("click", async (event) => {
     event.stopPropagation();
-    handler();
+    await handler();
   });
   return button;
 }
@@ -402,10 +593,11 @@ function resolveShellSelection() {
   return SHELL_PRESETS[shellSelectEl.value];
 }
 
-function buildSshCommand({ host, user, port }) {
-  const target = user ? `${user}@${host}` : host;
-  const safePort = port && port !== "22" ? ` -p ${port}` : "";
-  return `ssh${safePort} ${target}`;
+function buildSshCommand(profile) {
+  const target = profile.user ? `${profile.user}@${profile.host}` : profile.host;
+  const keyArg = profile.keyPath ? ` -i "${profile.keyPath}"` : "";
+  const portArg = profile.port && profile.port !== "22" ? ` -p ${profile.port}` : "";
+  return `ssh${keyArg}${portArg} ${target}`;
 }
 
 function applyTranslations() {

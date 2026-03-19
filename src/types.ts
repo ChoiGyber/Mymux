@@ -71,6 +71,11 @@ export type ClientMessage =
       lines: number;
       clean?: boolean;
       since?: string;
+    }
+  | {
+      type: "runCommand";
+      name: string;
+      command: string;
     };
 
 export type ServerMessage =

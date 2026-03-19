@@ -1,9 +1,11 @@
 const path = require("node:path");
+const fs = require("node:fs");
 const { pathToFileURL } = require("node:url");
 const { app, BrowserWindow, dialog, ipcMain } = require("electron");
 const { spawn } = require("node:child_process");
 
 let mainWindow;
+const serverProfilesFileName = "desktop-servers.json";
 
 async function loadClientModule() {
   const clientEntry = path.join(app.getAppPath(), "dist", "client.js");
@@ -21,6 +23,30 @@ async function listSessions() {
   }
 
   return response.sessions ?? [];
+}
+
+function getServerProfilesPath() {
+  return path.join(app.getPath("userData"), serverProfilesFileName);
+}
+
+function loadServerProfiles() {
+  const filePath = getServerProfilesPath();
+  if (!fs.existsSync(filePath)) {
+    return [];
+  }
+
+  try {
+    const parsed = JSON.parse(fs.readFileSync(filePath, "utf8"));
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+function saveServerProfiles(profiles) {
+  const filePath = getServerProfilesPath();
+  fs.mkdirSync(path.dirname(filePath), { recursive: true });
+  fs.writeFileSync(filePath, JSON.stringify(profiles, null, 2));
 }
 
 function createWindow() {
@@ -148,14 +174,62 @@ ipcMain.handle("sessions:attach", async (_event, name) => {
   return true;
 });
 
+ipcMain.handle("sessions:run-command", async (_event, payload) => {
+  const client = await loadClientModule();
+  const response = await client.request({
+    type: "runCommand",
+    name: payload.name,
+    command: payload.command,
+  });
+
+  if (response.type !== "success") {
+    throw new Error(response.message ?? "Failed to run command.");
+  }
+
+  return response.session;
+});
+
 ipcMain.handle("daemon:status", async () => {
   const client = await loadClientModule();
   return await client.daemonStatus();
 });
 
+ipcMain.handle("servers:list", async () => {
+  return loadServerProfiles();
+});
+
+ipcMain.handle("servers:save", async (_event, profile) => {
+  const profiles = loadServerProfiles().filter((entry) => entry.name !== profile.name);
+  profiles.unshift(profile);
+  saveServerProfiles(profiles.slice(0, 25));
+  return true;
+});
+
+ipcMain.handle("servers:delete", async (_event, name) => {
+  const profiles = loadServerProfiles().filter((entry) => entry.name !== name);
+  saveServerProfiles(profiles);
+  return true;
+});
+
 ipcMain.handle("dialog:select-directory", async () => {
   const result = await dialog.showOpenDialog(mainWindow, {
     properties: ["openDirectory"],
+  });
+
+  if (result.canceled || result.filePaths.length === 0) {
+    return null;
+  }
+
+  return result.filePaths[0];
+});
+
+ipcMain.handle("dialog:select-ssh-key", async () => {
+  const result = await dialog.showOpenDialog(mainWindow, {
+    properties: ["openFile"],
+    filters: [
+      { name: "SSH Keys", extensions: ["pem", "ppk", "key"] },
+      { name: "All Files", extensions: ["*"] },
+    ],
   });
 
   if (result.canceled || result.filePaths.length === 0) {
