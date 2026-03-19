@@ -18,13 +18,17 @@ npm run build
 npm link
 mycli init
 mycli profile add backend --cwd E:\Project\MyCli --shell "C:\Program Files\PowerShell\7\pwsh.exe" --env NODE_ENV=development
+mycli profile rename backend backend-dev
 mycli open work --cwd E:\Project
 mycli open api --profile backend
 mycli open web --env NODE_ENV=development --env PORT=3000
 mycli list --status running --match api
 mycli inspect api --logs 20
 mycli profile show backend
+mycli config export
+mycli config import .\shared-mycli.json
 mycli rename api api-dev
+mycli session export
 mycli attach work
 mycli logs work --lines 100 --clean --since 10m --follow
 mycli restore
@@ -45,6 +49,7 @@ Detach from an attached session with `Ctrl+P`.
 - Non-interactive `attach` runs detach automatically when piped stdin closes.
 - `mycli daemon restart` starts a fresh daemon and rehydrates saved sessions.
 - `mycli daemon doctor` checks daemon, state, logs, and project config paths.
+- `mycli config import` merges profiles by default and supports `--replace`.
 - `mycli logs --follow` tails the underlying session log file.
 - `mycli logs --since` accepts ISO timestamps or relative values like `10m`, `2h`, `1d`.
 - PowerShell completion can be loaded by evaluating the output of `mycli completion --shell powershell`.

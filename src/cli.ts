@@ -16,8 +16,10 @@ import {
   createDefaultConfig,
   getProfile,
   getProjectConfigPath,
+  importProjectConfig,
   loadProjectConfig,
   removeProfile,
+  renameProfile,
   upsertProfile,
   writeProjectConfig,
 } from "./project-config.js";
@@ -217,6 +219,41 @@ profileCommand
     process.stdout.write(`${JSON.stringify(profile, null, 2)}\n`);
   });
 
+profileCommand
+  .command("rename")
+  .argument("<name>", "current profile name")
+  .argument("<nextName>", "new profile name")
+  .action((name, nextName) => {
+    const cwd = process.cwd();
+    const config = loadProjectConfig(cwd);
+    if (!config.profiles?.[name]) {
+      throw new Error(`Profile '${name}' not found.`);
+    }
+    if (config.profiles[nextName]) {
+      throw new Error(`Profile '${nextName}' already exists.`);
+    }
+
+    const configPath = renameProfile(cwd, name, nextName);
+    process.stdout.write(`Renamed profile '${name}' to '${nextName}' in ${configPath}\n`);
+  });
+
+const configCommand = program.command("config").description("Manage project config files");
+
+configCommand.command("export").action(() => {
+  const config = loadProjectConfig(process.cwd());
+  process.stdout.write(`${JSON.stringify(config, null, 2)}\n`);
+});
+
+configCommand
+  .command("import")
+  .argument("<filePath>", "path to a config JSON file")
+  .option("--replace", "replace the current config instead of merging")
+  .action((filePath, options) => {
+    const resolvedPath = fs.realpathSync(filePath);
+    const configPath = importProjectConfig(process.cwd(), resolvedPath, Boolean(options.replace));
+    process.stdout.write(`Imported config from ${resolvedPath} into ${configPath}\n`);
+  });
+
 program
   .command("attach")
   .argument("<name>", "session name")
@@ -293,6 +330,25 @@ program
       await followLogs(name, Boolean(options.clean), options.since);
     }
   });
+
+const sessionCommand = program.command("session").description("Inspect or export session data");
+
+sessionCommand.command("export").option("--json", "print session JSON").action(async (options) => {
+  const response = await request({
+    type: "listSessions",
+  });
+
+  assertSuccess(response);
+  const sessions = response.sessions ?? [];
+  const payload = JSON.stringify(sessions, null, 2);
+
+  if (options.json) {
+    process.stdout.write(`${payload}\n`);
+    return;
+  }
+
+  process.stdout.write(`${payload}\n`);
+});
 
 const daemon = program.command("daemon").description("Manage the background daemon");
 

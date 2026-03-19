@@ -3,7 +3,7 @@ export function renderPowerShellCompletion(): string {
 Register-ArgumentCompleter -Native -CommandName mycli -ScriptBlock {
   param($wordToComplete, $commandAst, $cursorPosition)
 
-  $commands = @('init', 'open', 'list', 'inspect', 'attach', 'kill', 'rename', 'restore', 'logs', 'daemon', 'profiles', 'profile', 'completion')
+  $commands = @('init', 'open', 'list', 'inspect', 'attach', 'kill', 'rename', 'restore', 'logs', 'daemon', 'profiles', 'profile', 'config', 'session', 'completion')
   $commandElements = $commandAst.CommandElements | ForEach-Object { $_.Extent.Text }
 
   if ($commandElements.Count -le 2) {
@@ -44,7 +44,7 @@ Register-ArgumentCompleter -Native -CommandName mycli -ScriptBlock {
   }
 
   if ($subcommand -eq 'profile') {
-    $profileCommands = @('add', 'remove', 'show')
+    $profileCommands = @('add', 'remove', 'show', 'rename')
     if ($commandElements.Count -le 3) {
       $profileCommands |
         Where-Object { $_ -like "$wordToComplete*" } |
@@ -58,6 +58,28 @@ Register-ArgumentCompleter -Native -CommandName mycli -ScriptBlock {
     $daemonCommands = @('status', 'stop', 'restart', 'doctor')
     if ($commandElements.Count -le 3) {
       $daemonCommands |
+        Where-Object { $_ -like "$wordToComplete*" } |
+        ForEach-Object {
+          [System.Management.Automation.CompletionResult]::new($_, $_, 'ParameterValue', $_)
+        }
+    }
+  }
+
+  if ($subcommand -eq 'config') {
+    $configCommands = @('export', 'import')
+    if ($commandElements.Count -le 3) {
+      $configCommands |
+        Where-Object { $_ -like "$wordToComplete*" } |
+        ForEach-Object {
+          [System.Management.Automation.CompletionResult]::new($_, $_, 'ParameterValue', $_)
+        }
+    }
+  }
+
+  if ($subcommand -eq 'session') {
+    $sessionCommands = @('export')
+    if ($commandElements.Count -le 3) {
+      $sessionCommands |
         Where-Object { $_ -like "$wordToComplete*" } |
         ForEach-Object {
           [System.Management.Automation.CompletionResult]::new($_, $_, 'ParameterValue', $_)

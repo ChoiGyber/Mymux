@@ -67,3 +67,40 @@ export function removeProfile(cwd: string, name: string): string {
     profiles,
   });
 }
+
+export function renameProfile(cwd: string, name: string, nextName: string): string {
+  const config = loadProjectConfig(cwd);
+  const profiles = { ...(config.profiles ?? {}) };
+  const profile = profiles[name];
+
+  if (!profile) {
+    throw new Error(`Profile '${name}' not found.`);
+  }
+
+  delete profiles[name];
+  profiles[nextName] = profile;
+
+  return writeProjectConfig(cwd, {
+    ...config,
+    profiles,
+  });
+}
+
+export function importProjectConfig(
+  cwd: string,
+  filePath: string,
+  replace: boolean,
+): string {
+  const imported = JSON.parse(fs.readFileSync(filePath, "utf8")) as MyCliConfig;
+  const current = replace ? {} : loadProjectConfig(cwd);
+  const profiles = {
+    ...(current.profiles ?? {}),
+    ...(imported.profiles ?? {}),
+  };
+
+  return writeProjectConfig(cwd, {
+    ...current,
+    ...imported,
+    profiles,
+  });
+}
