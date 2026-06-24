@@ -16,18 +16,61 @@ pub struct FileEntry {
     pub is_symlink: bool,
 }
 
-// ── SSH client handler ──
-struct SshHandler;
+// ── SSH client handler (TOFU host-key verification) ──
+struct SshHandler {
+    host: String,
+    port: u16,
+}
 
 impl client::Handler for SshHandler {
     type Error = russh::Error;
 
     fn check_server_key(
         &mut self,
-        _server_public_key: &russh::keys::PublicKey,
+        server_public_key: &russh::keys::PublicKey,
     ) -> impl std::future::Future<Output = Result<bool, Self::Error>> + Send {
-        async { Ok(true) }
+        let host = self.host.clone();
+        let port = self.port;
+        let key = server_public_key.to_openssh().unwrap_or_default();
+        async move { Ok(verify_known_host(&host, port, &key)) }
     }
+}
+
+/// Trust-on-first-use host-key check against ~/.mycli/known_hosts (public keys,
+/// not secret). Unknown host → record the key and accept. Known host whose key
+/// changed → refuse the connection (possible MITM).
+fn verify_known_host(host: &str, port: u16, key: &str) -> bool {
+    if key.is_empty() {
+        return false;
+    }
+    let Some(path) = dirs::home_dir().map(|h| h.join(".mycli").join("known_hosts")) else {
+        return true; // no home dir → can't persist; don't hard-fail connections
+    };
+    let id = format!("[{host}]:{port}");
+
+    if let Ok(content) = std::fs::read_to_string(&path) {
+        for line in content.lines() {
+            if let Some((h, k)) = line.split_once(' ')
+                && h == id
+            {
+                return k.trim() == key.trim();
+            }
+        }
+    }
+
+    // Unknown host: persist the key and accept (trust-on-first-use).
+    if let Some(parent) = path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    use std::io::Write;
+    if let Ok(mut f) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&path)
+    {
+        let _ = writeln!(f, "{id} {key}");
+    }
+    true
 }
 
 struct SftpSessionInfo {
@@ -143,7 +186,10 @@ pub fn sftp_connect(
 
     state.runtime.block_on(async {
         let config = Arc::new(client::Config::default());
-        let handler = SshHandler;
+        let handler = SshHandler {
+            host: host.clone(),
+            port,
+        };
 
         let mut handle = client::connect(config, (host.as_str(), port), handler)
             .await
