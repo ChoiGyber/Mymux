@@ -1,22 +1,4 @@
-/* Pretendard (CDN webfont, with local() fallback if installed).
-   "Pretendard"     — full face, for the UI.
-   "Pretendard KR"  — Hangul-only (unicode-range), so the terminal keeps a
-                      monospace ASCII font and only Korean uses Pretendard. */
-@font-face {
-  font-family: "Pretendard";
-  font-weight: 100 900;
-  font-display: swap;
-  src: local("Pretendard Variable"), local("Pretendard"),
-       url("https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/woff2/PretendardVariable.woff2") format("woff2");
-}
-@font-face {
-  font-family: "Pretendard KR";
-  font-weight: 100 900;
-  font-display: swap;
-  unicode-range: U+1100-11FF, U+3130-318F, U+A960-A97F, U+AC00-D7A3, U+D7B0-D7FF;
-  src: local("Pretendard Variable"), local("Pretendard"),
-       url("https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/woff2/PretendardVariable.woff2") format("woff2");
-}
+/* Korean UI font: Noto Sans KR (loaded via Google Fonts in index.html). */
 
 * {
   margin: 0;
@@ -31,17 +13,17 @@
 
 /* ── Dark theme (default) ── */
 html[data-theme="dark"] {
-  --bg: #1a1a2e;
-  --surface: #16213e;
-  --surface-hover: #1f2b4d;
-  --border: #2a3a5c;
+  --bg: #15161a;
+  --surface: #1c1e23;
+  --surface-hover: #282b31;
+  --border: #32353d;
   --text: #e0e0e0;
-  --text-dim: #8892a8;
+  --text-dim: #888d96;
   --green: #4ec9b0;
   --red: #f44747;
   --yellow: #dcdcaa;
   --orange: #ce9178;
-  --term-bg: #1a1a2e;
+  --term-bg: #15161a;
   --term-fg: #e0e0e0;
 }
 
@@ -71,8 +53,8 @@ html { --accent: #0f9ef0; --accent-hover: #3db8ff; }
 
 html, body {
   height: 100%;
-  font-family: "Pretendard", "Malgun Gothic", "맑은 고딕", sans-serif;
-  font-weight: 100;
+  font-family: "Noto Sans KR", "Malgun Gothic", "맑은 고딕", sans-serif;
+  font-weight: 300;
   font-size: 14px;
   color: var(--text);
   background: var(--bg);
@@ -377,6 +359,14 @@ header h1 {
 /* Pane drag-to-rearrange */
 .pane-statusbar { cursor: grab; }
 .pane-statusbar:active { cursor: grabbing; }
+.pane-grip {
+  cursor: grab;
+  color: var(--text-dim);
+  margin-right: 6px;
+  font-size: 13px;
+  user-select: none;
+}
+.pane-grip:hover { color: var(--accent); }
 #drop-indicator {
   position: fixed;
   display: none;
@@ -386,6 +376,35 @@ header h1 {
   pointer-events: none;
   z-index: 1000;
 }
+
+#default-shell {
+  padding: 4px 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--text-dim);
+  font-size: 12px;
+  cursor: pointer;
+}
+#default-shell:hover { color: var(--text); }
+
+/* Prominent Send button at the top-right of each saved-command box */
+.cmd-item { position: relative; }
+.cmd-item .cmd-name { padding-right: 56px; }
+.cmd-item .send-top {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  padding: 3px 12px;
+  background: var(--accent);
+  color: #fff;
+  border: none;
+  border-radius: var(--radius);
+  font-size: 11px;
+  cursor: pointer;
+  z-index: 1;
+}
+.cmd-item .send-top:hover { background: var(--accent-hover); }
 .file-item-actions button {
   padding: 2px 6px;
   border: 1px solid var(--border);
@@ -457,7 +476,7 @@ header h1 {
   margin-bottom: 2px;
 }
 .cmd-text {
-  font-family: "Pretendard KR", "D2Coding", "Cascadia Code", "Consolas", monospace;
+  font-family: "D2Coding", "Cascadia Code", "Consolas", "Noto Sans KR", monospace;
   font-size: 11px;
   color: var(--green);
   white-space: nowrap;
@@ -663,7 +682,7 @@ header h1 {
 .browser-info code {
   flex: 1;
   min-width: 0;
-  font-family: "Pretendard KR", "D2Coding", "Cascadia Code", "Consolas", monospace;
+  font-family: "D2Coding", "Cascadia Code", "Consolas", "Noto Sans KR", monospace;
   font-size: 12px;
   color: var(--green);
   background: var(--bg);
@@ -1289,7 +1308,7 @@ header h1 {
   font-weight: 500;
 }
 .ac-item .ac-cmd {
-  font-family: "Pretendard KR", "D2Coding", "Cascadia Code", "Consolas", monospace;
+  font-family: "D2Coding", "Cascadia Code", "Consolas", "Noto Sans KR", monospace;
   font-size: 11px;
   color: var(--green);
   white-space: nowrap;

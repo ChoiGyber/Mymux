@@ -153,6 +153,15 @@ async function setupListeners() {
     sw.addEventListener("click", () => setAccent(sw.dataset.accent));
   });
   btnNewTerminal.addEventListener("click", () => spawnTerminal());
+
+  const shellSel = document.getElementById("default-shell");
+  if (shellSel) {
+    try { shellSel.value = localStorage.getItem("mymux.defaultShell") || "bash"; } catch {}
+    shellSel.addEventListener("change", () => {
+      try { localStorage.setItem("mymux.defaultShell", shellSel.value); } catch {}
+      toast("기본 셸: " + shellSel.options[shellSel.selectedIndex].text + " (새 터미널부터 적용)");
+    });
+  }
   btnAdd.addEventListener("click", () => openModal());
   btnCancel.addEventListener("click", closeModal);
   modalOverlay.addEventListener("click", (e) => { if (e.target === modalOverlay) closeModal(); });
@@ -481,6 +490,7 @@ async function createPane(parentEl, shell, args, cwd) {
 
   // Status bar: label + split/close controls
   statusBar.innerHTML = `
+    <span class="pane-grip" title="드래그해서 패인 이동">&#10287;</span>
     <span class="pane-label">${esc(sessionLabel)}</span>
     <span class="pane-actions">
       <button class="pane-btn split-h" title="Split horizontally (Ctrl+Shift+D)">&#8596;</button>
@@ -492,33 +502,13 @@ async function createPane(parentEl, shell, args, cwd) {
   statusBar.querySelector(".split-v").addEventListener("click", (e) => { e.stopPropagation(); setFocusedPane(id); splitPane("vertical"); });
   statusBar.querySelector(".close").addEventListener("click", (e) => { e.stopPropagation(); closePane(id); });
 
-  // Drag the status bar onto another pane's top/bottom/left/right to re-tile.
-  statusBar.draggable = true;
-  statusBar.title = "드래그해서 패인 이동";
-  statusBar.addEventListener("dragstart", (e) => {
-    if (e.target.closest(".pane-btn")) { e.preventDefault(); return; }
-    draggingPaneId = id;
-    e.dataTransfer.effectAllowed = "move";
-    try { e.dataTransfer.setData("text/plain", String(id)); } catch {}
-  });
-  statusBar.addEventListener("dragend", () => { draggingPaneId = null; hideDropIndicator(); });
-  paneEl.addEventListener("dragover", (e) => {
-    if (draggingPaneId == null || draggingPaneId === id) return;
-    e.preventDefault();
-    e.dataTransfer.dropEffect = "move";
-    showDropIndicator(paneEl, computeDropPosition(paneEl, e));
-  });
-  paneEl.addEventListener("dragleave", (e) => {
-    if (!paneEl.contains(e.relatedTarget)) hideDropIndicator();
-  });
-  paneEl.addEventListener("drop", (e) => {
-    if (draggingPaneId == null || draggingPaneId === id) { hideDropIndicator(); draggingPaneId = null; return; }
-    e.preventDefault();
-    const pos = computeDropPosition(paneEl, e);
-    const src = draggingPaneId;
-    draggingPaneId = null;
-    hideDropIndicator();
-    movePane(src, id, pos);
+  // Mouse-drag the status bar onto another pane's edge (top/bottom/left/right)
+  // to re-tile. Mouse-based (not HTML5 DnD) so it reliably works over the xterm
+  // canvas.
+  paneEl.dataset.ptyId = id;
+  statusBar.addEventListener("mousedown", (e) => {
+    if (e.button !== 0 || e.target.closest(".pane-btn")) return;
+    startPaneDrag(id, e);
   });
 
   // Ctrl +/- to change terminal font size, Ctrl+0 to reset (intercept before
@@ -563,6 +553,16 @@ function setFocusedPane(ptyId) {
   updateSessionActive();
 }
 
+// Resolve the user's default-shell preference into an identifier for the
+// backend (undefined → Git Bash default; "powershell" → pwsh -NoLogo; "cmd.exe").
+function getDefaultShellId() {
+  let pref = "bash";
+  try { pref = localStorage.getItem("mymux.defaultShell") || "bash"; } catch {}
+  if (pref === "powershell") return "powershell";
+  if (pref === "cmd") return "cmd.exe";
+  return undefined;
+}
+
 async function spawnTerminal(shell, cwd) {
   terminalWelcome.style.display = "none";
 
@@ -579,7 +579,8 @@ async function spawnTerminal(shell, cwd) {
   const label = cwd ? baseName(cwd) : (shell || "Terminal");
 
   try {
-    const ptyId = await createPane(rootContainer, shell, null, cwd);
+    const launch = shell !== undefined ? shell : getDefaultShellId();
+    const ptyId = await createPane(rootContainer, launch, null, cwd);
     tabs.set(tabIdx, {
       el: tabEl,
       rootEl: rootContainer,
@@ -626,7 +627,7 @@ async function splitPane(direction, cwd) {
 
   // Create new pane
   try {
-    const newPtyId = await createPane(splitContainer, null, null, cwd);
+    const newPtyId = await createPane(splitContainer, getDefaultShellId(), null, cwd);
     currentTab.panes.push(newPtyId);
     refreshSessionList();
 
@@ -806,6 +807,42 @@ function showDropIndicator(leaf, position) {
 function hideDropIndicator() {
   const ind = document.getElementById("drop-indicator");
   if (ind) ind.style.display = "none";
+}
+
+function startPaneDrag(srcId, startEvent) {
+  startEvent.preventDefault();
+  let dragging = false;
+  let curTarget = null;
+  let curPos = null;
+  const onMove = (e) => {
+    if (!dragging) {
+      if (Math.abs(e.clientX - startEvent.clientX) + Math.abs(e.clientY - startEvent.clientY) < 5) return;
+      dragging = true;
+      document.body.style.cursor = "grabbing";
+      document.body.style.userSelect = "none";
+    }
+    const el = document.elementFromPoint(e.clientX, e.clientY);
+    const leaf = el && el.closest ? el.closest(".pane-leaf") : null;
+    const tid = leaf && leaf.dataset && leaf.dataset.ptyId ? Number(leaf.dataset.ptyId) : null;
+    if (leaf && tid && tid !== srcId && terminals.has(tid)) {
+      curTarget = tid;
+      curPos = computeDropPosition(leaf, e);
+      showDropIndicator(leaf, curPos);
+    } else {
+      curTarget = null;
+      hideDropIndicator();
+    }
+  };
+  const onUp = () => {
+    document.removeEventListener("mousemove", onMove);
+    document.removeEventListener("mouseup", onUp);
+    document.body.style.cursor = "";
+    document.body.style.userSelect = "";
+    hideDropIndicator();
+    if (dragging && curTarget != null) movePane(srcId, curTarget, curPos);
+  };
+  document.addEventListener("mousemove", onMove);
+  document.addEventListener("mouseup", onUp);
 }
 
 // Detach a pane-leaf from its split container and collapse the leftover
@@ -1498,9 +1535,9 @@ function createXterm() {
   return new Terminal({
     cursorBlink: true,
     fontSize: terminalFontSize,
-    fontFamily: '"Pretendard KR", "D2Coding", "Cascadia Code", "Consolas", monospace',
-    fontWeight: 100,
-    fontWeightBold: 400,
+    fontFamily: '"D2Coding", "Cascadia Code", "Consolas", "Noto Sans KR", monospace',
+    fontWeight: 300,
+    fontWeightBold: 500,
     theme: terminalTheme(),
   });
 }
@@ -1915,19 +1952,19 @@ function renderCmdList(cmds) {
     const li = document.createElement("li");
     li.className = "cmd-item" + (cmd.favorite ? " is-fav" : "");
     li.innerHTML = `
+      <button class="send-top" title="터미널로 전송">Send</button>
       <div class="cmd-name">${esc(cmd.name)}</div>
       <div class="cmd-text">${esc(cmd.command)}</div>
       ${cmd.description ? `<div class="cmd-desc">${esc(cmd.description)}</div>` : ""}
       <div class="cmd-item-actions">
         <button class="fav-btn${cmd.favorite ? " on" : ""}" title="즐겨찾기">${cmd.favorite ? "★" : "☆"}</button>
-        <button class="send-btn">Send</button>
         <button class="copy-btn">Copy</button>
         <button class="edit-btn">Edit</button>
         <button class="cmd-x" title="삭제 (바로 삭제)">&times;</button>
       </div>
     `;
+    li.querySelector(".send-top").addEventListener("click", (e) => { e.stopPropagation(); sendToTerminal(cmd.command); });
     li.querySelector(".fav-btn").addEventListener("click", (e) => { e.stopPropagation(); toggleFavorite(cmd); });
-    li.querySelector(".send-btn").addEventListener("click", (e) => { e.stopPropagation(); sendToTerminal(cmd.command); });
     li.querySelector(".copy-btn").addEventListener("click", (e) => { e.stopPropagation(); copyCmd(cmd); });
     li.querySelector(".edit-btn").addEventListener("click", (e) => { e.stopPropagation(); openModal(cmd); });
     li.querySelector(".cmd-x").addEventListener("click", (e) => { e.stopPropagation(); quickDeleteCmd(cmd); });

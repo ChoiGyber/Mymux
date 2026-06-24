@@ -115,6 +115,61 @@ fn default_shell_builder() -> CommandBuilder {
     CommandBuilder::new_default_prog()
 }
 
+/// Resolve a shell identifier into a launchable command. Known ids get the
+/// right flags (PowerShell `-NoLogo`, Git Bash custom prompt); anything else is
+/// treated as a literal executable plus the given args.
+fn build_command(shell: Option<&str>, args: Option<&Vec<String>>) -> CommandBuilder {
+    let Some(s) = shell else {
+        return default_shell_builder();
+    };
+
+    #[cfg(windows)]
+    {
+        match s.to_lowercase().as_str() {
+            "powershell" | "pwsh" | "pwsh.exe" => {
+                for exe in ["pwsh.exe", "powershell.exe"] {
+                    if let Some(p) = find_in_path(exe) {
+                        let mut c = CommandBuilder::new(p);
+                        c.arg("-NoLogo");
+                        return c;
+                    }
+                }
+            }
+            "powershell.exe" | "windows-powershell" => {
+                if let Some(p) = find_in_path("powershell.exe") {
+                    let mut c = CommandBuilder::new(p);
+                    c.arg("-NoLogo");
+                    return c;
+                }
+            }
+            "bash" | "git-bash" => {
+                if let Some(path) = find_git_bash() {
+                    let mut c = CommandBuilder::new(path);
+                    if let Some(rc) = mymux_bashrc() {
+                        c.arg("--rcfile");
+                        c.arg(rc);
+                        c.arg("-i");
+                        c.env("CHERE_INVOKING", "1");
+                    } else {
+                        c.arg("--login");
+                        c.arg("-i");
+                    }
+                    return c;
+                }
+            }
+            _ => {}
+        }
+    }
+
+    let mut c = CommandBuilder::new(s);
+    if let Some(args) = args {
+        for a in args {
+            c.arg(a);
+        }
+    }
+    c
+}
+
 #[tauri::command]
 pub fn pty_spawn(
     state: tauri::State<'_, Arc<TerminalManager>>,
@@ -142,20 +197,8 @@ pub fn pty_spawn(
         .filter(|p| p.is_dir())
         .unwrap_or_else(|| dirs::home_dir().unwrap_or_else(|| ".".into()));
 
-    let cmd = if let Some(ref shell_str) = shell {
-        let mut c = CommandBuilder::new(shell_str);
-        if let Some(args) = args {
-            for arg in &args {
-                c.arg(arg);
-            }
-        }
-        c.cwd(&work_dir);
-        c
-    } else {
-        let mut c = default_shell_builder();
-        c.cwd(&work_dir);
-        c
-    };
+    let mut cmd = build_command(shell.as_deref(), args.as_ref());
+    cmd.cwd(&work_dir);
 
     let mut child = pair.slave.spawn_command(cmd).map_err(|e| e.to_string())?;
     drop(pair.slave);

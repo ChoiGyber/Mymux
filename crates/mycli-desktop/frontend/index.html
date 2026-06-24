@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Mymux</title>
   <link rel="stylesheet" href="vendor/xterm.min.css" />
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@300;400;500&display=swap" />
   <link rel="stylesheet" href="style.css" />
 </head>
 <body>
@@ -21,6 +22,11 @@
         <button class="accent-swatch" data-accent="green" title="Green" style="background:#10b981"></button>
       </span>
       <button id="btn-theme" title="Toggle light/dark mode"></button>
+      <select id="default-shell" title="기본 셸 (새 터미널)">
+        <option value="bash">Git Bash</option>
+        <option value="powershell">PowerShell</option>
+        <option value="cmd">CMD</option>
+      </select>
       <button id="btn-new-terminal" title="New terminal">+ Terminal</button>
       <button id="btn-toggle-sessions" title="Toggle session list">Sessions</button>
     </div>
