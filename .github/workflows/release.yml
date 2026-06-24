@@ -1,0 +1,83 @@
+name: Release
+
+# Build installers for Windows / macOS / Linux and publish them to a GitHub
+# Release whenever a version tag (e.g. v0.1.0) is pushed.
+#
+#   git tag v0.1.0
+#   git push origin v0.1.0
+#
+# Users then download the installer for their OS from the Releases page.
+
+on:
+  push:
+    tags:
+      - "v*"
+  # Allow building a release manually from the Actions tab as well.
+  workflow_dispatch:
+
+# The release job creates/updates a GitHub Release, so it needs write access.
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: release (${{ matrix.platform }})
+    runs-on: ${{ matrix.platform }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # macOS universal binary — runs on both Apple Silicon and Intel.
+          - platform: macos-latest
+            args: "--target universal-apple-darwin"
+          - platform: ubuntu-latest
+            args: ""
+          - platform: windows-latest
+            args: ""
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          # macOS universal build needs both arch targets compiled.
+          targets: ${{ matrix.platform == 'macos-latest' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
+
+      - name: Cache cargo build
+        uses: Swatinem/rust-cache@v2
+
+      # Tauri (mycli-desktop) needs WebKitGTK + supporting libs on Linux.
+      - name: Install Linux system deps (Tauri)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            libxdo-dev \
+            libssl-dev \
+            build-essential \
+            patchelf
+
+      # aws-lc-sys (via russh) needs NASM to assemble its crypto on Windows.
+      - name: Install NASM (Windows, for aws-lc-sys)
+        if: runner.os == 'Windows'
+        uses: ilammy/setup-nasm@v1
+
+      - name: Build and publish installers
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          # The Tauri app lives in a subdirectory of the Cargo workspace.
+          projectPath: crates/mycli-desktop
+          # Reuse the pushed git tag as the release tag/name.
+          tagName: ${{ github.ref_name }}
+          releaseName: "Mymux ${{ github.ref_name }}"
+          releaseBody: "See the assets below to download an installer for your platform."
+          # Publish as a draft so you can review before it goes public.
+          releaseDraft: true
+          prerelease: false
+          args: ${{ matrix.args }}
