@@ -1,0 +1,38 @@
+{
+  "$schema": "https://raw.githubusercontent.com/nicedayzhu/tauri-schema/refs/heads/v2/tauri.schema.json",
+  "productName": "Mymux",
+  "version": "0.1.0",
+  "identifier": "com.mycli.desktop",
+  "build": {
+    "frontendDist": "./frontend"
+  },
+  "app": {
+    "withGlobalTauri": true,
+    "windows": [
+      {
+        "title": "Mymux — Command Manager",
+        "width": 800,
+        "height": 560,
+        "resizable": true,
+        "minWidth": 520,
+        "minHeight": 400,
+        "devtools": true
+      }
+    ]
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/icon.ico",
+      "icons/icon.png"
+    ]
+  },
+  "plugins": {
+    "shell": {
+      "open": true
+    }
+  }
+}

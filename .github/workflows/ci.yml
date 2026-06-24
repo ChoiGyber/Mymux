@@ -1,0 +1,64 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# Cancel superseded runs on the same ref.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: build (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      # Don't let one OS failure cancel the others — we want to see macOS even
+      # if Windows/Linux fail (and vice-versa).
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - name: Cache cargo build
+        uses: Swatinem/rust-cache@v2
+
+      # Tauri (mycli-desktop) needs WebKitGTK + supporting libs on Linux.
+      - name: Install Linux system deps (Tauri)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            libxdo-dev \
+            libssl-dev \
+            build-essential \
+            patchelf
+
+      # aws-lc-sys (via russh) needs NASM to assemble its crypto on Windows.
+      - name: Install NASM (Windows, for aws-lc-sys)
+        if: runner.os == 'Windows'
+        uses: ilammy/setup-nasm@v1
+
+      # Compile every crate — this is the real cross-platform check, including
+      # the macOS build of mycli-desktop that can't be cross-compiled from Windows.
+      - name: Build workspace
+        run: cargo build --workspace
+
+      # Logic tests live in mycli-core / mycli-tui (fuzzy match, params, etc.).
+      - name: Test (core + tui)
+        run: cargo test -p mycli-core -p mycli-tui
+
+      - name: Clippy (core + tui)
+        run: cargo clippy -p mycli-core -p mycli-tui

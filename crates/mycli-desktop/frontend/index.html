@@ -1,0 +1,218 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark" data-accent="blue">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Mymux</title>
+  <link rel="stylesheet" href="vendor/xterm.min.css" />
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <!-- ── Top bar ── -->
+  <header id="toolbar">
+    <h1>Mymux</h1>
+    <div id="toolbar-actions">
+      <button id="btn-toggle-sidebar" title="Toggle sidebar">Sidebar</button>
+      <button id="btn-split-h" title="Split focused pane horizontally (Ctrl+Shift+D)">Split &#8596;</button>
+      <button id="btn-split-v" title="Split focused pane vertically (Ctrl+Shift+E)">Split &#8597;</button>
+      <span id="accent-swatches" title="Accent color">
+        <button class="accent-swatch" data-accent="blue" title="Blue" style="background:#0f9ef0"></button>
+        <button class="accent-swatch" data-accent="violet" title="Violet" style="background:#8b5cf6"></button>
+        <button class="accent-swatch" data-accent="green" title="Green" style="background:#10b981"></button>
+      </span>
+      <button id="btn-theme" title="Toggle light/dark mode"></button>
+      <button id="btn-new-terminal" title="New terminal">+ Terminal</button>
+      <button id="btn-toggle-sessions" title="Toggle session list">Sessions</button>
+    </div>
+  </header>
+
+  <div id="main-layout">
+    <!-- ── Sidebar ── -->
+    <aside id="sidebar">
+      <!-- Sidebar tabs -->
+      <div id="sidebar-tabs">
+        <button class="sidebar-tab active" data-tab="explorer">Explorer</button>
+        <button class="sidebar-tab" data-tab="commands">Commands</button>
+      </div>
+
+      <!-- Explorer panel -->
+      <div id="panel-explorer" class="sidebar-panel active">
+        <div id="explorer-nav">
+          <button id="btn-explorer-up" title="Go up">..</button>
+          <span id="explorer-path" title="Current path">/</span>
+        </div>
+        <div id="explorer-source">
+          <select id="explorer-mode">
+            <option value="local">Local PC</option>
+          </select>
+        </div>
+        <div id="explorer-drives"></div>
+        <ul id="file-list"></ul>
+      </div>
+
+      <!-- Commands panel -->
+      <div id="panel-commands" class="sidebar-panel">
+        <div id="sidebar-header">
+          <span>Saved Commands</span>
+          <button id="btn-add" title="Add command">+</button>
+        </div>
+        <ul id="command-list"></ul>
+        <div id="empty-state" class="hidden">
+          <p>No commands saved.</p>
+          <p>Click <strong>+</strong> to add.</p>
+        </div>
+      </div>
+    </aside>
+
+    <!-- ── Terminal area ── -->
+    <div id="terminal-area">
+      <div id="terminal-tabs"></div>
+
+      <!-- Browser (Playwright/CDP) panel — toggled by the 🌐 Browser tab -->
+      <div id="browser-panel" class="hidden">
+        <div class="browser-head">
+          <h2><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M3 12h18"/><path d="M12 3c2.6 2.7 3.9 5.9 3.9 9s-1.3 6.3-3.9 9c-2.6-2.7-3.9-5.9-3.9-9S9.4 5.7 12 3z"/></svg> Browser</h2>
+          <div class="browser-mode">
+            <button id="mode-native" class="mode-btn active" title="앱 내장 WebView로 직접 브라우징"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="13" rx="1.5"/><path d="M8 21h8M12 17v4"/></svg> Native</button>
+            <button id="mode-ai" class="mode-btn" title="AI(Playwright)가 조종 — CDP 스크린캐스트"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="9" width="16" height="10" rx="2"/><path d="M12 9V5.5"/><circle cx="12" cy="4" r="1.3"/><path d="M9.5 14h.01M14.5 14h.01"/></svg> AI 제어</button>
+          </div>
+          <div id="browser-status" class="browser-status stopped">○ Stopped</div>
+        </div>
+
+        <!-- Native mode: address bar (drives the embedded child WebView) -->
+        <div class="browser-nav" id="browser-nav">
+          <button id="nav-back" class="secondary" title="뒤로">&#9664;</button>
+          <button id="nav-forward" class="secondary" title="앞으로">&#9654;</button>
+          <button id="nav-reload" class="secondary" title="새로고침">&#8635;</button>
+          <input type="text" id="nav-url" placeholder="주소 입력 — 예: github.com" spellcheck="false" />
+          <button id="nav-go">Go</button>
+        </div>
+
+        <!-- AI mode: CDP / Playwright controls -->
+        <div class="browser-controls" id="browser-ai-controls" style="display:none">
+          <input type="text" id="browser-url" placeholder="Start URL (optional) — e.g. https://example.com" spellcheck="false" />
+          <input type="number" id="browser-port" value="9222" min="1024" max="65535" title="CDP debugging port" />
+          <button id="btn-browser-launch">Launch</button>
+          <button id="btn-browser-stop" class="secondary">Stop</button>
+          <button id="btn-browser-refresh" class="secondary" title="Refresh status">&#8635;</button>
+        </div>
+
+        <!-- Live screencast surface (Phase A) -->
+        <div id="browser-viewport">
+          <img id="browser-screen" alt="" draggable="false" />
+          <div id="browser-placeholder">
+            <p><b>Native</b>: 주소를 입력하면 앱 내장 브라우저가 여기 표시됩니다.</p>
+            <p class="muted"><b>AI 제어</b> 모드로 바꾸면 AI(Playwright MCP)가 조종하는 화면이 표시됩니다.</p>
+          </div>
+        </div>
+
+        <details class="browser-conn" id="browser-conn" style="display:none">
+          <summary>AI 연결 설정 (Playwright MCP)</summary>
+          <div class="browser-info">
+            <div class="info-row">
+              <label>CDP Endpoint</label>
+              <code id="browser-endpoint">—</code>
+              <button class="copy-btn secondary" data-copy="endpoint">Copy</button>
+            </div>
+            <div class="info-row">
+              <label>Playwright MCP (CLI)</label>
+              <code id="browser-mcp-cli">—</code>
+              <button class="copy-btn secondary" data-copy="mcp-cli">Copy</button>
+            </div>
+            <div class="info-row">
+              <label>Claude Code 등록</label>
+              <code id="browser-mcp-add">—</code>
+              <button class="copy-btn secondary" data-copy="mcp-add">Copy</button>
+            </div>
+          </div>
+        </details>
+      </div>
+
+      <div id="terminal-container">
+        <div id="terminal-welcome">
+          <p>Click <strong>+ Terminal</strong> to open a new terminal session.</p>
+          <div id="shell-options">
+            <button class="shell-btn" data-shell="">Default Shell</button>
+            <button class="shell-btn" data-shell="powershell.exe">PowerShell</button>
+            <button class="shell-btn" data-shell="cmd.exe">CMD</button>
+            <button class="shell-btn" data-shell="bash">Bash</button>
+          </div>
+          <div id="ssh-connect">
+            <label>SSH Connection</label>
+            <div id="ssh-fields">
+              <input type="text" id="ssh-input" placeholder="user@hostname" spellcheck="false" />
+              <input type="number" id="ssh-port" placeholder="22" value="22" min="1" max="65535" />
+              <input type="password" id="ssh-password" placeholder="Password (or leave blank for key)" />
+              <input type="text" id="ssh-keyfile" placeholder="Key file path (optional)" spellcheck="false" />
+            </div>
+            <button id="btn-ssh-connect">Connect</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── Session list (right) ── -->
+    <aside id="session-panel">
+      <div id="session-header">
+        <span>Sessions</span>
+      </div>
+      <ul id="session-list">
+        <li class="session-empty">No active sessions.</li>
+      </ul>
+    </aside>
+  </div>
+
+  <!-- ── Modal for add/edit command ── -->
+  <div id="modal-overlay" class="hidden">
+    <div id="modal">
+      <h2 id="modal-title">Add Command</h2>
+      <form id="command-form">
+        <label>Name <input type="text" id="input-name" required placeholder="e.g. Git Status" /></label>
+        <label>Command <input type="text" id="input-command" required placeholder="e.g. git status" /></label>
+        <label>Description <input type="text" id="input-description" placeholder="Short description (optional)" /></label>
+        <div class="modal-actions">
+          <button type="button" id="btn-cancel" class="secondary">Cancel</button>
+          <button type="submit" id="btn-save">Save</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <div id="autocomplete-popup" class="hidden">
+    <ul id="autocomplete-list"></ul>
+  </div>
+
+  <!-- Close / remember-session popup -->
+  <div id="close-modal" class="hidden">
+    <div class="modal-box">
+      <h2>종료</h2>
+      <p>이전에 열려 있던 세션을 기억해서 다음 실행 때 복원할까요?</p>
+      <label class="chk-row"><input type="checkbox" id="close-remember-pref" /> 다음부터 묻지 않고 이 선택 기억</label>
+      <div class="modal-actions">
+        <button id="close-cancel" class="secondary">취소</button>
+        <button id="close-forget" class="secondary">그냥 종료</button>
+        <button id="close-save">기억하고 종료</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- SSH password prompt (session restore for password-auth sessions) -->
+  <div id="sshpw-modal" class="hidden">
+    <div class="modal-box">
+      <h2>SSH 재접속</h2>
+      <p id="sshpw-target"></p>
+      <input type="password" id="sshpw-input" placeholder="비밀번호" autocomplete="off" />
+      <div class="modal-actions">
+        <button id="sshpw-skip" class="secondary">건너뛰기</button>
+        <button id="sshpw-connect">접속</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="toast" class="hidden"></div>
+
+  <script src="vendor/xterm.min.js"></script>
+  <script src="vendor/addon-fit.min.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

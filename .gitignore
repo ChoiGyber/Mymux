@@ -4,3 +4,10 @@ dist/
 .bkit/
 release/
 *.log
+
+# Rust build artifacts
+/target/
+**/*.rs.bk
+
+# OMC tooling runtime state
+.omc/
