@@ -5,6 +5,7 @@ mod commands;
 mod explorer;
 mod session;
 mod terminal;
+mod update;
 
 use std::sync::Arc;
 use browser::BrowserManager;
@@ -15,6 +16,7 @@ fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_clipboard_manager::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(Arc::new(TerminalManager::new()))
         .manage(Arc::new(ExplorerManager::new()))
         .manage(Arc::new(BrowserManager::new()))
@@ -55,6 +57,8 @@ fn main() {
             browser::browser_pane_hide,
             browser::browser_pane_close,
             browser::browser_pane_url,
+            update::update_check,
+            update::update_install,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Mymux");

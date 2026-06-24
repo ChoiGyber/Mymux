@@ -2289,3 +2289,50 @@ function syncExplorerOnCd(input, ptyId) {
     }
   }, 300);
 }
+
+// ── Auto-update: reveal the "Update" button when a newer release exists ──
+window.addEventListener("DOMContentLoaded", () => {
+  let started = false;
+  const start = async () => {
+    if (started) return;
+    started = true;
+
+    // Wait for the Tauri IPC bridge.
+    while (!window.__TAURI__ || !window.__TAURI__.core) {
+      await new Promise((r) => setTimeout(r, 100));
+    }
+    const inv = window.__TAURI__.core.invoke;
+    const btn = document.getElementById("btn-update");
+    if (!btn) return;
+
+    let newVersion = null;
+    try {
+      newVersion = await inv("update_check");
+    } catch (err) {
+      // Network/endpoint errors are non-fatal — just stay hidden.
+      console.warn("update_check failed:", err);
+      return;
+    }
+    if (!newVersion) return; // already up to date
+
+    btn.title = `새 버전 ${newVersion} — 클릭하면 업데이트`;
+    btn.classList.remove("hidden");
+
+    btn.addEventListener("click", async () => {
+      if (btn.disabled) return;
+      btn.disabled = true;
+      const original = btn.textContent;
+      btn.textContent = "업데이트 중…";
+      try {
+        // Downloads, installs, and relaunches into the new version.
+        await inv("update_install");
+      } catch (err) {
+        btn.disabled = false;
+        btn.textContent = original;
+        if (typeof toast === "function") toast("업데이트 실패: " + err, true);
+        else console.error("update_install failed:", err);
+      }
+    });
+  };
+  start();
+});

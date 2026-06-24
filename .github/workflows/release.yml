@@ -27,9 +27,9 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # macOS universal binary — runs on both Apple Silicon and Intel.
-          - platform: macos-latest
-            args: "--target universal-apple-darwin"
+          # macOS is built and uploaded manually from a Mac (see RELEASING.md),
+          # so it is intentionally omitted here. Keep the version in
+          # tauri.conf.json in sync so the manual Mac build matches this release.
           - platform: ubuntu-latest
             args: ""
           - platform: windows-latest
@@ -40,9 +40,6 @@ jobs:
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
-        with:
-          # macOS universal build needs both arch targets compiled.
-          targets: ${{ matrix.platform == 'macos-latest' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
 
       - name: Cache cargo build
         uses: Swatinem/rust-cache@v2
@@ -70,6 +67,10 @@ jobs:
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Signs the updater artifacts and emits latest.json so installed apps
+          # can verify and auto-update. Set these as repository secrets.
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
           # The Tauri app lives in a subdirectory of the Cargo workspace.
           projectPath: crates/mycli-desktop
