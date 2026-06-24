@@ -31,9 +31,12 @@ jobs:
           # so it is intentionally omitted here. Keep the version in
           # tauri.conf.json in sync so the manual Mac build matches this release.
           - platform: ubuntu-latest
-            args: ""
+            args: "--bundles deb,appimage"
+          # Windows: build only the NSIS installer (.exe). The MSI (WiX) target
+          # is the usual culprit when "all" fails and takes the whole job down
+          # with it — so we pin to NSIS for a reliable .exe + updater artifact.
           - platform: windows-latest
-            args: ""
+            args: "--bundles nsis"
 
     steps:
       - uses: actions/checkout@v4
