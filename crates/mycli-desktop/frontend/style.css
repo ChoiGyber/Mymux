@@ -1002,10 +1002,21 @@ html[data-theme="light"] #toolbar-actions #btn-update:hover {
   opacity: 0.6;
 }
 .pane-statusbar .pane-label {
-  flex: 1;
+  flex: 0 0 auto;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+/* Working directory shown next to the pane label so sessions are distinguishable. */
+.pane-statusbar .pane-cwd {
+  flex: 1;
+  min-width: 0;
+  margin-left: 6px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--text-dim);
+  font-size: 11px;
 }
 .pane-actions {
   display: flex;

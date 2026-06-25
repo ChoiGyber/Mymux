@@ -520,12 +520,13 @@ async function createPane(parentEl, shell, args, cwd) {
   });
 
   const sessionLabel = shell === "ssh" ? "SSH" : (shell || "Terminal");
-  terminals.set(id, { term, fitAddon, paneEl, type: shell === "ssh" ? "ssh" : "local", label: sessionLabel });
+  terminals.set(id, { term, fitAddon, paneEl, type: shell === "ssh" ? "ssh" : "local", label: sessionLabel, cwd: cwd || null });
 
   // Status bar: label + split/close controls
   statusBar.innerHTML = `
     <span class="pane-grip" title="드래그해서 패인 이동">&#10287;</span>
     <span class="pane-label">${esc(sessionLabel)}</span>
+    ${shell !== "ssh" ? `<span class="pane-cwd" title="${esc(cwd || "")}">${esc(cwd ? baseName(cwd) : "~")}</span>` : ""}
     <span class="pane-actions">
       <button class="pane-btn split-h" title="Split horizontally (Ctrl+Shift+D)">&#8596;</button>
       <button class="pane-btn split-v" title="Split vertically (Ctrl+Shift+E)">&#8597;</button>
@@ -1799,6 +1800,18 @@ function sessionLabelFor(t) {
   return t.customName || (t.sshTarget ? `SSH: ${t.sshTarget}` : (t.label || "Terminal"));
 }
 
+// Update a pane's working-directory label (shown next to the pane label).
+function setPaneCwd(ptyId, path) {
+  const t = terminals.get(ptyId);
+  if (!t) return;
+  t.cwd = path || null;
+  const el = t.paneEl && t.paneEl.querySelector(".pane-cwd");
+  if (el) {
+    el.textContent = path ? baseName(path) : "~";
+    el.title = path || "";
+  }
+}
+
 // Rebuild the full session list, grouped by tab.
 function refreshSessionList() {
   if (!sessionListEl) return;
@@ -2439,6 +2452,7 @@ function syncExplorerOnCd(input, ptyId) {
     invoke("explorer_home_dir").then((home) => {
       currentExplorerPath = home;
       loadExplorer();
+      setPaneCwd(ptyId, home);
     });
     return;
   }
@@ -2458,9 +2472,10 @@ function syncExplorerOnCd(input, ptyId) {
   setTimeout(async () => {
     try {
       await invoke("explorer_list_local", { path: targetPath });
-      // Success — the path exists, update explorer
+      // Success — the path exists, update explorer + the pane's cwd label.
       currentExplorerPath = targetPath;
       loadExplorer();
+      setPaneCwd(ptyId, targetPath);
     } catch {
       // Path doesn't exist or error, don't update
     }
