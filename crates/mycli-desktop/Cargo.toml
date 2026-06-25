@@ -1,7 +1,13 @@
 [package]
 name = "mycli-desktop"
-version = "0.1.2"
+version = "0.1.3"
 edition = "2024"
+
+# The executable (and therefore the OS process / Task Manager name) is "Mymux".
+# The Cargo *package* stays "mycli-desktop" so `-p mycli-desktop` keeps working.
+[[bin]]
+name = "Mymux"
+path = "src/main.rs"
 
 [dependencies]
 mycli-core = { path = "../mycli-core" }
