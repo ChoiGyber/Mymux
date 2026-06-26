@@ -134,6 +134,12 @@ pub fn read_text_file(path: String) -> Result<String, String> {
     Ok(String::from_utf8_lossy(&buf).to_string())
 }
 
+/// Save text back to a local file (overwrites). Used by the in-app editor.
+#[tauri::command]
+pub fn write_text_file(path: String, content: String) -> Result<(), String> {
+    std::fs::write(&path, content).map_err(|e| e.to_string())
+}
+
 /// Open a path with the OS default application (used for binary/exe files).
 #[tauri::command]
 pub fn open_external(path: String) -> Result<(), String> {

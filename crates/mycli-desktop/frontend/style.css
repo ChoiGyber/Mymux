@@ -1,5 +1,14 @@
 /* Korean UI font: Noto Sans KR (loaded via Google Fonts in index.html). */
 
+/* Bundled fixed-width Korean coding font for the terminal/editor (OFL). */
+@font-face {
+  font-family: "D2Coding";
+  src: url("vendor/D2Coding.ttf") format("truetype");
+  font-weight: normal;
+  font-style: normal;
+  font-display: swap;
+}
+
 * {
   margin: 0;
   padding: 0;
@@ -313,10 +322,22 @@ html[data-theme="light"] #toolbar-actions #btn-update:hover {
   border-color: var(--accent);
 }
 
+#explorer-search {
+  margin: 0 8px 4px;
+  padding: 5px 8px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg);
+  color: var(--text);
+  font-size: 12px;
+  flex-shrink: 0;
+}
+#explorer-search:focus { outline: none; border-color: var(--accent); }
 #file-list {
   list-style: none;
   overflow-y: auto;
   flex: 1;
+  min-height: 0;
   padding: 2px;
 }
 
@@ -441,21 +462,6 @@ html[data-theme="light"] #toolbar-actions #btn-update:hover {
 
 /* Prominent Send button at the top-right of each saved-command box */
 .cmd-item { position: relative; }
-.cmd-item .cmd-name { padding-right: 56px; }
-.cmd-item .send-top {
-  position: absolute;
-  top: 8px;
-  right: 8px;
-  padding: 3px 12px;
-  background: var(--accent);
-  color: #fff;
-  border: none;
-  border-radius: var(--radius);
-  font-size: 11px;
-  cursor: pointer;
-  z-index: 1;
-}
-.cmd-item .send-top:hover { background: var(--accent-hover); }
 .file-item-actions button {
   padding: 2px 6px;
   border: 1px solid var(--border);
@@ -502,14 +508,26 @@ html[data-theme="light"] #toolbar-actions #btn-update:hover {
   color: #fff;
 }
 
+#cmd-search {
+  margin: 4px 6px;
+  padding: 5px 8px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg);
+  color: var(--text);
+  font-size: 12px;
+  flex-shrink: 0;
+}
+#cmd-search:focus { outline: none; border-color: var(--accent); }
 #command-list {
   list-style: none;
   overflow-y: auto;
   flex: 1;
+  min-height: 0;
   padding: 4px;
 }
 .cmd-item {
-  padding: 8px 8px;
+  padding: 5px 8px;
   border-radius: 4px;
   cursor: pointer;
   border: 1px solid transparent;
@@ -539,26 +557,49 @@ html[data-theme="light"] #toolbar-actions #btn-update:hover {
   color: var(--text-dim);
   margin-top: 1px;
 }
-.cmd-item-actions {
-  display: flex;
-  gap: 4px;
-  margin-top: 4px;
-  opacity: 0;
-  transition: opacity 0.1s;
-}
-.cmd-item:hover .cmd-item-actions { opacity: 1; }
-.cmd-item-actions button {
-  padding: 2px 8px;
+/* Command line: text (left, truncated) + actions (right end) */
+.cmd-row { display: flex; align-items: center; gap: 6px; margin-top: 1px; }
+.cmd-row .cmd-text { flex: 1; min-width: 0; margin: 0; }
+.cmd-actions { display: flex; align-items: center; gap: 3px; flex-shrink: 0; }
+.cmd-actions button {
+  padding: 2px 7px;
+  font-size: 11px;
+  line-height: 1;
   border: 1px solid var(--border);
   border-radius: 3px;
   background: var(--bg);
   color: var(--text-dim);
-  font-size: 11px;
   cursor: pointer;
 }
-.cmd-item-actions button:hover { color: var(--text); background: var(--border); }
-.cmd-item-actions .send-btn:hover { background: var(--accent); color: #fff; border-color: var(--accent); }
-.cmd-item-actions .del-btn:hover { background: var(--red); color: #fff; border-color: var(--red); }
+.cmd-actions button:hover { color: var(--text); background: var(--border); }
+.cmd-actions .send-btn { background: var(--accent); color: #fff; border-color: var(--accent); }
+.cmd-actions .send-btn:hover { background: var(--accent-hover); border-color: var(--accent-hover); }
+.cmd-actions .fav-btn { font-size: 13px; padding: 1px 5px; }
+.cmd-actions .fav-btn.on { color: var(--accent); }
+/* Hover-reveal: ★/Copy/Edit appear on hover; Send stays visible. */
+.cmd-actions .fav-btn,
+.cmd-actions .copy-btn,
+.cmd-actions .edit-btn { opacity: 0; transition: opacity 0.1s; }
+.cmd-item:hover .cmd-actions .fav-btn,
+.cmd-item:hover .cmd-actions .copy-btn,
+.cmd-item:hover .cmd-actions .edit-btn { opacity: 1; }
+/* Delete (×) at the top-right corner, hover-reveal. */
+.cmd-item .cmd-x {
+  position: absolute;
+  top: 3px;
+  right: 5px;
+  border: none;
+  background: transparent;
+  color: var(--text-dim);
+  font-size: 14px;
+  line-height: 1;
+  padding: 2px 4px;
+  cursor: pointer;
+  opacity: 0;
+}
+.cmd-item:hover .cmd-x { opacity: 0.7; }
+.cmd-item .cmd-x:hover { opacity: 1; color: var(--red); }
+.cmd-item .cmd-name { padding-right: 22px; }
 
 #empty-state {
   padding: 20px;
@@ -601,12 +642,15 @@ html[data-theme="light"] #toolbar-actions #btn-update:hover {
   border-bottom-color: var(--accent);
 }
 .tab .tab-close,
+.tab .tab-rename,
 .browser-tab .tab-close {
-  font-size: 14px;
+  font-size: 13px;
   opacity: 0.4;
   cursor: pointer;
 }
+.tab .tab-rename { margin-left: 6px; }
 .tab .tab-close:hover,
+.tab .tab-rename:hover,
 .browser-tab .tab-close:hover { opacity: 1; }
 
 #terminal-container {
@@ -714,6 +758,91 @@ html[data-theme="light"] #toolbar-actions #btn-update:hover {
 /* HTML files render in an isolated iframe (in-app browser preview). */
 .viewer-body.html { padding: 0; overflow: hidden; }
 .viewer-frame { width: 100%; height: 100%; border: 0; background: #fff; }
+
+/* Viewer header tools (edit / find / autosave / save) */
+.viewer-tools { display: flex; align-items: center; gap: 6px; flex-shrink: 0; }
+.vtool {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid transparent;
+  background: none;
+  color: var(--text-dim);
+  cursor: pointer;
+  font-size: 14px;
+  padding: 3px 6px;
+  border-radius: 4px;
+  line-height: 1;
+}
+.vtool:hover { color: var(--text); background: var(--bg); }
+/* Unsaved indicator: brighten the (monochrome) save icon, no color accent. */
+#viewer-save-btn.dirty { color: var(--text); }
+.vtool-chk { display: flex; align-items: center; gap: 3px; font-size: 11px; color: var(--text-dim); cursor: pointer; }
+
+/* In-app code editor */
+.viewer-body.editor-wrap { padding: 0; overflow: hidden; }
+.editor { display: flex; flex-direction: column; height: 100%; }
+.editor-main { display: flex; flex: 1; min-height: 0; }
+.editor-gutter {
+  flex-shrink: 0;
+  padding: 10px 8px 10px 12px;
+  text-align: right;
+  background: var(--surface);
+  color: var(--text-dim);
+  border-right: 1px solid var(--border);
+  font-family: "D2Coding", "Consolas", monospace;
+  font-size: 13px;
+  line-height: 1.5;
+  white-space: pre;
+  overflow: hidden;
+  user-select: none;
+}
+.editor-area {
+  flex: 1;
+  padding: 10px 12px;
+  border: none;
+  outline: none;
+  resize: none;
+  background: var(--bg);
+  color: var(--text);
+  font-family: "D2Coding", "Consolas", monospace;
+  font-size: 13px;
+  line-height: 1.5;
+  white-space: pre;
+  overflow: auto;
+  tab-size: 4;
+}
+.editor-find {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 5px 8px;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+  flex-wrap: wrap;
+}
+.editor-find.hidden { display: none; }
+.editor-find input {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--text);
+  font-size: 12px;
+  padding: 3px 6px;
+}
+.editor-find .ef-find, .editor-find .ef-replace { width: 130px; }
+.editor-find .ef-goto { width: 56px; }
+.editor-find button {
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text-dim);
+  border-radius: 4px;
+  font-size: 12px;
+  padding: 3px 7px;
+  cursor: pointer;
+}
+.editor-find button:hover { color: var(--text); border-color: var(--accent); }
+.editor-find .ef-sep { font-size: 11px; color: var(--text-dim); margin-left: 4px; }
 
 /* Right-click context menu (file viewer text selection) */
 .ctx-menu {
@@ -1004,21 +1133,6 @@ html[data-theme="light"] #toolbar-actions #btn-update:hover {
 #btn-theme .icon { vertical-align: -0.18em; }
 
 /* Command item: favorite star + quick (X) delete */
-.cmd-item-actions .fav-btn {
-  font-size: 14px;
-  line-height: 1;
-  color: var(--text-dim);
-  padding: 2px 6px;
-}
-.cmd-item-actions .fav-btn.on { color: var(--accent); }
-.cmd-item-actions .cmd-x {
-  margin-left: auto;
-  font-size: 15px;
-  line-height: 1;
-  color: var(--text-dim);
-  padding: 2px 8px;
-}
-.cmd-item-actions .cmd-x:hover { color: var(--red); background: transparent; }
 .cmd-item.is-fav { border-left: 2px solid var(--accent); }
 
 /* Generic centered modal (close prompt, ssh password prompt) */
@@ -1119,7 +1233,7 @@ html[data-theme="light"] #toolbar-actions #btn-update:hover {
 }
 .ssh-dd-item:hover { background: var(--surface-hover); }
 .ssh-dd-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text); }
-.ssh-dd-x {
+.ssh-dd-x, .ssh-dd-tmux {
   border: none;
   background: none;
   color: var(--text-dim);
@@ -1128,6 +1242,7 @@ html[data-theme="light"] #toolbar-actions #btn-update:hover {
   padding: 0 6px;
 }
 .ssh-dd-x:hover { color: var(--red); }
+.ssh-dd-tmux:hover { color: var(--accent); }
 
 /* Explorer "go to path" input (bottom of the explorer panel). */
 #explorer-goto {
@@ -1173,6 +1288,14 @@ html[data-theme="light"] #toolbar-actions #btn-update:hover {
 .pane-leaf.focused {
   border-color: var(--accent);
 }
+
+/* Task-completion notification: pulse the pane/session border (terminal bell). */
+@keyframes notifyPulse {
+  0%   { box-shadow: inset 0 0 0 2px var(--accent); }
+  100% { box-shadow: inset 0 0 0 2px transparent; }
+}
+.pane-leaf.notify-flash { animation: notifyPulse 0.7s ease-in-out 3; }
+.session-item.notify-flash { animation: notifyPulse 0.7s ease-in-out 3; }
 
 .pane-divider {
   flex-shrink: 0;
@@ -1285,6 +1408,7 @@ html[data-theme="light"] #toolbar-actions #btn-update:hover {
   list-style: none;
   overflow-y: auto;
   flex: 1;
+  min-height: 0; /* allow the list to scroll instead of overflowing the panel */
   padding: 4px;
 }
 #session-footer {
@@ -1381,6 +1505,26 @@ html[data-theme="light"] #toolbar-actions #btn-update:hover {
 }
 .session-item:hover .session-rename { opacity: 1; }
 .session-rename:hover { color: var(--accent); }
+.session-close {
+  border: none;
+  background: transparent;
+  color: var(--text-dim);
+  font-size: 15px;
+  line-height: 1;
+  cursor: pointer;
+  opacity: 0;
+  flex-shrink: 0;
+  padding: 0 2px;
+}
+.session-item:hover .session-close { opacity: 0.7; }
+.session-close:hover { opacity: 1; color: var(--red); }
+.session-item { cursor: grab; }
+.session-group.drop-target {
+  background: var(--surface-hover);
+  outline: 1px dashed var(--accent);
+  outline-offset: -2px;
+  color: var(--accent);
+}
 
 /* Inline rename input (session list + tabs) */
 .rename-input {

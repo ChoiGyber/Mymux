@@ -74,6 +74,7 @@ let explorerHistIdx = -1;
 // Explorer file clipboard for copy/cut → paste into another folder (local only).
 let fileClipboard = null; // { path, name, mode: 'copy' | 'cut' }
 let explorerCtxEntry = null;
+let explorerEntries = []; // current dir listing (for in-folder name search)
 
 // ── Init: wait for both DOM and Tauri ──
 window.addEventListener("DOMContentLoaded", async () => {
@@ -138,6 +139,15 @@ window.addEventListener("DOMContentLoaded", async () => {
   initBrowserPanel();
   applyBrowserEnabled();
 
+  // Preload the embedded D2Coding font so terminals measure the correct cell
+  // size (fixed-width Korean). Once fonts finish, refresh any open panes.
+  try { await document.fonts.load('1em "D2Coding"'); } catch {}
+  document.fonts.ready.then(() => {
+    for (const [, t] of terminals) {
+      try { if (t.term.clearTextureAtlas) t.term.clearTextureAtlas(); t.fitAddon.fit(); } catch {}
+    }
+  });
+
   // Restore the previous session if one was saved; otherwise open a default terminal.
   try {
     const restored = await restoreSession();
@@ -195,10 +205,17 @@ async function setupListeners() {
   const sshModalCancel = document.getElementById("ssh-modal-cancel");
   if (sshModalCancel) sshModalCancel.addEventListener("click", closeSshModal);
   if (sshModalConnect) sshModalConnect.addEventListener("click", submitSshModal);
+  const sshSaveCmd = document.getElementById("ssh-save-cmd");
+  if (sshSaveCmd) sshSaveCmd.addEventListener("click", saveSshAsCommand);
   const sshAddrToggle = document.getElementById("ssh-addr-toggle");
   if (sshAddrToggle) sshAddrToggle.addEventListener("click", (e) => { e.stopPropagation(); toggleSshDropdown(); });
   const sshKeyPick = document.getElementById("ssh-key-pick");
   if (sshKeyPick) sshKeyPick.addEventListener("click", pickSshKeyFile);
+  const sshTmuxChk = document.getElementById("ssh-tmux");
+  const sshTmuxNameInput = document.getElementById("ssh-tmux-name");
+  if (sshTmuxChk && sshTmuxNameInput) {
+    sshTmuxChk.addEventListener("change", () => { sshTmuxNameInput.style.display = sshTmuxChk.checked ? "" : "none"; });
+  }
   const sshAddrInput = document.getElementById("ssh-modal-input");
   if (sshAddrInput) sshAddrInput.addEventListener("input", () => toggleSshDropdown(false));
   if (sshModalEl) {
@@ -222,6 +239,8 @@ async function setupListeners() {
     });
   }
   btnAdd.addEventListener("click", () => openModal());
+  const cmdSearch = document.getElementById("cmd-search");
+  if (cmdSearch) cmdSearch.addEventListener("input", () => renderCmdList(savedCmds));
   btnCancel.addEventListener("click", closeModal);
   modalOverlay.addEventListener("click", (e) => { if (e.target === modalOverlay) closeModal(); });
   form.addEventListener("submit", handleSave);
@@ -229,6 +248,8 @@ async function setupListeners() {
   // Explorer
   btnExplorerUp.addEventListener("click", goUp);
   explorerMode.addEventListener("change", onExplorerModeChange);
+  const expSearch = document.getElementById("explorer-search");
+  if (expSearch) expSearch.addEventListener("input", () => renderFileList(explorerEntries));
   const btnExpBack = document.getElementById("btn-explorer-back");
   const btnExpFwd = document.getElementById("btn-explorer-forward");
   if (btnExpBack) btnExpBack.addEventListener("click", explorerBack);
@@ -349,6 +370,22 @@ async function setupListeners() {
   const vClose = document.getElementById("viewer-close");
   if (vClose) vClose.addEventListener("click", closeViewer);
 
+  // Viewer/editor header tools.
+  const vEdit = document.getElementById("viewer-edit-toggle");
+  if (vEdit) vEdit.addEventListener("click", toggleEditMode);
+  const vSave = document.getElementById("viewer-save-btn");
+  if (vSave) vSave.addEventListener("click", () => saveViewerFile(activeViewerFileObj()));
+  const vFind = document.getElementById("viewer-find-btn");
+  if (vFind) vFind.addEventListener("click", () => {
+    const ed = document.querySelector("#viewer-body .editor");
+    if (ed) toggleFindBar(ed);
+  });
+  const vAuto = document.getElementById("viewer-autosave");
+  if (vAuto) vAuto.addEventListener("change", () => {
+    try { localStorage.setItem("mymux.autosave", vAuto.checked ? "true" : "false"); } catch {}
+    if (vAuto.checked) { const f = activeViewerFileObj(); if (f && f.dirty) saveViewerFile(f); }
+  });
+
   // Route in-app links (markdown/HTML viewer): web → embedded browser,
   // local file/folder → Explorer / viewer. Delegated so it survives re-renders.
   const vBody = document.getElementById("viewer-body");
@@ -395,6 +432,7 @@ async function loadExplorer() {
     } else {
       entries = await invoke("explorer_list_local", { path: currentExplorerPath });
     }
+    explorerEntries = entries;
     renderFileList(entries);
   } catch (err) {
     fileListEl.innerHTML = `<li style="padding:10px;color:var(--red);font-size:12px;">${esc(String(err))}</li>`;
@@ -403,9 +441,11 @@ async function loadExplorer() {
 
 function renderFileList(entries) {
   fileListEl.innerHTML = "";
+  const q = (document.getElementById("explorer-search")?.value || "").trim().toLowerCase();
   for (const entry of entries) {
     // Skip hidden files starting with .
     if (entry.name.startsWith(".")) continue;
+    if (q && !entry.name.toLowerCase().includes(q)) continue;
 
     const li = document.createElement("li");
     li.className = "file-item";
@@ -889,7 +929,13 @@ async function openFileViewer(entry) {
     toast(String(e), true);
     return;
   }
-  const file = { id: ++viewerFileSeq, path: entry.path, name: entry.name, ext, content };
+  const file = {
+    id: ++viewerFileSeq, path: entry.path, name: entry.name, ext, content,
+    sftpId: sftpId, // null for local, else the remote SFTP session (for saving back)
+    dirty: false,
+    // Code/text open straight into the editor; md/html open as a preview first.
+    editing: !(ext === "md" || ext === "markdown" || ext === "html" || ext === "htm"),
+  };
   viewerFiles.push(file);
   activeViewerId = file.id;
   renderViewerTabs();
@@ -898,13 +944,18 @@ async function openFileViewer(entry) {
   setViewerView(true);
 }
 
-// Render the active file's content into the viewer body.
+// Render the active file's content into the viewer body (editor or preview).
 function renderViewerBody(file) {
   viewerDir = dirOf(file.path);
   const body = document.getElementById("viewer-body");
-  if (file.ext === "html" || file.ext === "htm") {
+  const isHtml = file.ext === "html" || file.ext === "htm";
+  const isMd = file.ext === "md" || file.ext === "markdown";
+  if (file.editing) {
+    body.className = "viewer-body editor-wrap";
+    body.innerHTML = "";
+    body.appendChild(buildEditor(file));
+  } else if (isHtml) {
     // Render HTML in an isolated, sandboxed iframe — an in-app browser preview.
-    // Scripts run in an opaque origin and cannot reach the app or local files.
     body.className = "viewer-body html";
     body.innerHTML = "";
     const frame = document.createElement("iframe");
@@ -912,7 +963,7 @@ function renderViewerBody(file) {
     frame.setAttribute("sandbox", "allow-scripts allow-popups allow-forms allow-modals");
     frame.srcdoc = file.content;
     body.appendChild(frame);
-  } else if (file.ext === "md" || file.ext === "markdown") {
+  } else if (isMd) {
     body.className = "viewer-body markdown";
     body.innerHTML = renderMarkdown(file.content);
   } else {
@@ -921,6 +972,192 @@ function renderViewerBody(file) {
     pre.textContent = file.content;
     body.innerHTML = "";
     body.appendChild(pre);
+  }
+  renderViewerTools();
+}
+
+// ── In-app editor: textarea + line-number gutter + find/replace + go-to-line ──
+let autosaveTimer = null;
+
+function autosaveEnabled() {
+  try { return localStorage.getItem("mymux.autosave") === "true"; } catch { return false; }
+}
+
+function buildEditor(file) {
+  const wrap = document.createElement("div");
+  wrap.className = "editor";
+  wrap.innerHTML = `
+    <div class="editor-find hidden">
+      <input class="ef-find" placeholder="찾기" spellcheck="false" />
+      <button class="ef-prev" title="이전">↑</button>
+      <button class="ef-next" title="다음">↓</button>
+      <input class="ef-replace" placeholder="바꾸기" spellcheck="false" />
+      <button class="ef-rep">바꾸기</button>
+      <button class="ef-repall">모두</button>
+      <span class="ef-sep">줄</span>
+      <input class="ef-goto" type="number" min="1" title="줄 번호" />
+      <button class="ef-go">이동</button>
+      <button class="ef-close" title="닫기">&times;</button>
+    </div>
+    <div class="editor-main">
+      <div class="editor-gutter"></div>
+      <textarea class="editor-area" spellcheck="false" wrap="off"></textarea>
+    </div>`;
+  const ta = wrap.querySelector(".editor-area");
+  const gutter = wrap.querySelector(".editor-gutter");
+  ta.value = file.content;
+  const refreshGutter = () => {
+    const lines = ta.value.split("\n").length;
+    let s = "";
+    for (let i = 1; i <= lines; i++) s += i + "\n";
+    gutter.textContent = s;
+    gutter.scrollTop = ta.scrollTop;
+  };
+  refreshGutter();
+  ta.addEventListener("input", () => {
+    file.content = ta.value;
+    if (!file.dirty) { file.dirty = true; renderViewerTabs(); renderViewerTools(); }
+    refreshGutter();
+    if (autosaveEnabled()) {
+      clearTimeout(autosaveTimer);
+      autosaveTimer = setTimeout(() => saveViewerFile(file), 1000);
+    }
+  });
+  ta.addEventListener("scroll", () => { gutter.scrollTop = ta.scrollTop; });
+  ta.addEventListener("keydown", (e) => {
+    if ((e.ctrlKey || e.metaKey) && (e.key === "s" || e.key === "S")) { e.preventDefault(); saveViewerFile(file); }
+    else if ((e.ctrlKey || e.metaKey) && (e.key === "f" || e.key === "F")) { e.preventDefault(); toggleFindBar(wrap, true); }
+    else if ((e.ctrlKey || e.metaKey) && (e.key === "h" || e.key === "H")) { e.preventDefault(); toggleFindBar(wrap, true); }
+  });
+  wireFindBar(wrap, ta);
+  setTimeout(() => ta.focus(), 0);
+  return wrap;
+}
+
+function toggleFindBar(wrap, show) {
+  const bar = wrap.querySelector(".editor-find");
+  if (!bar) return;
+  if (show === undefined) show = bar.classList.contains("hidden");
+  bar.classList.toggle("hidden", !show);
+  if (show) { const f = bar.querySelector(".ef-find"); if (f) f.focus(); }
+}
+
+function wireFindBar(wrap, ta) {
+  const q = wrap.querySelector(".ef-find");
+  const rep = wrap.querySelector(".ef-replace");
+  const findFrom = (backward) => {
+    const term = q.value;
+    if (!term) return;
+    const val = ta.value;
+    let idx;
+    if (backward) {
+      const before = val.lastIndexOf(term, Math.max(0, ta.selectionStart - 1));
+      idx = before;
+    } else {
+      idx = val.indexOf(term, ta.selectionEnd);
+      if (idx < 0) idx = val.indexOf(term, 0); // wrap around
+    }
+    if (idx < 0) { toast("찾을 수 없음"); return; }
+    ta.focus();
+    ta.setSelectionRange(idx, idx + term.length);
+    // Scroll the match into view (approximate by line).
+    const line = val.slice(0, idx).split("\n").length;
+    const lh = parseFloat(getComputedStyle(ta).lineHeight) || 18;
+    ta.scrollTop = Math.max(0, (line - 3) * lh);
+  };
+  wrap.querySelector(".ef-next").addEventListener("click", () => findFrom(false));
+  wrap.querySelector(".ef-prev").addEventListener("click", () => findFrom(true));
+  q.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") { e.preventDefault(); findFrom(e.shiftKey); }
+    else if (e.key === "Escape") { e.preventDefault(); toggleFindBar(wrap, false); ta.focus(); }
+  });
+  wrap.querySelector(".ef-rep").addEventListener("click", () => {
+    const term = q.value;
+    if (!term) return;
+    const sel = ta.value.slice(ta.selectionStart, ta.selectionEnd);
+    if (sel === term) {
+      const start = ta.selectionStart;
+      ta.setRangeText(rep.value, start, ta.selectionEnd, "end");
+      ta.dispatchEvent(new Event("input"));
+    }
+    findFrom(false);
+  });
+  wrap.querySelector(".ef-repall").addEventListener("click", () => {
+    const term = q.value;
+    if (!term) return;
+    ta.value = ta.value.split(term).join(rep.value);
+    ta.dispatchEvent(new Event("input"));
+  });
+  const goto = wrap.querySelector(".ef-goto");
+  const doGoto = () => {
+    const n = parseInt(goto.value, 10);
+    if (!n || n < 1) return;
+    const lines = ta.value.split("\n");
+    let pos = 0;
+    for (let i = 0; i < Math.min(n - 1, lines.length); i++) pos += lines[i].length + 1;
+    ta.focus();
+    ta.setSelectionRange(pos, pos);
+    const lh = parseFloat(getComputedStyle(ta).lineHeight) || 18;
+    ta.scrollTop = Math.max(0, (n - 3) * lh);
+  };
+  wrap.querySelector(".ef-go").addEventListener("click", doGoto);
+  goto.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); doGoto(); } });
+  wrap.querySelector(".ef-close").addEventListener("click", () => { toggleFindBar(wrap, false); ta.focus(); });
+}
+
+async function saveViewerFile(file) {
+  if (!file) return;
+  try {
+    if (file.sftpId != null) {
+      await invoke("sftp_write_text_file", { sessionId: file.sftpId, path: file.path, content: file.content });
+    } else {
+      await invoke("write_text_file", { path: file.path, content: file.content });
+    }
+    file.dirty = false;
+    renderViewerTabs();
+    renderViewerTools();
+    toast("저장됨: " + file.name);
+  } catch (e) {
+    toast("저장 실패: " + String(e), true);
+  }
+}
+
+function activeViewerFileObj() {
+  return viewerFiles.find((f) => f.id === activeViewerId) || null;
+}
+
+function toggleEditMode() {
+  const f = activeViewerFileObj();
+  if (!f) return;
+  f.editing = !f.editing;
+  renderViewerBody(f);
+}
+
+// Update the header tools (edit toggle / save / autosave / find) for the active file.
+function renderViewerTools() {
+  const f = activeViewerFileObj();
+  const tools = document.getElementById("viewer-tools");
+  if (!tools) return;
+  const editBtn = document.getElementById("viewer-edit-toggle");
+  const saveBtn = document.getElementById("viewer-save-btn");
+  const findBtn = document.getElementById("viewer-find-btn");
+  const auto = document.getElementById("viewer-autosave");
+  if (!f) { tools.style.visibility = "hidden"; return; }
+  tools.style.visibility = "visible";
+  if (editBtn) {
+    const eye = `<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7-11-7-11-7z"/><circle cx="12" cy="12" r="3"/></svg>`;
+    const pencil = `<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5z"/></svg>`;
+    editBtn.innerHTML = f.editing ? eye : pencil;
+    editBtn.title = f.editing ? "미리보기" : "편집";
+  }
+  if (saveBtn) {
+    saveBtn.classList.toggle("dirty", !!f.dirty);
+    saveBtn.style.display = f.editing ? "" : "none";
+  }
+  if (findBtn) findBtn.style.display = f.editing ? "" : "none";
+  if (auto) {
+    auto.parentElement.style.display = f.editing ? "" : "none";
+    auto.checked = autosaveEnabled();
   }
 }
 
@@ -933,7 +1170,7 @@ function renderViewerTabs() {
     const t = document.createElement("div");
     t.className = "viewer-file-tab" + (f.id === activeViewerId ? " active" : "");
     t.title = f.path;
-    t.innerHTML = `<span class="vft-name">${esc(f.name)}</span><span class="vft-close" title="닫기">&times;</span>`;
+    t.innerHTML = `<span class="vft-name">${f.dirty ? "● " : ""}${esc(f.name)}</span><span class="vft-close" title="닫기">&times;</span>`;
     t.addEventListener("click", (e) => {
       if (e.target.classList.contains("vft-close")) { closeViewerFile(f.id); return; }
       activateViewerFile(f.id);
@@ -1166,6 +1403,18 @@ async function createPane(parentEl, shell, args, cwd) {
     }
   });
 
+  // Terminal bell → flash this pane/session (task done / needs input).
+  if (term.onBell) term.onBell(() => flashPaneNotify(id));
+  // Many CLIs (incl. claude/codex notification modes) signal completion with an
+  // OSC desktop-notification instead of a plain bell — xterm consumes the
+  // trailing BEL of an OSC so onBell alone misses those. Catch the common ones.
+  if (term.parser && term.parser.registerOscHandler) {
+    // OSC 9 ; <message>  (iTerm-style). Skip ConEmu progress form "9;<digit>;…".
+    term.parser.registerOscHandler(9, (data) => { if (!/^[0-9];/.test(data)) flashPaneNotify(id); return false; });
+    // OSC 777 ; notify ; <title> ; <body>  (notify-send style).
+    term.parser.registerOscHandler(777, (data) => { if (/^notify/.test(data)) flashPaneNotify(id); return false; });
+  }
+
   // Focus tracking
   term.onFocus = () => setFocusedPane(id);
   paneEl.addEventListener("click", () => setFocusedPane(id));
@@ -1194,6 +1443,21 @@ function setFocusedPane(ptyId) {
     t.term.focus();
   }
   updateSessionActive();
+}
+
+// Briefly pulse a pane + its session-list row to notify task completion
+// (driven by the terminal bell — see the pty read loop).
+function flashPaneNotify(id) {
+  const pulse = (el) => {
+    if (!el) return;
+    el.classList.remove("notify-flash");
+    void el.offsetWidth; // restart the animation
+    el.classList.add("notify-flash");
+    setTimeout(() => el.classList.remove("notify-flash"), 2600);
+  };
+  const t = terminals.get(id);
+  if (t) pulse(t.paneEl);
+  pulse(document.querySelector(`.session-item[data-pty-id="${id}"]`));
 }
 
 // Resolve the user's default-shell preference into an identifier for the
@@ -1374,6 +1638,44 @@ function findTabForPane(ptyId) {
     }
   }
   return null;
+}
+
+// Move a pane (session) from its current tab into another tab (drag in the list).
+function movePaneToTab(ptyId, targetTabIdx) {
+  const srcTab = findTabForPane(ptyId);
+  const dstTab = tabs.get(targetTabIdx);
+  if (!srcTab || !dstTab || srcTab.tabIdx === targetTabIdx) return;
+  const t = terminals.get(ptyId);
+  if (!t) return;
+  const leaf = t.paneEl;
+
+  // Detach from the source tree (collapses now-empty split containers).
+  detachAndCollapse(leaf, srcTab);
+  srcTab.panes = srcTab.panes.filter((p) => p !== ptyId);
+
+  // Append into the destination root as a new split column/row.
+  const dstRoot = dstTab.rootEl;
+  if (dstRoot.children.length > 0) {
+    const vertical = dstRoot.classList.contains("vertical");
+    const divider = document.createElement("div");
+    divider.className = "pane-divider";
+    dstRoot.appendChild(divider);
+    setupDividerDrag(divider, dstRoot, vertical ? "vertical" : "horizontal");
+  }
+  leaf.style.flex = "1";
+  dstRoot.appendChild(leaf);
+  dstTab.panes.push(ptyId);
+
+  // Close the source tab if it has no panes left (and tell the user).
+  const srcEmptied = srcTab.panes.length === 0;
+  const srcLabel = srcTab.label || `Tab ${srcTab.tabIdx + 1}`;
+  if (srcEmptied) closeTab(srcTab.tabIdx);
+
+  switchToTab(targetTabIdx);
+  setFocusedPane(ptyId);
+  refreshSessionList();
+  requestAnimationFrame(() => refitAllPanes());
+  if (srcEmptied) toast(`마지막 세션이라 '${srcLabel}' 탭이 닫혔습니다`);
 }
 
 function refitAllPanes() {
@@ -1560,7 +1862,7 @@ async function connectSsh() {
 
 // Shared SSH connect from raw field values — used by the welcome form AND the
 // "+ SSH" modal (so a new connection can be opened with sessions already open).
-async function connectSshFields(targetVal, portVal, password, keyfile) {
+async function connectSshFields(targetVal, portVal, password, keyfile, tmux, tmuxName) {
   const target = (targetVal || "").trim();
   if (!target) return false;
   const parts = target.split("@");
@@ -1572,6 +1874,8 @@ async function connectSshFields(targetVal, portVal, password, keyfile) {
     port: parseInt(portVal) || 22,
     password: (password || "") || null,
     keyPath: (keyfile || "").trim() || null,
+    tmux: !!tmux,
+    tmuxName: tmuxName || null,
   });
   return true;
 }
@@ -1603,7 +1907,9 @@ async function submitSshModal() {
   const password = document.getElementById("ssh-modal-password").value;
   const keyfile = document.getElementById("ssh-modal-keyfile").value;
   const save = document.getElementById("ssh-save-info");
-  const ok = await connectSshFields(target, port, password, keyfile);
+  const tmux = document.getElementById("ssh-tmux");
+  const tmuxName = document.getElementById("ssh-tmux-name");
+  const ok = await connectSshFields(target, port, password, keyfile, tmux && tmux.checked, tmuxName && tmuxName.value);
   if (ok) {
     if (save && save.checked) saveSshConn(target.trim(), parseInt(port) || 22, (keyfile || "").trim());
     closeSshModal();
@@ -1643,10 +1949,14 @@ function renderSshDropdown() {
   for (const c of getSshSaved()) {
     const item = document.createElement("div");
     item.className = "ssh-dd-item";
-    item.innerHTML = `<span class="ssh-dd-name"></span><button class="ssh-dd-x" type="button" title="삭제">&times;</button>`;
+    item.innerHTML = `<span class="ssh-dd-name"></span>` +
+      (c.keyPath ? `<button class="ssh-dd-tmux" type="button" title="tmux로 바로 접속">⚡</button>` : "") +
+      `<button class="ssh-dd-x" type="button" title="삭제">&times;</button>`;
     const label = c.target + (c.port && c.port != 22 ? `:${c.port}` : "") + (c.keyPath ? "  🔑" : "");
     item.querySelector(".ssh-dd-name").textContent = label;
     item.querySelector(".ssh-dd-name").addEventListener("click", () => { applySshConn(c); toggleSshDropdown(false); });
+    const tmuxBtn = item.querySelector(".ssh-dd-tmux");
+    if (tmuxBtn) tmuxBtn.addEventListener("click", (e) => { e.stopPropagation(); quickConnectTmux(c); });
     item.querySelector(".ssh-dd-x").addEventListener("click", (e) => { e.stopPropagation(); deleteSshConn(c.target); });
     list.appendChild(item);
   }
@@ -1673,6 +1983,57 @@ async function pickSshKeyFile() {
   } catch (e) { /* cancelled */ }
 }
 
+// Build a runnable `ssh … "tmux …"` command string for a connection.
+function buildSshCommandString(target, port, keyPath, tmux, tmuxName) {
+  let cmd = "ssh";
+  if (port && Number(port) !== 22) cmd += ` -p ${Number(port)}`;
+  if (keyPath) cmd += ` -i "${keyPath}"`;
+  if (tmux) cmd += " -t";
+  cmd += ` ${target}`;
+  if (tmux) {
+    const nm = (tmuxName || "").trim().replace(/[^A-Za-z0-9_.-]/g, "");
+    cmd += nm ? ` "tmux new-session -A -s ${nm}"` : ` "tmux attach || tmux new-session"`;
+  }
+  return cmd;
+}
+
+// Save the modal's connection as a Commands-tab shortcut (Send/dblclick to run).
+async function saveSshAsCommand() {
+  const target = (document.getElementById("ssh-modal-input").value || "").trim();
+  if (!target) { toast("주소를 입력하세요 (user@host)", true); return; }
+  const port = document.getElementById("ssh-modal-port").value;
+  const keyfile = (document.getElementById("ssh-modal-keyfile").value || "").trim();
+  const tmuxChk = document.getElementById("ssh-tmux");
+  const tmux = tmuxChk && tmuxChk.checked;
+  const tmuxName = (document.getElementById("ssh-tmux-name").value || "").trim();
+  const command = buildSshCommandString(target, port, keyfile, tmux, tmuxName);
+  const name = target + (tmux ? (tmuxName ? ` (tmux:${tmuxName})` : " (tmux)") : "");
+  try {
+    await invoke("add_command", { name, command, description: "SSH 접속 단축키" });
+    await loadCommands();
+    toast("Commands 탭에 저장됨 — Send로 접속");
+  } catch (e) {
+    toast("저장 실패: " + String(e), true);
+  }
+}
+
+// One-click: SSH in with the saved key and start/attach a tmux session.
+function quickConnectTmux(c) {
+  const parts = (c.target || "").split("@");
+  if (parts.length !== 2) { toast("형식: user@hostname", true); return; }
+  closeSshModal();
+  doSshConnect({
+    target: c.target,
+    username: parts[0],
+    host: parts[1],
+    port: c.port || 22,
+    password: null,
+    keyPath: c.keyPath || null,
+    auth: "key",
+    tmux: true,
+  });
+}
+
 // Parameterized SSH connect (used by the form and by session restore).
 // auth: 'key' (keyfile/agent → auto-reconnect) | 'password' (prompted on restore).
 async function doSshConnect(opts) {
@@ -1690,7 +2051,15 @@ async function doSshConnect(opts) {
   tabEl.appendChild(rootContainer);
   terminalContainer.appendChild(tabEl);
 
-  const sshArgs = ["-p", String(port), target];
+  const sshArgs = ["-p", String(port)];
+  if (keyPath) sshArgs.push("-i", keyPath); // use the specified key for the terminal too
+  sshArgs.push(target);
+  // tmux on connect: a name → create/attach that session; empty → attach to an
+  // existing session (or start one if none).
+  if (opts.tmux) {
+    const nm = (opts.tmuxName || "").trim().replace(/[^A-Za-z0-9_.-]/g, "");
+    sshArgs.push("-t", nm ? `tmux new-session -A -s ${nm}` : "tmux attach || tmux new-session");
+  }
 
   try {
     const ptyId = await createPane(rootContainer, "ssh", sshArgs);
@@ -2418,11 +2787,15 @@ function addTab(tabIdx, label) {
   tab.dataset.id = tabIdx;
   tab.innerHTML = `
     <span>${esc(label)}</span>
-    <span class="tab-close">&times;</span>
+    <span class="tab-rename" title="이름 변경">&#9998;</span>
+    <span class="tab-close" title="닫기">&times;</span>
   `;
   tab.addEventListener("click", (e) => {
     if (e.target.classList.contains("tab-close")) {
       closeTab(tabIdx);
+    } else if (e.target.classList.contains("tab-rename")) {
+      e.stopPropagation();
+      startRenameTabInBar(tabIdx, tab);
     } else {
       switchToTab(tabIdx);
     }
@@ -2536,8 +2909,16 @@ function refreshSessionList() {
     const group = document.createElement("li");
     group.className = "session-group";
     group.textContent = tab.label || `Tab ${tabIdx + 1}`;
-    group.title = "Double-click to rename tab";
+    group.title = "더블클릭하여 탭 이름 변경 · 세션을 여기로 끌어다 놓으면 이 탭으로 이동";
     group.addEventListener("dblclick", () => startRenameTab(tabIdx, group));
+    group.addEventListener("dragover", (e) => { e.preventDefault(); group.classList.add("drop-target"); });
+    group.addEventListener("dragleave", () => group.classList.remove("drop-target"));
+    group.addEventListener("drop", (e) => {
+      e.preventDefault();
+      group.classList.remove("drop-target");
+      const pid = Number(e.dataTransfer.getData("text/plain"));
+      if (pid) movePaneToTab(pid, tabIdx);
+    });
     sessionListEl.appendChild(group);
 
     tab.panes.forEach((ptyId, i) => {
@@ -2567,11 +2948,31 @@ function refreshSessionList() {
       paneNo.className = "session-pane";
       paneNo.textContent = `#${i + 1}`;
 
-      li.append(dotEl, nameEl, renameBtn, paneNo);
+      const closeBtn = document.createElement("button");
+      closeBtn.className = "session-close";
+      closeBtn.textContent = "×";
+      closeBtn.title = "세션 닫기";
+
+      li.append(dotEl, nameEl, renameBtn, paneNo, closeBtn);
+
+      // Drag a session onto another tab's group header to move it there.
+      li.draggable = true;
+      li.addEventListener("dragstart", (e) => {
+        e.dataTransfer.setData("text/plain", String(ptyId));
+        e.dataTransfer.effectAllowed = "move";
+      });
+      li.addEventListener("dragover", (e) => e.preventDefault());
+      li.addEventListener("drop", (e) => {
+        e.preventDefault();
+        const pid = Number(e.dataTransfer.getData("text/plain"));
+        const destTab = findTabForPane(ptyId);
+        if (pid && destTab) movePaneToTab(pid, destTab.tabIdx);
+      });
 
       li.addEventListener("click", () => focusSession(ptyId));
       nameEl.addEventListener("dblclick", (e) => { e.stopPropagation(); startRenameSession(ptyId, nameEl); });
       renameBtn.addEventListener("click", (e) => { e.stopPropagation(); startRenameSession(ptyId, nameEl); });
+      closeBtn.addEventListener("click", (e) => { e.stopPropagation(); closePane(ptyId); });
 
       sessionListEl.appendChild(li);
     });
@@ -2820,28 +3221,40 @@ async function loadCommands() {
 
 function renderCmdList(cmds) {
   cmdListEl.innerHTML = "";
-  if (cmds.length === 0) { emptyEl.classList.remove("hidden"); return; }
-  emptyEl.classList.add("hidden");
+
+  // Filter by the search box (name / command / description).
+  const q = (document.getElementById("cmd-search")?.value || "").trim().toLowerCase();
+  const list = q
+    ? cmds.filter((c) =>
+        (c.name || "").toLowerCase().includes(q) ||
+        (c.command || "").toLowerCase().includes(q) ||
+        (c.description || "").toLowerCase().includes(q))
+    : cmds;
+
+  if (list.length === 0) { if (emptyEl) emptyEl.classList.remove("hidden"); return; }
+  if (emptyEl) emptyEl.classList.add("hidden");
 
   // Favorites pinned to the top; otherwise keep stored order.
-  const ordered = [...cmds].sort((a, b) => (b.favorite ? 1 : 0) - (a.favorite ? 1 : 0));
+  const ordered = [...list].sort((a, b) => (b.favorite ? 1 : 0) - (a.favorite ? 1 : 0));
 
   for (const cmd of ordered) {
     const li = document.createElement("li");
     li.className = "cmd-item" + (cmd.favorite ? " is-fav" : "");
     li.innerHTML = `
-      <button class="send-top" title="터미널로 전송">Send</button>
+      <button class="cmd-x" title="삭제 (바로 삭제)">&times;</button>
       <div class="cmd-name">${esc(cmd.name)}</div>
-      <div class="cmd-text">${esc(cmd.command)}</div>
-      ${cmd.description ? `<div class="cmd-desc">${esc(cmd.description)}</div>` : ""}
-      <div class="cmd-item-actions">
-        <button class="fav-btn${cmd.favorite ? " on" : ""}" title="즐겨찾기">${cmd.favorite ? "★" : "☆"}</button>
-        <button class="copy-btn">Copy</button>
-        <button class="edit-btn">Edit</button>
-        <button class="cmd-x" title="삭제 (바로 삭제)">&times;</button>
+      <div class="cmd-row">
+        <span class="cmd-text">${esc(cmd.command)}</span>
+        <span class="cmd-actions">
+          <button class="fav-btn${cmd.favorite ? " on" : ""}" title="즐겨찾기">${cmd.favorite ? "★" : "☆"}</button>
+          <button class="copy-btn" title="복사">Copy</button>
+          <button class="edit-btn" title="편집">Edit</button>
+          <button class="send-btn" title="터미널로 전송">Send</button>
+        </span>
       </div>
+      ${cmd.description ? `<div class="cmd-desc">${esc(cmd.description)}</div>` : ""}
     `;
-    li.querySelector(".send-top").addEventListener("click", (e) => { e.stopPropagation(); sendToTerminal(cmd.command); });
+    li.querySelector(".send-btn").addEventListener("click", (e) => { e.stopPropagation(); sendToTerminal(cmd.command); });
     li.querySelector(".fav-btn").addEventListener("click", (e) => { e.stopPropagation(); toggleFavorite(cmd); });
     li.querySelector(".copy-btn").addEventListener("click", (e) => { e.stopPropagation(); copyCmd(cmd); });
     li.querySelector(".edit-btn").addEventListener("click", (e) => { e.stopPropagation(); openModal(cmd); });

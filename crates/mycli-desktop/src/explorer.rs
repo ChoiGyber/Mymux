@@ -400,6 +400,35 @@ pub fn sftp_read_text_file(
     })
 }
 
+/// Save text back to a remote file over SFTP (creates/truncates). In-app editor.
+#[tauri::command]
+pub fn sftp_write_text_file(
+    state: tauri::State<'_, Arc<ExplorerManager>>,
+    session_id: u32,
+    path: String,
+    content: String,
+) -> Result<(), String> {
+    use tokio::io::AsyncWriteExt;
+    let state_clone = Arc::clone(&*state);
+
+    state.runtime.block_on(async {
+        let sessions = state_clone.sftp_sessions.lock().await;
+        let session = sessions.get(&session_id).ok_or("SFTP session not found")?;
+
+        let mut file = session
+            .sftp
+            .create(&path)
+            .await
+            .map_err(|e| format!("Cannot write {}: {}", path, e))?;
+        file.write_all(content.as_bytes())
+            .await
+            .map_err(|e| e.to_string())?;
+        file.flush().await.ok();
+        file.shutdown().await.ok();
+        Ok(())
+    })
+}
+
 #[tauri::command]
 pub fn sftp_disconnect(
     state: tauri::State<'_, Arc<ExplorerManager>>,
