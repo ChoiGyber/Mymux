@@ -18,6 +18,7 @@ fn main() {
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_dialog::init())
         .manage(Arc::new(TerminalManager::new()))
         .manage(Arc::new(ExplorerManager::new()))
         .manage(Arc::new(BrowserManager::new()))
@@ -30,6 +31,9 @@ fn main() {
             commands::set_favorite,
             commands::read_text_file,
             commands::open_external,
+            commands::pick_key_file,
+            commands::fs_copy_path,
+            commands::fs_move_path,
             session::session_save,
             session::session_load,
             session::session_clear,
@@ -45,6 +49,7 @@ fn main() {
             explorer::sftp_connect,
             explorer::sftp_list_dir,
             explorer::sftp_home_dir,
+            explorer::sftp_read_text_file,
             explorer::sftp_disconnect,
             browser::browser_launch,
             browser::browser_status,

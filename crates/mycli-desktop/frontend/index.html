@@ -15,9 +15,8 @@
     <div id="toolbar-actions">
       <button id="btn-update" class="hidden" title="새 버전이 있습니다 — 클릭하면 업데이트">⬆ 업데이트</button>
       <button id="btn-toggle-browser" title="브라우저 탭 표시/숨김">🌐</button>
-      <button id="btn-toggle-sidebar" title="Toggle sidebar">Sidebar</button>
-      <button id="btn-split-h" title="Split focused pane horizontally (Ctrl+Shift+D)">Split &#8596;</button>
-      <button id="btn-split-v" title="Split focused pane vertically (Ctrl+Shift+E)">Split &#8597;</button>
+      <button id="btn-split-h" title="Split focused pane horizontally (Ctrl+Shift+D)">&#8596;</button>
+      <button id="btn-split-v" title="Split focused pane vertically (Ctrl+Shift+E)">&#8597;</button>
       <span id="accent-swatches" title="Accent color">
         <button class="accent-swatch" data-accent="blue" title="Blue" style="background:#0f9ef0"></button>
         <button class="accent-swatch" data-accent="violet" title="Violet" style="background:#8b5cf6"></button>
@@ -30,7 +29,7 @@
         <option value="cmd">CMD</option>
       </select>
       <button id="btn-new-terminal" title="New terminal">+ Terminal</button>
-      <button id="btn-toggle-sessions" title="Toggle session list">Sessions</button>
+      <button id="btn-ssh" title="새 SSH 연결 (세션이 열려 있어도 추가 가능)">+ SSH</button>
     </div>
   </header>
 
@@ -41,6 +40,7 @@
       <div id="sidebar-tabs">
         <button class="sidebar-tab active" data-tab="explorer">Explorer</button>
         <button class="sidebar-tab" data-tab="commands">Commands</button>
+        <button id="btn-toggle-sidebar" class="panel-collapse" title="사이드바 접기/펼치기"><svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.4"><rect x="2.5" y="3.5" width="11" height="9" rx="1.5"/><line x1="8" y1="3.5" x2="8" y2="12.5"/></svg></button>
       </div>
 
       <!-- Explorer panel -->
@@ -176,6 +176,7 @@
     <aside id="session-panel">
       <div id="session-header">
         <span>Sessions</span>
+        <button id="btn-toggle-sessions" class="panel-collapse" title="세션 패널 접기/펼치기"><svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.4"><rect x="2.5" y="3.5" width="11" height="9" rx="1.5"/><line x1="8" y1="3.5" x2="8" y2="12.5"/></svg></button>
       </div>
       <ul id="session-list">
         <li class="session-empty">No active sessions.</li>
@@ -215,6 +216,9 @@
     <button type="button" data-act="send">열린 세션으로 보내기</button>
   </div>
 
+  <!-- Right-click menu for the explorer (file operations); built dynamically -->
+  <div id="explorer-ctx" class="ctx-menu hidden"></div>
+
   <!-- Close / remember-session popup -->
   <div id="close-modal" class="hidden">
     <div class="modal-box">
@@ -238,6 +242,29 @@
       <div class="modal-actions">
         <button id="sshpw-skip" class="secondary">건너뛰기</button>
         <button id="sshpw-connect">접속</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- New SSH connection (available anytime, even with sessions open) -->
+  <div id="ssh-modal" class="hidden">
+    <div class="modal-box">
+      <h2>새 SSH 연결</h2>
+      <div class="ssh-field-row">
+        <input type="text" id="ssh-modal-input" placeholder="user@hostname — 예: user@100.x.x.x" spellcheck="false" autocomplete="off" />
+        <button id="ssh-addr-toggle" class="ssh-iconbtn" type="button" title="저장된 주소 선택">&#9662;</button>
+        <div id="ssh-addr-list" class="ssh-dropdown hidden"></div>
+      </div>
+      <input type="number" id="ssh-modal-port" placeholder="22" value="22" min="1" max="65535" />
+      <input type="password" id="ssh-modal-password" placeholder="비밀번호 (키 사용 시 비움)" autocomplete="off" />
+      <div class="ssh-field-row">
+        <input type="text" id="ssh-modal-keyfile" placeholder="키 파일 경로 (선택)" spellcheck="false" autocomplete="off" />
+        <button id="ssh-key-pick" class="ssh-iconbtn" type="button" title="키 파일 선택">&#128193;</button>
+      </div>
+      <label class="chk-row"><input type="checkbox" id="ssh-save-info" /> 접속정보 저장 (비밀번호 제외)</label>
+      <div class="modal-actions">
+        <button id="ssh-modal-cancel" class="secondary">취소</button>
+        <button id="ssh-modal-connect">접속</button>
       </div>
     </div>
   </div>

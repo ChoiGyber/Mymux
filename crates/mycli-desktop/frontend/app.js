@@ -71,6 +71,9 @@ let currentSftpId = null;
 // { path, sftpId }; explorerHistIdx points at the currently-shown entry.
 let explorerHistory = [];
 let explorerHistIdx = -1;
+// Explorer file clipboard for copy/cut → paste into another folder (local only).
+let fileClipboard = null; // { path, name, mode: 'copy' | 'cut' }
+let explorerCtxEntry = null;
 
 // ── Init: wait for both DOM and Tauri ──
 window.addEventListener("DOMContentLoaded", async () => {
@@ -131,6 +134,7 @@ window.addEventListener("DOMContentLoaded", async () => {
     console.error("Init error:", e);
   }
   await setupListeners();
+  restorePanelState();
   initBrowserPanel();
   applyBrowserEnabled();
 
@@ -164,8 +168,8 @@ async function setupListeners() {
     });
   });
 
-  btnToggleSidebar.addEventListener("click", () => sidebar.classList.toggle("collapsed"));
-  btnToggleSessions.addEventListener("click", () => sessionPanel.classList.toggle("collapsed"));
+  btnToggleSidebar.addEventListener("click", () => { sidebar.classList.toggle("collapsed"); persistPanelState(); updatePanelToggleIcons(); });
+  btnToggleSessions.addEventListener("click", () => { sessionPanel.classList.toggle("collapsed"); persistPanelState(); updatePanelToggleIcons(); });
 
   // GitHub shortcut (session panel footer) → open the repo in the OS default browser.
   const btnGithub = document.getElementById("btn-github");
@@ -182,6 +186,32 @@ async function setupListeners() {
     sw.addEventListener("click", () => setAccent(sw.dataset.accent));
   });
   btnNewTerminal.addEventListener("click", () => spawnTerminal());
+
+  // "+ SSH" — open a new SSH connection anytime (works with sessions open).
+  const btnSsh = document.getElementById("btn-ssh");
+  if (btnSsh) btnSsh.addEventListener("click", openSshModal);
+  const sshModalEl = document.getElementById("ssh-modal");
+  const sshModalConnect = document.getElementById("ssh-modal-connect");
+  const sshModalCancel = document.getElementById("ssh-modal-cancel");
+  if (sshModalCancel) sshModalCancel.addEventListener("click", closeSshModal);
+  if (sshModalConnect) sshModalConnect.addEventListener("click", submitSshModal);
+  const sshAddrToggle = document.getElementById("ssh-addr-toggle");
+  if (sshAddrToggle) sshAddrToggle.addEventListener("click", (e) => { e.stopPropagation(); toggleSshDropdown(); });
+  const sshKeyPick = document.getElementById("ssh-key-pick");
+  if (sshKeyPick) sshKeyPick.addEventListener("click", pickSshKeyFile);
+  const sshAddrInput = document.getElementById("ssh-modal-input");
+  if (sshAddrInput) sshAddrInput.addEventListener("input", () => toggleSshDropdown(false));
+  if (sshModalEl) {
+    sshModalEl.addEventListener("click", (e) => {
+      if (e.target === sshModalEl) { closeSshModal(); return; }
+      // Click elsewhere in the modal closes the address dropdown.
+      if (!e.target.closest("#ssh-addr-list")) toggleSshDropdown(false);
+    });
+    sshModalEl.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") submitSshModal();
+      else if (e.key === "Escape") closeSshModal();
+    });
+  }
 
   const shellSel = document.getElementById("default-shell");
   if (shellSel) {
@@ -337,6 +367,12 @@ async function setupListeners() {
   document.addEventListener("click", hideViewerCtx);
   document.addEventListener("scroll", hideViewerCtx, true);
   document.addEventListener("keydown", (e) => { if (e.key === "Escape") hideViewerCtx(); });
+
+  // Explorer right-click file operations (copy/cut/paste/copy-path).
+  if (fileListEl) fileListEl.addEventListener("contextmenu", onExplorerContextMenu);
+  document.addEventListener("click", hideExplorerCtx);
+  document.addEventListener("scroll", hideExplorerCtx, true);
+  document.addEventListener("keydown", (e) => { if (e.key === "Escape") hideExplorerCtx(); });
 }
 
 // ═══════════════════════════════════════════════
@@ -390,12 +426,13 @@ function renderFileList(entries) {
       </span>
     `;
 
+    li._entry = entry; // for the right-click file-ops menu
     if (entry.is_dir) {
-      // Single click enters the folder
+      // Single click enters the folder.
       li.addEventListener("click", () => navigateTo(entry.path));
     } else {
-      // Single click opens the file in the viewer tab.
-      li.addEventListener("click", () => openFileViewer(entry));
+      // Double click opens the file in the viewer tab (single click just selects).
+      li.addEventListener("dblclick", () => openFileViewer(entry));
     }
 
     const favBtnEl = li.querySelector(".fav-btn");
@@ -417,6 +454,77 @@ function renderFileList(entries) {
 
 function navigateTo(path) {
   explorerGo(path);
+}
+
+// ── Explorer right-click file operations (local only) ──
+function onExplorerContextMenu(e) {
+  const li = e.target.closest(".file-item");
+  const entry = li ? li._entry : null;
+  const menu = document.getElementById("explorer-ctx");
+  if (!menu) return;
+  e.preventDefault();
+  explorerCtxEntry = entry;
+  const local = currentSftpId == null;
+  const items = [];
+  if (entry) {
+    if (local) {
+      items.push({ act: "copy", label: "복사" });
+      items.push({ act: "cut", label: "자르기" });
+    }
+    items.push({ act: "copypath", label: "경로 복사" });
+  }
+  if (local) items.push({ act: "paste", label: "붙여넣기", disabled: !(fileClipboard && fileClipboard.path) });
+  if (!items.length) return;
+  menu.innerHTML = "";
+  for (const it of items) {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.textContent = it.label + (it.act === "paste" && fileClipboard ? `  (${fileClipboard.name})` : "");
+    if (it.disabled) b.disabled = true;
+    else b.addEventListener("click", () => { hideExplorerCtx(); handleExplorerCtxAction(it.act); });
+    menu.appendChild(b);
+  }
+  menu.classList.remove("hidden");
+  const w = menu.offsetWidth, h = menu.offsetHeight;
+  menu.style.left = Math.min(e.clientX, window.innerWidth - w - 8) + "px";
+  menu.style.top = Math.min(e.clientY, window.innerHeight - h - 8) + "px";
+}
+
+function hideExplorerCtx() {
+  const m = document.getElementById("explorer-ctx");
+  if (m) m.classList.add("hidden");
+}
+
+async function handleExplorerCtxAction(act) {
+  const entry = explorerCtxEntry;
+  if (act === "copy" && entry) {
+    fileClipboard = { path: entry.path, name: entry.name, mode: "copy" };
+    toast("복사: " + entry.name);
+  } else if (act === "cut" && entry) {
+    fileClipboard = { path: entry.path, name: entry.name, mode: "cut" };
+    toast("잘라내기: " + entry.name);
+  } else if (act === "copypath" && entry) {
+    clipboardWrite(entry.path);
+    toast("경로를 복사했습니다");
+  } else if (act === "paste") {
+    await filePaste();
+  }
+}
+
+async function filePaste() {
+  if (!fileClipboard || currentSftpId != null) return;
+  try {
+    if (fileClipboard.mode === "copy") {
+      await invoke("fs_copy_path", { src: fileClipboard.path, destDir: currentExplorerPath });
+    } else {
+      await invoke("fs_move_path", { src: fileClipboard.path, destDir: currentExplorerPath });
+      fileClipboard = null; // moved — clear so it isn't pasted again
+    }
+    toast("붙여넣기 완료");
+    loadExplorer();
+  } catch (e) {
+    toast(String(e), true);
+  }
 }
 
 // Central explorer navigation. Records into history unless `record` is false
@@ -679,7 +787,35 @@ async function openLocalLink(target) {
 function activateSidebarTab(name) {
   const tab = document.querySelector(`.sidebar-tab[data-tab="${name}"]`);
   if (tab) tab.click();
-  if (sidebar && sidebar.classList.contains("collapsed")) sidebar.classList.remove("collapsed");
+  if (sidebar && sidebar.classList.contains("collapsed")) {
+    sidebar.classList.remove("collapsed");
+    persistPanelState();
+    updatePanelToggleIcons();
+  }
+}
+
+// Panel collapse state — persisted like the session, restored on launch.
+function persistPanelState() {
+  try {
+    localStorage.setItem("mymux.sidebarCollapsed", sidebar.classList.contains("collapsed") ? "true" : "false");
+    localStorage.setItem("mymux.sessionCollapsed", sessionPanel.classList.contains("collapsed") ? "true" : "false");
+  } catch {}
+}
+
+function restorePanelState() {
+  try {
+    if (localStorage.getItem("mymux.sidebarCollapsed") === "true") sidebar.classList.add("collapsed");
+    if (localStorage.getItem("mymux.sessionCollapsed") === "true") sessionPanel.classList.add("collapsed");
+  } catch {}
+  updatePanelToggleIcons();
+}
+
+// Keep the (split-square) SVG icon; just refresh the tooltip for the state.
+function updatePanelToggleIcons() {
+  const sb = document.getElementById("btn-toggle-sidebar");
+  const sp = document.getElementById("btn-toggle-sessions");
+  if (sb) sb.title = sidebar.classList.contains("collapsed") ? "사이드바 펼치기" : "사이드바 접기";
+  if (sp) sp.title = sessionPanel.classList.contains("collapsed") ? "세션 패널 펼치기" : "세션 패널 접기";
 }
 
 // ── Local path helpers (Windows-first; tolerate / and \) ──
@@ -723,7 +859,9 @@ async function openFileViewer(entry) {
   const ext = fileExt(entry.name);
   const lower = entry.name.toLowerCase();
   const isText = VIEWER_TEXT_EXTS.has(ext) || lower === "dockerfile" || lower.endsWith(".gitignore") || ext === "";
+  const sftpId = currentSftpId; // when set, the entry is remote — read over SFTP
   if (!isText) {
+    if (sftpId != null) { toast("원격 바이너리 파일은 미리보기를 지원하지 않습니다.", true); return; }
     invoke("open_external", { path: entry.path }).catch((e) => toast(String(e), true));
     return;
   }
@@ -739,9 +877,15 @@ async function openFileViewer(entry) {
   }
   let content;
   try {
-    content = await invoke("read_text_file", { path: entry.path });
+    content = sftpId != null
+      ? await invoke("sftp_read_text_file", { sessionId: sftpId, path: entry.path })
+      : await invoke("read_text_file", { path: entry.path });
   } catch (e) {
-    if (String(e).includes("BINARY")) { invoke("open_external", { path: entry.path }).catch(() => {}); return; }
+    if (String(e).includes("BINARY")) {
+      if (sftpId != null) { toast("바이너리 파일은 미리보기를 지원하지 않습니다.", true); return; }
+      invoke("open_external", { path: entry.path }).catch(() => {});
+      return;
+    }
     toast(String(e), true);
     return;
   }
@@ -1411,22 +1555,122 @@ function movePane(srcId, targetId, position) {
 }
 
 async function connectSsh() {
-  const target = sshInput.value.trim();
-  if (!target) return;
+  await connectSshFields(sshInput.value, sshPort.value, sshPassword.value, sshKeyfile.value);
+}
 
+// Shared SSH connect from raw field values — used by the welcome form AND the
+// "+ SSH" modal (so a new connection can be opened with sessions already open).
+async function connectSshFields(targetVal, portVal, password, keyfile) {
+  const target = (targetVal || "").trim();
+  if (!target) return false;
   const parts = target.split("@");
-  if (parts.length !== 2) {
-    toast("Format: user@hostname", true);
-    return;
-  }
+  if (parts.length !== 2) { toast("형식: user@hostname", true); return false; }
   await doSshConnect({
     target,
     username: parts[0],
     host: parts[1],
-    port: parseInt(sshPort.value) || 22,
-    password: sshPassword.value || null,
-    keyPath: sshKeyfile.value.trim() || null,
+    port: parseInt(portVal) || 22,
+    password: (password || "") || null,
+    keyPath: (keyfile || "").trim() || null,
   });
+  return true;
+}
+
+// ── "+ SSH" modal — open a new SSH connection at any time ──
+function openSshModal() {
+  const m = document.getElementById("ssh-modal");
+  if (!m) return;
+  // The native browser overlay floats above all HTML; hide it so the modal shows.
+  if (browserTabActive && browserMode === "native") invoke("browser_pane_hide").catch(() => {});
+  m.classList.remove("hidden");
+  const inp = document.getElementById("ssh-modal-input");
+  if (inp) inp.focus();
+}
+
+function closeSshModal() {
+  const m = document.getElementById("ssh-modal");
+  if (m) m.classList.add("hidden");
+  toggleSshDropdown(false);
+  const pw = document.getElementById("ssh-modal-password");
+  if (pw) pw.value = "";
+  // Restore the native browser overlay only if we're still on the browser view.
+  if (browserTabActive && browserMode === "native") openNativePane();
+}
+
+async function submitSshModal() {
+  const target = document.getElementById("ssh-modal-input").value;
+  const port = document.getElementById("ssh-modal-port").value;
+  const password = document.getElementById("ssh-modal-password").value;
+  const keyfile = document.getElementById("ssh-modal-keyfile").value;
+  const save = document.getElementById("ssh-save-info");
+  const ok = await connectSshFields(target, port, password, keyfile);
+  if (ok) {
+    if (save && save.checked) saveSshConn(target.trim(), parseInt(port) || 22, (keyfile || "").trim());
+    closeSshModal();
+  }
+}
+
+// ── Saved SSH connections (address dropdown; password is NEVER stored) ──
+function getSshSaved() {
+  try { return JSON.parse(localStorage.getItem("mymux.sshSaved") || "[]"); } catch { return []; }
+}
+function setSshSaved(arr) {
+  try { localStorage.setItem("mymux.sshSaved", JSON.stringify(arr)); } catch {}
+}
+function saveSshConn(target, port, keyPath) {
+  if (!target) return;
+  const arr = getSshSaved().filter((c) => c.target !== target);
+  arr.unshift({ target, port: port || 22, keyPath: keyPath || "" });
+  setSshSaved(arr.slice(0, 30));
+}
+function deleteSshConn(target) {
+  setSshSaved(getSshSaved().filter((c) => c.target !== target));
+  renderSshDropdown();
+  if (!getSshSaved().length) toggleSshDropdown(false);
+}
+function applySshConn(c) {
+  const inp = document.getElementById("ssh-modal-input");
+  const port = document.getElementById("ssh-modal-port");
+  const key = document.getElementById("ssh-modal-keyfile");
+  if (inp) inp.value = c.target || "";
+  if (port) port.value = c.port || 22;
+  if (key) key.value = c.keyPath || "";
+}
+function renderSshDropdown() {
+  const list = document.getElementById("ssh-addr-list");
+  if (!list) return;
+  list.innerHTML = "";
+  for (const c of getSshSaved()) {
+    const item = document.createElement("div");
+    item.className = "ssh-dd-item";
+    item.innerHTML = `<span class="ssh-dd-name"></span><button class="ssh-dd-x" type="button" title="삭제">&times;</button>`;
+    const label = c.target + (c.port && c.port != 22 ? `:${c.port}` : "") + (c.keyPath ? "  🔑" : "");
+    item.querySelector(".ssh-dd-name").textContent = label;
+    item.querySelector(".ssh-dd-name").addEventListener("click", () => { applySshConn(c); toggleSshDropdown(false); });
+    item.querySelector(".ssh-dd-x").addEventListener("click", (e) => { e.stopPropagation(); deleteSshConn(c.target); });
+    list.appendChild(item);
+  }
+}
+function toggleSshDropdown(show) {
+  const list = document.getElementById("ssh-addr-list");
+  if (!list) return;
+  if (show === undefined) show = list.classList.contains("hidden");
+  if (show) {
+    if (!getSshSaved().length) { list.classList.add("hidden"); toast("저장된 주소가 없습니다."); return; }
+    renderSshDropdown();
+    list.classList.remove("hidden");
+  } else {
+    list.classList.add("hidden");
+  }
+}
+async function pickSshKeyFile() {
+  try {
+    const path = await invoke("pick_key_file");
+    if (path) {
+      const key = document.getElementById("ssh-modal-keyfile");
+      if (key) key.value = path;
+    }
+  } catch (e) { /* cancelled */ }
 }
 
 // Parameterized SSH connect (used by the form and by session restore).

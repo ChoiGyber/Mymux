@@ -357,6 +357,49 @@ pub fn sftp_home_dir(
     })
 }
 
+/// Read a remote text/code file over SFTP for the in-app viewer. Mirrors
+/// `read_text_file`: returns Err("BINARY") for non-text files and Err for files
+/// larger than ~2 MB.
+#[tauri::command]
+pub fn sftp_read_text_file(
+    state: tauri::State<'_, Arc<ExplorerManager>>,
+    session_id: u32,
+    path: String,
+) -> Result<String, String> {
+    use tokio::io::AsyncReadExt;
+    let state_clone = Arc::clone(&*state);
+
+    state.runtime.block_on(async {
+        let sessions = state_clone.sftp_sessions.lock().await;
+        let session = sessions.get(&session_id).ok_or("SFTP session not found")?;
+
+        // Size guard (~2 MB) when the server reports it.
+        if let Ok(meta) = session.sftp.metadata(&path).await {
+            if let Some(sz) = meta.size {
+                if sz > 2_000_000 {
+                    return Err("파일이 너무 큽니다 (2MB 초과)".to_string());
+                }
+            }
+        }
+
+        let mut file = session
+            .sftp
+            .open(&path)
+            .await
+            .map_err(|e| format!("Cannot open {}: {}", path, e))?;
+        let mut buf = Vec::new();
+        file.read_to_end(&mut buf)
+            .await
+            .map_err(|e| e.to_string())?;
+
+        let sample = &buf[..buf.len().min(8000)];
+        if sample.contains(&0u8) {
+            return Err("BINARY".into());
+        }
+        Ok(String::from_utf8_lossy(&buf).to_string())
+    })
+}
+
 #[tauri::command]
 pub fn sftp_disconnect(
     state: tauri::State<'_, Arc<ExplorerManager>>,

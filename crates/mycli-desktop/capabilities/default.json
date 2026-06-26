@@ -12,6 +12,7 @@
     "shell:allow-open",
     "clipboard-manager:allow-write-text",
     "clipboard-manager:allow-read-text",
-    "updater:default"
+    "updater:default",
+    "dialog:allow-open"
   ]
 }

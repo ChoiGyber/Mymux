@@ -149,6 +149,77 @@ pub fn open_external(path: String) -> Result<(), String> {
     Ok(())
 }
 
+/// Open a native file picker and return the chosen path (e.g. an SSH key file).
+/// Returns None if the user cancels. Runs on a worker thread (sync command) so
+/// the blocking dialog dispatches to the main thread without deadlocking.
+#[tauri::command]
+pub fn pick_key_file(app: tauri::AppHandle) -> Option<String> {
+    use tauri_plugin_dialog::DialogExt;
+    app.dialog()
+        .file()
+        .blocking_pick_file()
+        .map(|f| f.to_string())
+}
+
+/// Recursively copy a file or directory tree.
+fn copy_recursive(src: &std::path::Path, dest: &std::path::Path) -> std::io::Result<()> {
+    if src.is_dir() {
+        std::fs::create_dir_all(dest)?;
+        for entry in std::fs::read_dir(src)? {
+            let entry = entry?;
+            copy_recursive(&entry.path(), &dest.join(entry.file_name()))?;
+        }
+    } else {
+        if let Some(parent) = dest.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        std::fs::copy(src, dest)?;
+    }
+    Ok(())
+}
+
+/// Copy `src` (file or folder) into `dest_dir`, keeping its name. Refuses to
+/// overwrite an existing item.
+#[tauri::command]
+pub fn fs_copy_path(src: String, dest_dir: String) -> Result<(), String> {
+    let s = std::path::PathBuf::from(&src);
+    let name = s.file_name().ok_or("잘못된 경로")?;
+    let d = std::path::Path::new(&dest_dir).join(name);
+    if d == s {
+        return Err("같은 위치입니다.".into());
+    }
+    if d.exists() {
+        return Err("같은 이름의 항목이 이미 있습니다.".into());
+    }
+    copy_recursive(&s, &d).map_err(|e| e.to_string())
+}
+
+/// Move `src` (file or folder) into `dest_dir`. Falls back to copy+delete across
+/// volumes. Refuses to overwrite an existing item.
+#[tauri::command]
+pub fn fs_move_path(src: String, dest_dir: String) -> Result<(), String> {
+    let s = std::path::PathBuf::from(&src);
+    let name = s.file_name().ok_or("잘못된 경로")?;
+    let d = std::path::Path::new(&dest_dir).join(name);
+    if d == s {
+        return Err("같은 위치입니다.".into());
+    }
+    if d.exists() {
+        return Err("같은 이름의 항목이 이미 있습니다.".into());
+    }
+    if std::fs::rename(&s, &d).is_ok() {
+        return Ok(());
+    }
+    // Cross-volume rename fails → copy then remove the source.
+    copy_recursive(&s, &d).map_err(|e| e.to_string())?;
+    if s.is_dir() {
+        std::fs::remove_dir_all(&s).map_err(|e| e.to_string())?;
+    } else {
+        std::fs::remove_file(&s).map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
 #[tauri::command]
 pub fn execute_command(command_text: String) -> Result<String, String> {
     let output = mycli_core::executor::run(&command_text).map_err(|e| e.to_string())?;
