@@ -82,6 +82,12 @@ header h1 {
   font-weight: 600;
   color: var(--accent);
 }
+header h1 .byline {
+  font-size: 10px;
+  font-weight: 400;
+  color: var(--text-dim);
+  margin-left: 3px;
+}
 #toolbar-actions {
   display: flex;
   gap: 6px;
@@ -216,7 +222,8 @@ html[data-theme="light"] #toolbar-actions #btn-update:hover {
   border-bottom: 1px solid var(--border);
   flex-shrink: 0;
 }
-#btn-explorer-up {
+#btn-explorer-up,
+.explorer-nav-btn {
   padding: 3px 8px;
   border: 1px solid var(--border);
   border-radius: 3px;
@@ -226,9 +233,14 @@ html[data-theme="light"] #toolbar-actions #btn-update:hover {
   font-weight: 700;
   cursor: pointer;
 }
-#btn-explorer-up:hover {
+#btn-explorer-up:hover,
+.explorer-nav-btn:hover:not(:disabled) {
   background: var(--accent);
   color: #fff;
+}
+.explorer-nav-btn:disabled {
+  opacity: 0.35;
+  cursor: default;
 }
 #explorer-path {
   font-size: 11px;
@@ -572,12 +584,14 @@ html[data-theme="light"] #toolbar-actions #btn-update:hover {
   color: var(--text);
   border-bottom-color: var(--accent);
 }
-.tab .tab-close {
+.tab .tab-close,
+.browser-tab .tab-close {
   font-size: 14px;
   opacity: 0.4;
   cursor: pointer;
 }
-.tab .tab-close:hover { opacity: 1; }
+.tab .tab-close:hover,
+.browser-tab .tab-close:hover { opacity: 1; }
 
 #terminal-container {
   flex: 1;
@@ -597,12 +611,51 @@ html[data-theme="light"] #toolbar-actions #btn-update:hover {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 10px;
-  padding: 6px 12px;
+  gap: 8px;
+  padding: 4px 6px 4px 8px;
   border-bottom: 1px solid var(--border);
   background: var(--surface);
   flex-shrink: 0;
 }
+.viewer-tabs {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex: 1;
+  min-width: 0;
+  overflow-x: auto;
+}
+.viewer-tabs::-webkit-scrollbar { height: 6px; }
+.viewer-file-tab {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 9px;
+  font-size: 12px;
+  color: var(--text-dim);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  white-space: nowrap;
+  cursor: pointer;
+  max-width: 220px;
+  flex-shrink: 0;
+}
+.viewer-file-tab:hover { color: var(--text); }
+.viewer-file-tab.active {
+  color: var(--text);
+  border-color: var(--accent);
+}
+.viewer-file-tab .vft-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.viewer-file-tab .vft-close {
+  font-size: 14px;
+  line-height: 1;
+  opacity: 0.45;
+}
+.viewer-file-tab .vft-close:hover { opacity: 1; }
 .viewer-title {
   font-size: 13px;
   color: var(--text);
@@ -641,6 +694,36 @@ html[data-theme="light"] #toolbar-actions #btn-update:hover {
   border-left: 3px solid var(--border); margin: 0.6em 0; padding: 2px 12px; color: var(--text-dim);
 }
 .viewer-body.markdown hr { border: none; border-top: 1px solid var(--border); margin: 1.2em 0; }
+
+/* HTML files render in an isolated iframe (in-app browser preview). */
+.viewer-body.html { padding: 0; overflow: hidden; }
+.viewer-frame { width: 100%; height: 100%; border: 0; background: #fff; }
+
+/* Right-click context menu (file viewer text selection) */
+.ctx-menu {
+  position: fixed;
+  z-index: 1000;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 4px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+  min-width: 170px;
+}
+.ctx-menu.hidden { display: none; }
+.ctx-menu button {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 7px 12px;
+  border: none;
+  background: none;
+  color: var(--text);
+  font-size: 13px;
+  cursor: pointer;
+  border-radius: 4px;
+}
+.ctx-menu button:hover { background: var(--accent); color: #fff; }
 
 /* ── Browser (Playwright/CDP) tab + panel ── */
 .browser-tab {
@@ -1133,6 +1216,31 @@ html[data-theme="light"] #toolbar-actions #btn-update:hover {
   flex: 1;
   padding: 4px;
 }
+#session-footer {
+  flex-shrink: 0;
+  padding: 6px;
+  border-top: 1px solid var(--border);
+}
+#btn-github {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  width: 100%;
+  padding: 6px 8px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  color: var(--text-dim);
+  font-size: 11px;
+  cursor: pointer;
+  transition: color 0.1s, border-color 0.1s;
+}
+#btn-github:hover {
+  color: var(--text);
+  border-color: var(--accent);
+}
+#btn-github svg { flex-shrink: 0; }
 .session-group {
   font-size: 10px;
   text-transform: uppercase;

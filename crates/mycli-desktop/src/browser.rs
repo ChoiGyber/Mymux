@@ -1,4 +1,4 @@
-//! Phase C: MyCli owns a Chromium-based browser launched with a remote
+//! Phase C: Mymux owns a Chromium-based browser launched with a remote
 //! debugging (CDP) port. The user's AI tooling (Playwright MCP) connects to the
 //! same browser via `--cdp-endpoint`, so AI automation and the live view stay in
 //! sync. Phase A will render this browser inside a tab via CDP screencast; for

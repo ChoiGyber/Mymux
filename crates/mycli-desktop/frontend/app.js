@@ -67,6 +67,10 @@ let currentInput = "";
 let acSelectedIdx = -1;
 let currentExplorerPath = "";
 let currentSftpId = null;
+// Explorer directory history (Chrome-style back/forward). Each entry is
+// { path, sftpId }; explorerHistIdx points at the currently-shown entry.
+let explorerHistory = [];
+let explorerHistIdx = -1;
 
 // ── Init: wait for both DOM and Tauri ──
 window.addEventListener("DOMContentLoaded", async () => {
@@ -120,8 +124,7 @@ window.addEventListener("DOMContentLoaded", async () => {
   try {
     await loadCommands();
     const home = await invoke("explorer_home_dir");
-    currentExplorerPath = home;
-    await loadExplorer();
+    await explorerGo(home, null);
     await loadDrives();
     renderExplorerFavorites();
   } catch (e) {
@@ -163,6 +166,13 @@ async function setupListeners() {
 
   btnToggleSidebar.addEventListener("click", () => sidebar.classList.toggle("collapsed"));
   btnToggleSessions.addEventListener("click", () => sessionPanel.classList.toggle("collapsed"));
+
+  // GitHub shortcut (session panel footer) → open the repo in the OS default browser.
+  const btnGithub = document.getElementById("btn-github");
+  if (btnGithub) {
+    btnGithub.addEventListener("click", () =>
+      invoke("open_external", { path: "https://github.com/ChoiGyber/Mymux" }).catch((e) => toast(String(e), true)));
+  }
   btnSplitH.addEventListener("click", () => splitPane("horizontal"));
   btnSplitV.addEventListener("click", () => splitPane("vertical"));
 
@@ -189,6 +199,28 @@ async function setupListeners() {
   // Explorer
   btnExplorerUp.addEventListener("click", goUp);
   explorerMode.addEventListener("change", onExplorerModeChange);
+  const btnExpBack = document.getElementById("btn-explorer-back");
+  const btnExpFwd = document.getElementById("btn-explorer-forward");
+  if (btnExpBack) btnExpBack.addEventListener("click", explorerBack);
+  if (btnExpFwd) btnExpFwd.addEventListener("click", explorerForward);
+
+  // Mouse "back"(3) / "forward"(4) special buttons — navigate directory
+  // history just like Chrome's back/forward. When the native browser panel is
+  // the active surface, defer to its own page history instead.
+  window.addEventListener("mousedown", (e) => {
+    if (e.button === 3 || e.button === 4) e.preventDefault();
+  });
+  window.addEventListener("mouseup", (e) => {
+    if (e.button !== 3 && e.button !== 4) return;
+    e.preventDefault();
+    if (browserTabActive) {
+      invoke(e.button === 3 ? "browser_pane_back" : "browser_pane_forward").catch(() => {});
+    } else if (e.button === 3) {
+      explorerBack();
+    } else {
+      explorerForward();
+    }
+  });
 
   // Shell buttons
   document.querySelectorAll(".shell-btn").forEach((btn) => {
@@ -286,6 +318,25 @@ async function setupListeners() {
   // File viewer close button.
   const vClose = document.getElementById("viewer-close");
   if (vClose) vClose.addEventListener("click", closeViewer);
+
+  // Route in-app links (markdown/HTML viewer): web → embedded browser,
+  // local file/folder → Explorer / viewer. Delegated so it survives re-renders.
+  const vBody = document.getElementById("viewer-body");
+  if (vBody) {
+    vBody.addEventListener("click", onViewerLinkClick);
+    vBody.addEventListener("contextmenu", onViewerContextMenu);
+  }
+  const vctx = document.getElementById("viewer-ctx");
+  if (vctx) {
+    vctx.addEventListener("click", (e) => {
+      const btn = e.target.closest("button[data-act]");
+      if (btn) handleViewerCtxAction(btn.dataset.act);
+      hideViewerCtx();
+    });
+  }
+  document.addEventListener("click", hideViewerCtx);
+  document.addEventListener("scroll", hideViewerCtx, true);
+  document.addEventListener("keydown", (e) => { if (e.key === "Escape") hideViewerCtx(); });
 }
 
 // ═══════════════════════════════════════════════
@@ -365,12 +416,59 @@ function renderFileList(entries) {
 }
 
 function navigateTo(path) {
+  explorerGo(path);
+}
+
+// Central explorer navigation. Records into history unless `record` is false
+// (back/forward replays). `sftpId` defaults to the current source so plain
+// folder clicks keep whichever mode (local PC / SFTP) is active.
+function explorerGo(path, sftpId = currentSftpId, record = true) {
+  currentSftpId = sftpId == null ? null : sftpId;
   currentExplorerPath = path;
-  loadExplorer();
+  if (record) {
+    const cur = explorerHistory[explorerHistIdx];
+    if (!cur || cur.path !== path || cur.sftpId !== currentSftpId) {
+      explorerHistory = explorerHistory.slice(0, explorerHistIdx + 1);
+      explorerHistory.push({ path, sftpId: currentSftpId });
+      explorerHistIdx = explorerHistory.length - 1;
+    }
+  }
+  syncExplorerNav();
+  return loadExplorer();
+}
+
+function explorerBack() {
+  if (explorerHistIdx <= 0) return;
+  const e = explorerHistory[--explorerHistIdx];
+  explorerGo(e.path, e.sftpId, false);
+}
+
+function explorerForward() {
+  if (explorerHistIdx >= explorerHistory.length - 1) return;
+  const e = explorerHistory[++explorerHistIdx];
+  explorerGo(e.path, e.sftpId, false);
+}
+
+// Enable/disable the back/forward buttons and keep the source dropdown in sync.
+function syncExplorerNav() {
+  const back = document.getElementById("btn-explorer-back");
+  const fwd = document.getElementById("btn-explorer-forward");
+  if (back) back.disabled = explorerHistIdx <= 0;
+  if (fwd) fwd.disabled = explorerHistIdx >= explorerHistory.length - 1;
+  if (explorerMode) {
+    const want = currentSftpId == null ? "local" : String(currentSftpId);
+    if (explorerMode.value !== want && [...explorerMode.options].some((o) => o.value === want)) {
+      explorerMode.value = want;
+    }
+  }
 }
 
 // ── File viewer (markdown / text) — open a clicked file in a tab ──
 let viewerActive = false;
+let viewerDir = ""; // directory of the file currently shown — base for relative links
+let viewerFiles = []; // open files as tabs: [{ id, path, name, ext, content }]
+let activeViewerId = null;
+let viewerFileSeq = 0;
 
 const VIEWER_TEXT_EXTS = new Set([
   "md","markdown","txt","log","json","js","ts","jsx","tsx","rs","py","go","java","c","cpp","h","hpp",
@@ -388,8 +486,12 @@ function renderMarkdown(src) {
     t = t.replace(/(^|[^*])\*([^*\s][^*]*)\*/g, "$1<em>$2</em>");
     t = t.replace(/\[([^\]]+)\]\(([^)\s]+)\)/g, (_m, txt, url) => {
       // txt/url are already &<>-escaped by escHtml above. Also escape quotes
-      // for the attribute context and allow only safe URL schemes.
-      const ok = /^(https?:|mailto:|#|\/|\.)/i.test(url);
+      // for the attribute context. Allow http(s)/mailto, anchors, and local
+      // file paths (relative or Windows-absolute); block other schemes like
+      // javascript:/data: by collapsing them to "#".
+      const winAbs = /^[a-z]:[\\/]/i.test(url);
+      const scheme = !winAbs && /^[a-z][a-z0-9+.-]*:/i.test(url);
+      const ok = !scheme || /^(https?:|mailto:)/i.test(url);
       const href = ok ? url.replace(/"/g, "&quot;").replace(/'/g, "&#39;") : "#";
       return `<a href="${href}" target="_blank" rel="noreferrer">${txt}</a>`;
     });
@@ -428,9 +530,12 @@ function ensureViewerTab() {
     tab = document.createElement("div");
     tab.className = "browser-tab"; // reuse the pinned-tab styling
     tab.id = "viewer-tab";
-    tab.innerHTML = `<span>📄</span><span>Viewer</span>`;
+    tab.innerHTML = `<span>📄</span><span>Viewer</span><span class="tab-close" title="닫기">&times;</span>`;
     tab.title = "파일 뷰어";
-    tab.addEventListener("click", () => setViewerView(true));
+    tab.addEventListener("click", (e) => {
+      if (e.target.classList.contains("tab-close")) { closeViewer(); return; }
+      setViewerView(true);
+    });
     terminalTabs.prepend(tab);
   }
   return tab;
@@ -458,6 +563,132 @@ function closeViewer() {
   setViewerView(false);
   const tab = document.getElementById("viewer-tab");
   if (tab) tab.remove();
+  viewerFiles = [];
+  activeViewerId = null;
+}
+
+// ── File-viewer right-click menu: copy the selection, or send it to the
+//    active terminal session. Appears only when text is selected. ──
+let viewerCtxSelection = "";
+
+function onViewerContextMenu(e) {
+  const sel = (window.getSelection && window.getSelection().toString()) || "";
+  if (!sel.trim()) return; // no selection → leave the default behavior alone
+  e.preventDefault();
+  viewerCtxSelection = sel;
+  const m = document.getElementById("viewer-ctx");
+  if (!m) return;
+  m.classList.remove("hidden");
+  const w = m.offsetWidth, h = m.offsetHeight;
+  m.style.left = Math.max(4, Math.min(e.clientX, window.innerWidth - w - 8)) + "px";
+  m.style.top = Math.max(4, Math.min(e.clientY, window.innerHeight - h - 8)) + "px";
+}
+
+function hideViewerCtx() {
+  const m = document.getElementById("viewer-ctx");
+  if (m) m.classList.add("hidden");
+}
+
+function handleViewerCtxAction(act) {
+  const text = viewerCtxSelection;
+  if (!text) return;
+  if (act === "copy") {
+    clipboardWrite(text);
+    toast("복사했습니다");
+  } else if (act === "send") {
+    if (!activeTermId) { toast("열린 세션이 없습니다.", true); return; }
+    invoke("pty_write", { id: activeTermId, data: text }); // no trailing Enter — user reviews then runs
+    terminals.get(activeTermId)?.term.focus();
+    toast("세션으로 보냈습니다");
+  }
+}
+
+// ── In-app link routing (markdown/HTML viewer) ──
+// Web links open in the embedded Native browser; local file/folder links open
+// in the sidebar Explorer (folders) or the file viewer (files).
+function onViewerLinkClick(e) {
+  const a = e.target.closest("a[href]");
+  if (!a) return;
+  const href = a.getAttribute("href");
+  if (!href) return;
+  if (href.startsWith("#")) return; // in-page anchor — let it scroll
+  e.preventDefault();
+  if (/^mailto:/i.test(href)) { invoke("open_external", { path: href }).catch(() => {}); return; }
+  if (/^https?:\/\//i.test(href)) { openInNativeBrowser(href); return; }
+  if (/^\/\//.test(href)) { openInNativeBrowser("https:" + href); return; }
+  if (/^[a-z][a-z0-9+.-]*:/i.test(href)) { invoke("open_external", { path: href }).catch(() => {}); return; }
+  // Local file / folder path (absolute or relative to the viewed file).
+  let target = href.split("#")[0].split("?")[0];
+  try { target = decodeURIComponent(target); } catch {}
+  if (!target) return;
+  openLocalLink(resolveLocalPath(viewerDir, target));
+}
+
+// Open a web URL in the embedded Native browser panel (not the OS browser).
+function openInNativeBrowser(url) {
+  if (!browserEnabled()) {
+    try { localStorage.setItem("mymux.browserEnabled", "true"); } catch {}
+    applyBrowserEnabled();
+  }
+  if (browserMode !== "native") setBrowserMode("native");
+  nativeCurrentUrl = url; // so a first-time pane open lands directly on this URL
+  const navUrl = document.getElementById("nav-url");
+  if (navUrl) navUrl.value = url;
+  setBrowserView(true);
+  setTimeout(() => nativeNavigate(url), 80);
+}
+
+// Open a local path: folders reveal in the Explorer, files open in the viewer.
+async function openLocalLink(target) {
+  activateSidebarTab("explorer");
+  try {
+    await invoke("explorer_list_local", { path: target });
+    explorerGo(target, null); // it's a directory
+    return;
+  } catch {}
+  // Treat as a file: point the Explorer at its folder, then open it.
+  const dir = dirOf(target);
+  if (dir && dir !== currentExplorerPath) {
+    try { await invoke("explorer_list_local", { path: dir }); explorerGo(dir, null); } catch {}
+  }
+  openFileViewer({ path: target, name: baseName(target), is_dir: false, is_symlink: false, size: 0 });
+}
+
+function activateSidebarTab(name) {
+  const tab = document.querySelector(`.sidebar-tab[data-tab="${name}"]`);
+  if (tab) tab.click();
+  if (sidebar && sidebar.classList.contains("collapsed")) sidebar.classList.remove("collapsed");
+}
+
+// ── Local path helpers (Windows-first; tolerate / and \) ──
+function dirOf(p) {
+  if (!p) return "";
+  const s = String(p).replace(/[\\/]+$/, "");
+  const idx = Math.max(s.lastIndexOf("\\"), s.lastIndexOf("/"));
+  if (idx < 0) return "";
+  let d = s.slice(0, idx);
+  if (/^[A-Za-z]:$/.test(d)) d += "\\"; // drive root → "E:\"
+  else if (d === "") d = "/";           // POSIX root
+  return d;
+}
+
+// Resolve `rel` against `base`, collapsing . and .. segments.
+function resolveLocalPath(base, rel) {
+  rel = String(rel || "");
+  if (/^[A-Za-z]:[\\/]/.test(rel) || rel.startsWith("/") || rel.startsWith("\\")) {
+    return rel.replace(/\//g, "\\"); // already absolute
+  }
+  const combined = (String(base || "").replace(/[\\/]+$/, "") + "\\" + rel).replace(/\//g, "\\");
+  const drive = /^[A-Za-z]:/.test(combined) ? combined.slice(0, 2) : "";
+  let rest = drive ? combined.slice(2) : combined;
+  const leading = rest.startsWith("\\") ? "\\" : "";
+  const out = [];
+  for (const part of rest.split("\\")) {
+    if (!part || part === ".") continue;
+    if (part === "..") { out.pop(); continue; }
+    out.push(part);
+  }
+  return drive + leading + out.join("\\");
 }
 
 function fileExt(name) {
@@ -465,12 +696,23 @@ function fileExt(name) {
   return m ? m[1].toLowerCase() : "";
 }
 
+// ── Multi-file viewer: each opened file becomes a tab; the active one renders. ──
 async function openFileViewer(entry) {
   const ext = fileExt(entry.name);
   const lower = entry.name.toLowerCase();
   const isText = VIEWER_TEXT_EXTS.has(ext) || lower === "dockerfile" || lower.endsWith(".gitignore") || ext === "";
   if (!isText) {
     invoke("open_external", { path: entry.path }).catch((e) => toast(String(e), true));
+    return;
+  }
+  // Already open → just focus its tab (don't re-read).
+  const existing = viewerFiles.find((f) => f.path === entry.path);
+  if (existing) {
+    activeViewerId = existing.id;
+    renderViewerTabs();
+    renderViewerBody(existing);
+    ensureViewerTab();
+    setViewerView(true);
     return;
   }
   let content;
@@ -481,20 +723,79 @@ async function openFileViewer(entry) {
     toast(String(e), true);
     return;
   }
-  document.getElementById("viewer-title").textContent = entry.name;
+  const file = { id: ++viewerFileSeq, path: entry.path, name: entry.name, ext, content };
+  viewerFiles.push(file);
+  activeViewerId = file.id;
+  renderViewerTabs();
+  renderViewerBody(file);
+  ensureViewerTab();
+  setViewerView(true);
+}
+
+// Render the active file's content into the viewer body.
+function renderViewerBody(file) {
+  viewerDir = dirOf(file.path);
   const body = document.getElementById("viewer-body");
-  if (ext === "md" || ext === "markdown") {
+  if (file.ext === "html" || file.ext === "htm") {
+    // Render HTML in an isolated, sandboxed iframe — an in-app browser preview.
+    // Scripts run in an opaque origin and cannot reach the app or local files.
+    body.className = "viewer-body html";
+    body.innerHTML = "";
+    const frame = document.createElement("iframe");
+    frame.className = "viewer-frame";
+    frame.setAttribute("sandbox", "allow-scripts allow-popups allow-forms allow-modals");
+    frame.srcdoc = file.content;
+    body.appendChild(frame);
+  } else if (file.ext === "md" || file.ext === "markdown") {
     body.className = "viewer-body markdown";
-    body.innerHTML = renderMarkdown(content);
+    body.innerHTML = renderMarkdown(file.content);
   } else {
     body.className = "viewer-body";
     const pre = document.createElement("pre");
-    pre.textContent = content;
+    pre.textContent = file.content;
     body.innerHTML = "";
     body.appendChild(pre);
   }
-  ensureViewerTab();
-  setViewerView(true);
+}
+
+// Rebuild the per-file tab strip inside the viewer head.
+function renderViewerTabs() {
+  const strip = document.getElementById("viewer-tabs");
+  if (!strip) return;
+  strip.innerHTML = "";
+  for (const f of viewerFiles) {
+    const t = document.createElement("div");
+    t.className = "viewer-file-tab" + (f.id === activeViewerId ? " active" : "");
+    t.title = f.path;
+    t.innerHTML = `<span class="vft-name">${esc(f.name)}</span><span class="vft-close" title="닫기">&times;</span>`;
+    t.addEventListener("click", (e) => {
+      if (e.target.classList.contains("vft-close")) { closeViewerFile(f.id); return; }
+      activateViewerFile(f.id);
+    });
+    strip.appendChild(t);
+  }
+}
+
+function activateViewerFile(id) {
+  const f = viewerFiles.find((x) => x.id === id);
+  if (!f) return;
+  activeViewerId = id;
+  renderViewerTabs();
+  renderViewerBody(f);
+}
+
+// Close one file tab; closing the last one closes the whole viewer.
+function closeViewerFile(id) {
+  const idx = viewerFiles.findIndex((x) => x.id === id);
+  if (idx < 0) return;
+  viewerFiles.splice(idx, 1);
+  if (viewerFiles.length === 0) { closeViewer(); return; }
+  if (activeViewerId === id) {
+    const next = viewerFiles[Math.min(idx, viewerFiles.length - 1)];
+    activeViewerId = next.id;
+    renderViewerBody(next);
+  }
+  renderViewerTabs();
 }
 
 // Operate the CLI in a folder: open a new local terminal already in that
@@ -564,37 +865,28 @@ function renderExplorerFavorites() {
 }
 
 async function goUp() {
+  let parent;
   if (currentSftpId) {
     // Remote: go up by removing last path component
     const parts = currentExplorerPath.replace(/\/+$/, "").split("/");
     parts.pop();
-    currentExplorerPath = parts.join("/") || "/";
+    parent = parts.join("/") || "/";
   } else {
-    const parent = await invoke("explorer_parent_dir", { path: currentExplorerPath });
-    if (parent) currentExplorerPath = parent;
+    parent = await invoke("explorer_parent_dir", { path: currentExplorerPath });
   }
-  loadExplorer();
+  if (parent) explorerGo(parent);
 }
 
 function onExplorerModeChange() {
   const val = explorerMode.value;
   if (val === "local") {
-    currentSftpId = null;
-    invoke("explorer_home_dir").then((home) => {
-      currentExplorerPath = home;
-      loadExplorer();
-    });
+    invoke("explorer_home_dir").then((home) => explorerGo(home, null));
   } else {
     // val is sftp session id
     const id = parseInt(val);
-    currentSftpId = id;
-    invoke("sftp_home_dir", { sessionId: id }).then((home) => {
-      currentExplorerPath = home;
-      loadExplorer();
-    }).catch((err) => {
-      currentExplorerPath = "/";
-      loadExplorer();
-    });
+    invoke("sftp_home_dir", { sessionId: id })
+      .then((home) => explorerGo(home, id))
+      .catch(() => explorerGo("/", id));
   }
 }
 
@@ -1195,9 +1487,12 @@ function initBrowserPanel() {
   const tab = document.createElement("div");
   tab.className = "browser-tab";
   tab.id = "browser-tab";
-  tab.innerHTML = `${ICON.globe}<span>Browser</span>`;
+  tab.innerHTML = `${ICON.globe}<span>Browser</span><span class="tab-close" title="닫기">&times;</span>`;
   tab.title = "Playwright/CDP browser";
-  tab.addEventListener("click", () => setBrowserView(true));
+  tab.addEventListener("click", (e) => {
+    if (e.target.classList.contains("tab-close")) { setBrowserView(false); return; }
+    setBrowserView(true);
+  });
   terminalTabs.prepend(tab);
 
   // AI (CDP) mode controls
@@ -1269,6 +1564,9 @@ function setBrowserView(on) {
     // isn't visible; also stop any AI screencast stream.
     invoke("browser_pane_hide").catch(() => {});
     detachScreencast();
+    // Return focus to the terminal so the app is immediately interactive again
+    // (the native overlay holding focus makes the rest of the UI feel inert).
+    if (activeTermId && terminals.has(activeTermId)) terminals.get(activeTermId).term.focus();
   }
 }
 
@@ -1790,6 +2088,8 @@ async function setupCloseHandler() {
 
     document.getElementById("close-cancel").addEventListener("click", () => {
       document.getElementById("close-modal").classList.add("hidden");
+      // Restore the native browser overlay we hid to surface this dialog.
+      if (browserTabActive && browserMode === "native") openNativePane();
     });
     document.getElementById("close-save").addEventListener("click", async () => {
       if (document.getElementById("close-remember-pref").checked) setClosePref("always");
@@ -1815,6 +2115,11 @@ async function destroyWindow() {
 }
 
 async function handleCloseRequest() {
+  // The native browser webview floats above ALL HTML, including this close
+  // dialog — if it's showing, the modal would be trapped behind it and the app
+  // would appear frozen (only the browser responds). Hide it first; the
+  // close-cancel handler restores it if the user backs out.
+  await invoke("browser_pane_hide").catch(() => {});
   const pref = closePref();
   if (pref === "always") {
     await saveSessionNow();
@@ -2215,12 +2520,7 @@ async function loadDrives() {
       btn.className = "drive-btn";
       btn.dataset.drive = drive;
       btn.textContent = drive.replace(/[\\/]+$/, ""); // "E:"
-      btn.addEventListener("click", () => {
-        currentSftpId = null;
-        if (explorerMode) explorerMode.value = "local";
-        currentExplorerPath = drive;
-        loadExplorer();
-      });
+      btn.addEventListener("click", () => explorerGo(drive, null));
       explorerDrives.appendChild(btn);
     }
     highlightActiveDrive();
@@ -2389,7 +2689,7 @@ function formatSize(bytes) {
   return (bytes / (1024 * 1024 * 1024)).toFixed(1) + " GB";
 }
 
-// Last path component, e.g. "E:\Project\MyCli" -> "MyCli".
+// Last path component, e.g. "E:\Project\Mymux" -> "Mymux".
 function baseName(p) {
   if (!p) return "Terminal";
   const parts = String(p).replace(/[\\/]+$/, "").split(/[\\/]/);
@@ -2587,8 +2887,7 @@ function syncExplorerOnCd(input, ptyId) {
   if (input === "cd" || input === "cd ~" || input === "cd $HOME" || input === "cd %USERPROFILE%") {
     // Go home
     invoke("explorer_home_dir").then((home) => {
-      currentExplorerPath = home;
-      loadExplorer();
+      explorerGo(home);
       setPaneCwd(ptyId, home);
     });
     return;
@@ -2610,8 +2909,7 @@ function syncExplorerOnCd(input, ptyId) {
     try {
       await invoke("explorer_list_local", { path: targetPath });
       // Success — the path exists, update explorer + the pane's cwd label.
-      currentExplorerPath = targetPath;
-      loadExplorer();
+      explorerGo(targetPath);
       setPaneCwd(ptyId, targetPath);
     } catch {
       // Path doesn't exist or error, don't update

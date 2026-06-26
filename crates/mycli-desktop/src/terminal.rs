@@ -85,11 +85,28 @@ if ! shopt -oq posix; then
   done
   unset __f
 fi
+
+# Tool completions are CACHED so the prompt is never blocked by slow CLI startup
+# (e.g. `claude completion bash` can take several seconds). Source the cached
+# script instantly if present, then refresh it silently in the background
+# (monitor mode off + disown = no "[1] 1234 / Done" job-control output).
+__mymux_comp_dir="$HOME/.mycli/completions"
+mkdir -p "$__mymux_comp_dir" 2>/dev/null
+__mymux_bg() {
+  local __m=; case $- in *m*) __m=1;; esac
+  set +m
+  ( "$1" completion bash >"$2.tmp" 2>/dev/null && mv -f "$2.tmp" "$2" 2>/dev/null ) >/dev/null 2>&1 &
+  disown 2>/dev/null
+  [ -n "$__m" ] && set -m
+}
 __mymux_load_completion() {
   command -v "$1" >/dev/null 2>&1 || return
-  local __out
-  __out=$("$1" completion bash 2>/dev/null) || return
-  [ -n "$__out" ] && eval "$__out" 2>/dev/null
+  local __cache="$__mymux_comp_dir/$1.bash"
+  [ -r "$__cache" ] && . "$__cache" 2>/dev/null
+  # Regenerate when missing or older than a day — in the background.
+  if [ ! -r "$__cache" ] || [ -n "$(find "$__cache" -mtime +1 2>/dev/null)" ]; then
+    __mymux_bg "$1" "$__cache"
+  fi
 }
 __mymux_load_completion claude
 __mymux_load_completion codex
