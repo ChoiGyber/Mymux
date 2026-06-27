@@ -1212,7 +1212,25 @@ function closeViewerFile(id) {
 function cdToTerminal(path) {
   if (currentSftpId) {
     const safe = String(path).replace(/'/g, "'\\''");
-    sendToTerminal(`cd '${safe}'`);
+    // Route the cd to the SSH terminal that OWNS this sftp session (its pane
+    // stores t.sftpId at connect time — see doSshConnect), not just whatever
+    // pane happens to be active. Otherwise the cd lands in a local/other shell.
+    let targetId = null;
+    for (const [id, t] of terminals) {
+      if (t.sftpId === currentSftpId) { targetId = id; break; }
+    }
+    if (targetId == null || !terminals.has(targetId)) {
+      if (activeTermId == null || !terminals.has(activeTermId)) {
+        toast("이 서버의 SSH 세션을 찾을 수 없습니다.", true);
+        return;
+      }
+      targetId = activeTermId; // fallback: best-effort to the active terminal
+    }
+    invoke("pty_write", { id: targetId, data: `cd '${safe}'\r` });
+    // Bring that SSH session into view so the user sees the directory change.
+    const tab = findTabForPane(targetId);
+    if (tab && tab.tabIdx !== activeTabIdx) switchToTab(tab.tabIdx);
+    setFocusedPane(targetId);
     return;
   }
   // Local: open the folder in the CURRENT window by splitting the active tab.
