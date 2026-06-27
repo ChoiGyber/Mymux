@@ -1456,7 +1456,11 @@ async function createPane(parentEl, shell, args, cwd) {
     else { await pasteIntoPane(id); }
   });
 
-  await invoke("pty_write", { id, data: "\x1b[1;1R" });
+  // NOTE: we used to inject a fake cursor-position report (ESC[1;1R) here. That
+  // was unsolicited — no shell asked for it — so on a timing race the bytes
+  // landed in readline's input buffer and misaligned the prompt/cursor (cursor
+  // appeared inside the "$"). xterm.js answers real DSR (ESC[6n) queries on its
+  // own, so the injection is both unnecessary and harmful; removed.
 
   setFocusedPane(id);
   return id;

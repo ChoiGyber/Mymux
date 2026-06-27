@@ -1,6 +1,6 @@
 [package]
 name = "mycli-desktop"
-version = "0.1.7"
+version = "0.1.8"
 edition = "2024"
 
 # The executable (and therefore the OS process / Task Manager name) is "Mymux".
