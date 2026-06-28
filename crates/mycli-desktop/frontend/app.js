@@ -140,13 +140,12 @@ window.addEventListener("DOMContentLoaded", async () => {
   applyBrowserEnabled();
 
   // Preload the embedded D2Coding font so terminals measure the correct cell
-  // size (fixed-width Korean). Once fonts finish, refresh any open panes.
+  // size (fixed-width Korean). Once fonts finish, re-measure every open pane's
+  // cell grid. NOTE: this microtask runs BEFORE restoreSession() below creates
+  // the first session, so that session misses this pass — it's re-measured
+  // again explicitly after restore (see the settle pass further down).
   try { await document.fonts.load('1em "D2Coding"'); } catch {}
-  document.fonts.ready.then(() => {
-    for (const [, t] of terminals) {
-      try { if (t.term.clearTextureAtlas) t.term.clearTextureAtlas(); t.fitAddon.fit(); } catch {}
-    }
-  });
+  document.fonts.ready.then(() => remeasureFontCells());
 
   // Restore the previous session if one was saved; otherwise open a default terminal.
   try {
@@ -158,11 +157,12 @@ window.addEventListener("DOMContentLoaded", async () => {
   }
 
   // Panes opened during restore/startup are sized before the container layout
-  // has fully settled, which can leave a restored terminal blank/unresponsive
-  // (xterm fitted to 0 rows). The ResizeObserver won't fire if the container
-  // size didn't change, so force a refit once layout settles.
-  requestAnimationFrame(() => requestAnimationFrame(() => refitAllPanes()));
-  setTimeout(() => refitAllPanes(), 150);
+  // AND the embedded font have settled. That leaves the first session fitted to
+  // a stale cell metric — the prompt cursor lands left of the "$" — and possibly
+  // 0 rows. fonts.ready already fired before restore created the pane, so the
+  // pane missed it; re-measure cells (not just refit) once layout settles.
+  requestAnimationFrame(() => requestAnimationFrame(() => remeasureFontCells()));
+  setTimeout(() => remeasureFontCells(), 150);
 
   setupCloseHandler();
 });
@@ -1748,6 +1748,22 @@ function refitAllPanes(force = false) {
 }
 
 // Terminal font size (Ctrl +/-/0), applied to all panes and persisted.
+// Force every open terminal to re-measure its character cell. xterm caches the
+// cell size at open() time; if the embedded font wasn't fully applied yet — the
+// case for the FIRST session created at startup — that cached metric is stale
+// and the prompt cursor lands a few columns left of the "$". Toggling fontSize
+// re-runs the measurement (the same path Ctrl +/- uses), then we repaint+re-grid.
+function remeasureFontCells() {
+  for (const [, t] of terminals) {
+    try {
+      const fs = t.term.options.fontSize;
+      t.term.options.fontSize = fs + 1; // change → triggers a cell re-measure
+      t.term.options.fontSize = fs;     // restore → re-measures with the real font
+      if (t.term.clearTextureAtlas) t.term.clearTextureAtlas();
+    } catch {}
+  }
+  refitAllPanes(true);
+}
 function setTerminalFontSize(size) {
   terminalFontSize = Math.max(8, Math.min(40, size));
   try { localStorage.setItem("mymux.termFontSize", String(terminalFontSize)); } catch {}
