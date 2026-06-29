@@ -26,6 +26,10 @@
     "active": true,
     "targets": "all",
     "createUpdaterArtifacts": true,
+    "resources": {
+      "binaries/conpty.dll": "conpty.dll",
+      "binaries/OpenConsole.exe": "OpenConsole.exe"
+    },
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
