@@ -8,6 +8,37 @@ For installers, see the [GitHub Releases](https://github.com/ChoiGyber/Mymux/rel
 
 ---
 
+## v0.1.10 — 2026-06-29
+
+### Added / 새 기능
+- **Drag to reorder & move sessions; resizable session panel / 세션 리스트 드래그 + 패널 너비 조절.**
+  Drag a session in the list to reorder it within its tab, or drop it onto
+  another tab (or its header) to move the pane there. Drag the session panel's
+  left edge to resize it; the width is remembered.
+
+  세션 목록에서 세션을 끌어 같은 탭 안에서 순서를 바꾸거나, 다른 탭(또는 탭
+  헤더)에 놓아 그 탭으로 옮길 수 있습니다. 세션 패널 왼쪽 가장자리를 끌어 너비를
+  조절할 수 있고, 너비는 저장됩니다.
+
+### Fixed / 버그 수정
+- **No ghost console flash when closing a pane / 세션 종료 시 검은 콘솔 깜빡임 제거.**
+  Closing a terminal pane briefly flashed a black console window (Windows 11's
+  default-terminal handoff). Mymux now bundles a headless ConPTY host
+  (`conpty.dll` + `OpenConsole.exe`) next to the executable to bypass it.
+
+  터미널 세션을 닫을 때 검은 콘솔 창이 잠깐 깜빡이던 문제(Windows 11 기본 터미널
+  handoff)를 헤드리스 ConPTY 호스트를 실행 파일 옆에 번들해 해결했습니다.
+
+- **Plain-drag selection + Ctrl+C/V in the terminal / 터미널 드래그 선택 + Ctrl+C·V.**
+  A plain mouse drag now selects terminal text (no modifier needed). Ctrl+C
+  copies the selection (and still sends SIGINT when nothing is selected);
+  Ctrl+V pastes.
+
+  이제 마우스로 그냥 끌면 터미널 텍스트가 선택됩니다(키 조합 불필요). Ctrl+C로
+  선택 영역을 복사하고(선택이 없으면 기존대로 SIGINT 전송), Ctrl+V로 붙여넣습니다.
+
+---
+
 ## v0.1.9 — 2026-06-28
 
 ### Fixed / 버그 수정
