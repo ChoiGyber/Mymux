@@ -1378,6 +1378,7 @@ html[data-theme="light"] #toolbar-actions #btn-update:hover {
 
 /* ── Session panel (right) ── */
 #session-panel {
+  position: relative;
   width: 220px;
   background: var(--surface);
   border-left: 1px solid var(--border);
@@ -1394,6 +1395,18 @@ html[data-theme="light"] #toolbar-actions #btn-update:hover {
 #session-panel.collapsed #session-footer,
 #session-panel.collapsed #session-header span { display: none; }
 #session-panel.collapsed #session-header { justify-content: center; padding: 8px 0; }
+/* Drag handle on the panel's left edge to resize its width. */
+#session-resizer {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 5px;
+  height: 100%;
+  cursor: col-resize;
+  z-index: 5;
+}
+#session-resizer:hover { background: var(--accent); opacity: 0.45; }
+#session-panel.collapsed #session-resizer { display: none; }
 #session-header {
   display: flex;
   align-items: center;
@@ -1469,6 +1482,9 @@ html[data-theme="light"] #toolbar-actions #btn-update:hover {
   background: var(--surface-hover);
   border-color: var(--accent);
 }
+/* Drag-reorder: drop-position indicator on the top/bottom edge. */
+.session-item.drop-above { box-shadow: inset 0 2px 0 0 var(--accent); }
+.session-item.drop-below { box-shadow: inset 0 -2px 0 0 var(--accent); }
 .session-dot {
   width: 16px;
   text-align: center;

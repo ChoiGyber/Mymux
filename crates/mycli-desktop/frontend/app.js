@@ -165,6 +165,7 @@ window.addEventListener("DOMContentLoaded", async () => {
   setTimeout(() => remeasureFontCells(), 150);
 
   startFocusKeeper();
+  setupSessionResizer();
   setupCloseHandler();
 });
 
@@ -1540,6 +1541,63 @@ function startFocusKeeper() {
   };
   window.addEventListener("focus", restore, true);
   setInterval(restore, 250);
+
+  // The DOM 'focus' event is unreliable in WebView2 on Alt-Tab return: the OS
+  // can hand the window back without the document refiring 'focus', so the
+  // session you were just working in stays blurred (hollow cursor) until you
+  // click it. Use Tauri's native window focus event as the authoritative
+  // signal — when the window regains focus, restore the active pane's cursor so
+  // you land right back in that session (the way a normal IDE does), and
+  // reconcile pane sizes in case the grid drifted while we were backgrounded.
+  try {
+    const winApi = window.__TAURI__ && window.__TAURI__.window;
+    if (winApi && winApi.getCurrentWindow) {
+      winApi.getCurrentWindow().onFocusChanged(({ payload: focused }) => {
+        if (!focused) return;
+        // Defer a tick so the WebView has actually taken DOM focus before we
+        // grab it back; otherwise the browser's own focus lands on <body> and
+        // overrides ours.
+        setTimeout(() => { restore(); refitAllPanes(); }, 0);
+      }).catch(() => {});
+    }
+  } catch {}
+}
+
+// Let the user drag the session panel's left edge to resize its width.
+function setupSessionResizer() {
+  const panel = document.getElementById("session-panel");
+  const resizer = document.getElementById("session-resizer");
+  if (!panel || !resizer) return;
+  const saved = parseInt(localStorage.getItem("mymux.sessionWidth"), 10);
+  if (saved >= 140 && saved <= 1000) panel.style.width = saved + "px";
+  let startX = 0, startW = 0, dragging = false;
+  resizer.addEventListener("mousedown", (e) => {
+    if (panel.classList.contains("collapsed")) return;
+    e.preventDefault();
+    dragging = true;
+    startX = e.clientX;
+    startW = panel.getBoundingClientRect().width;
+    panel.style.transition = "none";          // smooth drag (no 0.2s tween)
+    document.body.style.cursor = "col-resize";
+    document.body.style.userSelect = "none";
+  });
+  window.addEventListener("mousemove", (e) => {
+    if (!dragging) return;
+    // Panel is pinned to the right; dragging the handle left widens it.
+    let w = startW + (startX - e.clientX);
+    w = Math.max(140, Math.min(window.innerWidth - 360, w));
+    panel.style.width = w + "px";
+  });
+  window.addEventListener("mouseup", () => {
+    if (!dragging) return;
+    dragging = false;
+    panel.style.transition = "";
+    document.body.style.cursor = "";
+    document.body.style.userSelect = "";
+    const w = parseInt(panel.style.width, 10);
+    if (w) localStorage.setItem("mymux.sessionWidth", String(w));
+    try { refitAllPanes(true); } catch {} // terminal grid changed with the panel
+  });
 }
 
 // Briefly pulse a pane + its session-list row to notify task completion
@@ -1743,36 +1801,41 @@ function movePaneToTab(ptyId, targetTabIdx) {
   const dstTab = tabs.get(targetTabIdx);
   if (!srcTab || !dstTab || srcTab.tabIdx === targetTabIdx) return;
   const t = terminals.get(ptyId);
-  if (!t) return;
+  if (!t || !dstTab.rootEl) return;
   const leaf = t.paneEl;
 
-  // Detach from the source tree (collapses now-empty split containers).
-  detachAndCollapse(leaf, srcTab);
-  srcTab.panes = srcTab.panes.filter((p) => p !== ptyId);
+  try {
+    // Detach from the source tree (collapses now-empty split containers).
+    detachAndCollapse(leaf, srcTab);
+    srcTab.panes = srcTab.panes.filter((p) => p !== ptyId);
 
-  // Append into the destination root as a new split column/row.
-  const dstRoot = dstTab.rootEl;
-  if (dstRoot.children.length > 0) {
-    const vertical = dstRoot.classList.contains("vertical");
-    const divider = document.createElement("div");
-    divider.className = "pane-divider";
-    dstRoot.appendChild(divider);
-    setupDividerDrag(divider, dstRoot, vertical ? "vertical" : "horizontal");
+    // Append into the destination root as a new split column/row.
+    const dstRoot = dstTab.rootEl;
+    if (dstRoot.children.length > 0) {
+      const vertical = dstRoot.classList.contains("vertical");
+      const divider = document.createElement("div");
+      divider.className = "pane-divider";
+      dstRoot.appendChild(divider);
+      setupDividerDrag(divider, dstRoot, vertical ? "vertical" : "horizontal");
+    }
+    leaf.style.flex = "1";
+    dstRoot.appendChild(leaf);
+    dstTab.panes.push(ptyId);
+
+    // Close the source tab if it has no panes left (and tell the user).
+    const srcEmptied = srcTab.panes.length === 0;
+    const srcLabel = srcTab.label || `Tab ${srcTab.tabIdx + 1}`;
+    if (srcEmptied) closeTab(srcTab.tabIdx);
+
+    switchToTab(targetTabIdx);
+    setFocusedPane(ptyId);
+    refreshSessionList();
+    requestAnimationFrame(() => refitAllPanes());
+    if (srcEmptied) toast(`마지막 세션이라 '${srcLabel}' 탭이 닫혔습니다`);
+  } catch (e) {
+    toast("탭이동 오류: " + (e && e.message), true);
+    console.error("movePaneToTab failed", e);
   }
-  leaf.style.flex = "1";
-  dstRoot.appendChild(leaf);
-  dstTab.panes.push(ptyId);
-
-  // Close the source tab if it has no panes left (and tell the user).
-  const srcEmptied = srcTab.panes.length === 0;
-  const srcLabel = srcTab.label || `Tab ${srcTab.tabIdx + 1}`;
-  if (srcEmptied) closeTab(srcTab.tabIdx);
-
-  switchToTab(targetTabIdx);
-  setFocusedPane(ptyId);
-  refreshSessionList();
-  requestAnimationFrame(() => refitAllPanes());
-  if (srcEmptied) toast(`마지막 세션이라 '${srcLabel}' 탭이 닫혔습니다`);
 }
 
 // Refit panes to their container. By default a pane whose pixel size hasn't
@@ -1788,7 +1851,23 @@ function refitAllPanes(force = false) {
       const w = host ? host.clientWidth : 0;
       const h = host ? host.clientHeight : 0;
       if (w === 0 || h === 0) continue;                       // hidden/transient: never fit to 0
-      if (!force && w === t._fitW && h === t._fitH) continue; // unchanged: skip (no jump)
+      if (!force && w === t._fitW && h === t._fitH) {
+        // Pixel size unchanged, so no reflow is needed. But the PTY's grid can
+        // still have drifted out of sync with xterm — a transient bad fit, a
+        // dropped pty_resize, or focus being stolen while backgrounded. A
+        // desynced winsize is exactly what makes a TUI's wrapped lines lose
+        // their indent and collapse to column 0 ("줄바꿈이 앞으로 붙는" 증상):
+        // the program wraps for the PTY's width but xterm renders a narrower
+        // grid, so the overflow rewraps at column 0. Reconcile cheaply — no
+        // fit() means no reflow and no content jump — by just re-notifying the
+        // backend when the live grid differs from what it last received.
+        if (t.term.cols !== t._fitCols || t.term.rows !== t._fitRows) {
+          t._fitCols = t.term.cols;
+          t._fitRows = t.term.rows;
+          invoke("pty_resize", { id, cols: t.term.cols, rows: t.term.rows });
+        }
+        continue;
+      }
       t._fitW = w;
       t._fitH = h;
 
@@ -3037,6 +3116,20 @@ function setPaneCwd(ptyId, path) {
   }
 }
 
+// Reorder a session within its own tab's panes — changes the session-list order
+// and the #N numbering. (The split layout on screen is left as-is; moving a
+// session to a *different* tab uses movePaneToTab, which relocates the pane.)
+function reorderSessionWithin(tab, dragId, targetId, after) {
+  const arr = tab.panes;
+  const from = arr.indexOf(dragId);
+  if (from < 0) return;
+  arr.splice(from, 1);
+  const to = arr.indexOf(targetId);
+  if (to < 0) arr.push(dragId);
+  else arr.splice(after ? to + 1 : to, 0, dragId);
+  refreshSessionList();
+}
+
 // Rebuild the full session list, grouped by tab.
 function refreshSessionList() {
   if (!sessionListEl) return;
@@ -3099,18 +3192,36 @@ function refreshSessionList() {
 
       li.append(dotEl, nameEl, renameBtn, paneNo, closeBtn);
 
-      // Drag a session onto another tab's group header to move it there.
+      // Drag a session: reorder it within its own tab, or drop it onto another
+      // tab's session (or that tab's group header) to move it to that tab.
       li.draggable = true;
       li.addEventListener("dragstart", (e) => {
         e.dataTransfer.setData("text/plain", String(ptyId));
         e.dataTransfer.effectAllowed = "move";
       });
-      li.addEventListener("dragover", (e) => e.preventDefault());
+      li.addEventListener("dragover", (e) => {
+        e.preventDefault();
+        const rect = li.getBoundingClientRect();
+        const after = (e.clientY - rect.top) > rect.height / 2;
+        li.classList.toggle("drop-below", after);
+        li.classList.toggle("drop-above", !after);
+      });
+      li.addEventListener("dragleave", () => li.classList.remove("drop-above", "drop-below"));
       li.addEventListener("drop", (e) => {
         e.preventDefault();
-        const pid = Number(e.dataTransfer.getData("text/plain"));
-        const destTab = findTabForPane(ptyId);
-        if (pid && destTab) movePaneToTab(pid, destTab.tabIdx);
+        li.classList.remove("drop-above", "drop-below");
+        const dragId = Number(e.dataTransfer.getData("text/plain"));
+        if (!dragId || dragId === ptyId) return;
+        const srcTab = findTabForPane(dragId);
+        const dstTab = findTabForPane(ptyId);
+        if (!srcTab || !dstTab) return;
+        if (srcTab.tabIdx === dstTab.tabIdx) {
+          const rect = li.getBoundingClientRect();
+          const after = (e.clientY - rect.top) > rect.height / 2;
+          reorderSessionWithin(dstTab, dragId, ptyId, after); // same tab → reorder
+        } else {
+          movePaneToTab(dragId, dstTab.tabIdx);               // other tab → move
+        }
       });
 
       li.addEventListener("click", () => focusSession(ptyId));
