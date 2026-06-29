@@ -8,6 +8,17 @@ For installers, see the [GitHub Releases](https://github.com/ChoiGyber/Mymux/rel
 
 ---
 
+## v0.1.11 — 2026-06-29
+
+### Fixed / 버그 수정
+- **Terminal cursor stays active after Alt-Tab / Alt-Tab 후 터미널 커서 유지.**
+  Returning to Mymux with Alt-Tab left the terminal cursor hollow until you
+  clicked. The active session's cursor now revives automatically on return.
+- **Alt-Tab으로 복귀하면 커서가 풀려 클릭해야 입력되던 문제 수정.** 작업하던 세션의
+  커서가 복귀 즉시 다시 활성화됩니다.
+
+---
+
 ## v0.1.10 — 2026-06-29
 
 ### Added / 새 기능
