@@ -71,6 +71,51 @@ fn main() {
             update::update_install,
             tools::tool_installed,
         ])
+        .setup(|app| {
+            // WebView2 fires no DOM focus / hasFocus / visibility / focus=true
+            // event when the window is re-activated via Alt-Tab, so the frontend
+            // cannot tell it regained focus and the terminal cursor stays hollow.
+            // Poll the OS foreground window here (authoritative) and emit when our
+            // window becomes foreground again; the frontend then restores focus.
+            #[cfg(windows)]
+            {
+                use tauri::{Emitter, Manager};
+                let app_handle = app.handle().clone();
+                if let Some(win) = app.get_webview_window("main") {
+                    if let Ok(h) = win.hwnd() {
+                        let target = h.0 as isize;
+                        std::thread::spawn(move || {
+                            let mut was_fg = true;
+                            loop {
+                                std::thread::sleep(std::time::Duration::from_millis(150));
+                                let fg = unsafe {
+                                    windows_sys::Win32::UI::WindowsAndMessaging::GetForegroundWindow()
+                                } as isize;
+                                let is_fg = fg == target;
+                                if is_fg && !was_fg {
+                                    // WebView2 keeps the DOM unfocused on Alt-Tab
+                                    // return (a focus event never fires — MS won't
+                                    // fix it), so JS focus() only sets activeElement
+                                    // and the cursor stays hollow. Focusing the
+                                    // *webview* (not the top-level window) drives
+                                    // WebView2's MoveFocus and revives input focus;
+                                    // it must run on the main thread.
+                                    let ah = app_handle.clone();
+                                    let _ = app_handle.run_on_main_thread(move || {
+                                        if let Some(wv) = ah.get_webview("main") {
+                                            let _ = wv.set_focus();
+                                        }
+                                    });
+                                    let _ = win.emit("mymux-refocus", ());
+                                }
+                                was_fg = is_fg;
+                            }
+                        });
+                    }
+                }
+            }
+            Ok(())
+        })
         .run(tauri::generate_context!())
         .expect("error while running Mymux");
 }

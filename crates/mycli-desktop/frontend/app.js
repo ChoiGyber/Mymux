@@ -1526,44 +1526,67 @@ let focusKeeperStarted = false;
 function startFocusKeeper() {
   if (focusKeeperStarted) return;
   focusKeeperStarted = true;
-  // Restore terminal focus the instant the window regains it. A background app
-  // (notably WIZVERA Veraport's handler, which pops a window every ~7s) briefly
-  // steals OS focus, blurring the terminal so the cursor goes hollow. Bouncing
-  // the textarea makes xterm re-register focus even when it kept activeElement;
-  // the 250ms tick is a backstop in case the window 'focus' event is missed.
-  const restore = () => {
-    if (!focusedPaneId || !terminals.has(focusedPaneId)) return;
+  // Restore terminal focus to the visible tab's active pane. The WebView drops
+  // the terminal's focus while backgrounded (idle, or when a background app like
+  // WIZVERA Veraport briefly steals OS focus), and on Alt-Tab return it fires no
+  // usable focus event at all (a known WebView2 limitation), so the cursor goes
+  // hollow. Target the visible tab's pane (focusedPaneId can be stale for a
+  // hidden tab), skip if it's off-screen, then bounce the helper textarea so
+  // xterm re-registers focus. `force` re-focuses even when xterm still looks
+  // focused — needed on return, where activeElement/class are stale.
+  const restore = (force) => {
     if (browserTabActive || viewerActive) return;
-    const t = terminals.get(focusedPaneId);
+    let pid = focusedPaneId;
+    const tab = tabs.get(activeTabIdx);
+    if (tab && tab.panes.length && !tab.panes.includes(pid)) pid = tab.panes[0];
+    if (pid == null || !terminals.has(pid)) return;
+    const t = terminals.get(pid);
     const el = t.term.element;
-    if (!el || el.classList.contains("focus")) return; // already focused → fine
-    // Leave it only if focus genuinely moved to another input/pane.
+    if (!el || !el.offsetParent) return; // not visible → leave it
+    const ta = el.querySelector(".xterm-helper-textarea");
+    if (!force && ta && document.activeElement === ta && el.classList.contains("focus")) return;
+    // Respect focus that genuinely moved to a non-terminal input/overlay.
     const ae = document.activeElement;
     if (ae && ae !== document.body && !el.contains(ae) &&
-        (ae.tagName === "INPUT" || ae.tagName === "TEXTAREA" || ae.isContentEditable)) return;
-    const ta = el.querySelector(".xterm-helper-textarea");
-    try { if (ta && document.activeElement === ta) ta.blur(); } catch {}
+        (ae.tagName === "INPUT" || ae.isContentEditable ||
+         (ae.tagName === "TEXTAREA" && !ae.classList.contains("xterm-helper-textarea")))) return;
+    try { if (ta) ta.blur(); } catch {}
     try { t.term.focus(); } catch {}
+    try { if (ta && document.activeElement !== ta) ta.focus(); } catch {}
+    if (focusedPaneId !== pid) { try { setFocusedPane(pid); } catch {} }
   };
-  window.addEventListener("focus", restore, true);
-  setInterval(restore, 250);
-
-  // The DOM 'focus' event is unreliable in WebView2 on Alt-Tab return: the OS
-  // can hand the window back without the document refiring 'focus', so the
-  // session you were just working in stays blurred (hollow cursor) until you
-  // click it. Use Tauri's native window focus event as the authoritative
-  // signal — when the window regains focus, restore the active pane's cursor so
-  // you land right back in that session (the way a normal IDE does), and
-  // reconcile pane sizes in case the grid drifted while we were backgrounded.
+  // On return, retry across a few frames — WebView2 can move focus to <body> a
+  // tick after the window comes back, overriding an immediate restore.
+  const onReturn = () => { restore(true); setTimeout(() => restore(true), 80); setTimeout(() => restore(true), 220); setTimeout(() => restore(true), 500); };
+  window.addEventListener("focus", (e) => {
+    if (!e.target || e.target === window || e.target === document || e.target === document.body) onReturn();
+    else restore();
+  }, true);
+  // Idle backstop; also poll document.hasFocus() — a false→true flip means the
+  // window returned even when no focus event fired.
+  let hadFocus = document.hasFocus();
+  setInterval(() => {
+    const hf = document.hasFocus();
+    if (hf && !hadFocus) onReturn();
+    hadFocus = hf;
+    restore();
+  }, 250);
+  try { document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") onReturn(); }); } catch {}
+  // Primary Alt-Tab return signal: the Rust side polls the OS foreground window,
+  // focuses the webview (reviving DOM input focus — top-level focus alone does
+  // not), and emits "mymux-refocus". WebView2 fires no usable focus event on
+  // return, so this is the reliable trigger.
+  try {
+    const ev = window.__TAURI__ && window.__TAURI__.event;
+    if (ev && ev.listen) ev.listen("mymux-refocus", () => onReturn());
+  } catch {}
+  // Backstop: Tauri's native window focus event (unreliable on Alt-Tab in this
+  // WebView2 build, hence the Rust poll above — kept for cases where it fires).
   try {
     const winApi = window.__TAURI__ && window.__TAURI__.window;
     if (winApi && winApi.getCurrentWindow) {
       winApi.getCurrentWindow().onFocusChanged(({ payload: focused }) => {
-        if (!focused) return;
-        // Defer a tick so the WebView has actually taken DOM focus before we
-        // grab it back; otherwise the browser's own focus lands on <body> and
-        // overrides ours.
-        setTimeout(() => { restore(); refitAllPanes(); }, 0);
+        if (focused) { onReturn(); refitAllPanes(); }
       }).catch(() => {});
     }
   } catch {}
