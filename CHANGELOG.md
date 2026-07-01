@@ -8,6 +8,51 @@ For installers, see the [GitHub Releases](https://github.com/ChoiGyber/Mymux/rel
 
 ---
 
+## v0.1.12 — 2026-07-02
+
+### Added / 새 기능
+- **Terminal text controls: font zoom & letter spacing / 터미널 글자 크기·자간 조절.**
+  A toolbar adds A−/A+ (= Ctrl −/+) to zoom the terminal font and 자−/자+ to
+  tune letter spacing (persisted as a ratio of the font size, since CJK glyphs
+  look cramped at zero).
+
+  툴바에 A−/A+(= Ctrl −/+)로 터미널 글자 크기를, 자−/자+로 자간을 조절합니다.
+  자간은 글자 크기 대비 비율로 저장되며(한글/CJK가 0에서 답답해 보이는 문제 완화),
+  크기를 바꿔도 비율이 유지됩니다.
+- **Paste a clipboard image with Ctrl+V / Ctrl+V로 클립보드 이미지 붙여넣기.**
+  A screenshot on the clipboard is saved to a temp PNG and its path is typed
+  in, so the running tool (Claude Code / Codex) can attach it. Falls back to
+  text paste when there's no image.
+
+  클립보드에 이미지(스크린샷)가 있으면 임시 PNG로 저장하고 그 경로를 입력해 줘서
+  실행 중인 도구(Claude Code / Codex)가 첨부할 수 있습니다. 이미지가 없으면 텍스트
+  붙여넣기로 동작합니다.
+
+### Fixed / 버그 수정
+- **Long lines no longer truncated in narrow / split panes / 좁은·분할 패널에서 긴 줄 잘림 수정.**
+  The PTY was forced to at least 80 columns, so in a narrow split the program
+  laid out to 80 and its long lines and header rules overflowed the visible
+  grid until a manual session switch. The PTY now spawns at the pane's real
+  width and a per-pane observer reconciles the grid as the layout settles.
+
+  PTY를 최소 80칸으로 강제해서, 좁은 분할 패널에서는 프로그램이 80칸 기준으로
+  그려 긴 줄·헤더가 화면 밖으로 잘리던 문제(세션을 수동 전환해야 고쳐짐)를
+  수정했습니다. 이제 PTY가 패널 실제 폭으로 시작하고, 패널별 옵저버가 레이아웃이
+  안정될 때 그리드를 맞춥니다.
+- **Snappy typing after Alt-Tab; faster paste / Alt-Tab 후 입력 버벅임·붙여넣기 지연 수정.**
+  Returning via Alt-Tab could make typed characters repeat in place or drop
+  (the focus-restore fired far too many times), and pasting crawled (the output
+  poll piled up under bursts). Focus restore is now coalesced and yields to
+  live typing, and the terminal output loop is single-flight, parallel, and
+  batched.
+
+  Alt-Tab으로 복귀한 뒤 글자가 제자리에서 반복되거나 씹히고(포커스 복원이 과도하게
+  반복됨), 붙여넣기가 느리던(출력 폴링이 몰릴 때 중첩됨) 문제를 수정했습니다. 포커스
+  복원을 합치고 타이핑 중에는 양보하도록 했으며, 터미널 출력 루프를 중복 없이 병렬·
+  일괄 처리하도록 바꿨습니다.
+
+---
+
 ## v0.1.11 — 2026-06-29
 
 ### Fixed / 버그 수정
