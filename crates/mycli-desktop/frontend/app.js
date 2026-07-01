@@ -305,6 +305,7 @@ async function setupListeners() {
 
   // Keyboard
   document.addEventListener("keydown", (e) => {
+    cancelFocusReturnRetries(); // a keystroke proves focus is alive → stop post-return re-focus thrash
     if (e.key === "Escape" && !modalOverlay.classList.contains("hidden")) closeModal();
     // Ctrl+` — focus terminal
     if (e.ctrlKey && e.key === "`") {
@@ -354,20 +355,27 @@ async function setupListeners() {
     return tab ? tab.panes : [];
   }
 
-  // PTY polling loop — reads output from all terminals
-  setInterval(async () => {
-    for (const [id, t] of terminals) {
-      try {
-        const [chunks, exited] = await invoke("pty_read", { id });
-        for (const chunk of chunks) {
-          t.term.write(chunk);
-        }
-        if (exited && chunks.length === 0) {
-          closeTerminal(id);
-        }
-      } catch {}
+  // PTY polling loop — reads output from all terminals. Self-scheduling (NOT
+  // setInterval): setInterval never awaits its async callback, so when a tick
+  // runs long — many sessions × IPC, or a heavy output burst like a large paste
+  // — the next tick starts before the previous finishes and overlapping loops
+  // pile up, multiplying IPC/render work and tanking throughput (paste crawls,
+  // input lags). Here each tick reads every terminal in PARALLEL and only
+  // re-arms once done, so there's never more than one pass in flight.
+  const pumpTerminals = async () => {
+    try {
+      await Promise.all([...terminals].map(async ([id, t]) => {
+        try {
+          const [chunks, exited] = await invoke("pty_read", { id });
+          if (chunks.length) t.term.write(chunks.join("")); // one write, not per-chunk
+          else if (exited) closeTerminal(id);
+        } catch {}
+      }));
+    } finally {
+      setTimeout(pumpTerminals, 16); // ~60fps cadence, but never overlapping
     }
-  }, 16); // ~60fps
+  };
+  pumpTerminals();
 
   // Resize — refit all visible panes. Debounced (coalesced to one animation
   // frame) so a ResizeObserver burst doesn't reflow every pane repeatedly.
@@ -1596,6 +1604,11 @@ function setFocusedPane(ptyId) {
 // element (another pane, an input, an overlay), pull it back to the active pane.
 // This is why a focused session stays selectable until you click elsewhere.
 let focusKeeperStarted = false;
+// Assigned by startFocusKeeper; called from the global keydown handler so that
+// real typing after an Alt-Tab return cancels the remaining focus-restore
+// retries (a keystroke proves input focus is alive, so re-blurring the textarea
+// would only thrash input and repeat characters).
+let cancelFocusReturnRetries = () => {};
 function startFocusKeeper() {
   if (focusKeeperStarted) return;
   focusKeeperStarted = true;
@@ -1629,8 +1642,27 @@ function startFocusKeeper() {
     if (focusedPaneId !== pid) { try { setFocusedPane(pid); } catch {} }
   };
   // On return, retry across a few frames — WebView2 can move focus to <body> a
-  // tick after the window comes back, overriding an immediate restore.
-  const onReturn = () => { restore(true); setTimeout(() => restore(true), 80); setTimeout(() => restore(true), 220); setTimeout(() => restore(true), 500); };
+  // tick after the window comes back, overriding an immediate restore. Up to ~5
+  // independent signals (Rust refocus, onFocusChanged, hasFocus flip,
+  // visibilitychange, window focus) can each fire onReturn on a single return,
+  // so COALESCE: run the restore burst at most once per 600ms. Retry handles are
+  // kept so the first real keystroke can cancel the pending re-focuses — once
+  // the user is typing, focus is proven alive and re-blurring only thrashes it.
+  let lastReturn = -1e9;
+  let returnRetries = [];
+  cancelFocusReturnRetries = () => { for (const h of returnRetries) clearTimeout(h); returnRetries = []; };
+  const onReturn = () => {
+    const now = performance.now();
+    if (now - lastReturn < 600) return;
+    lastReturn = now;
+    cancelFocusReturnRetries();
+    restore(true);
+    returnRetries = [
+      setTimeout(() => restore(true), 80),
+      setTimeout(() => restore(true), 220),
+      setTimeout(() => restore(true), 500),
+    ];
+  };
   window.addEventListener("focus", (e) => {
     if (!e.target || e.target === window || e.target === document || e.target === document.body) onReturn();
     else restore();
