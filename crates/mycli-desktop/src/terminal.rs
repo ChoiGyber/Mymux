@@ -64,19 +64,49 @@ fn find_git_bash() -> Option<std::path::PathBuf> {
     None
 }
 
-/// Write (idempotently) a Git Bash init file that shows the working directory
-/// right before the `$` prompt, then returns its forward-slash path for
-/// `--rcfile`. Sources the normal startup so PATH/aliases still work.
+/// Write (idempotently) a Git Bash init file with a one-line `path $` prompt
+/// at every width — the path is truncated from the LEFT (`...tail`) whenever
+/// it wouldn't fit — then returns its forward-slash path for `--rcfile`.
+/// Sources the normal startup so PATH/aliases still work.
+///
+/// The prompt readline owns must NEVER wrap. readline's SIGWINCH redisplay of
+/// a WRAPPED prompt is broken twice over (verified with
+/// examples/conpty_probe.rs): it repositions with a cursor-up computed for the
+/// pre-resize layout — leaving stale prompt rows on screen — and it
+/// over-backspaces by the byte length of the invisible color escapes, parking
+/// the cursor left of the `$`. ConPTY compounds it: a width-only resize
+/// delivers no winch to msys bash at all until the next keypress, so the
+/// buggy redisplay fires exactly when the user starts typing. Truncating at
+/// print time keeps the prompt a single row at any pane width — redisplay is
+/// always a clean single-row rewrite, and history stays uniform (a
+/// path-on-its-own-line variant left mismatched leftover prompts above).
+/// Shrinking below an already-printed prompt's width can still leave one
+/// stale row (every terminal shows that with git-bash); the next prompt
+/// self-corrects. The path goes through `${__mymux_p}` (promptvars expansion
+/// of a plain variable) rather than being spliced into PS1, so directory
+/// names containing `$(`/backticks are never re-evaluated.
 #[cfg(windows)]
 fn mymux_bashrc() -> Option<String> {
     let dir = dirs::home_dir()?.join(".mycli");
     std::fs::create_dir_all(&dir).ok()?;
     let path = dir.join("mymux.bashrc");
-    let content = r#"# Mymux Git Bash init — show the directory before the $ prompt.
+    let content = r#"# Mymux Git Bash init — one-line "path $" prompt, path left-truncated to fit.
+# The prompt readline owns must never wrap — see mymux_bashrc() in terminal.rs.
 [ -f /etc/profile ] && . /etc/profile
 [ -f ~/.bashrc ] && . ~/.bashrc
-unset PROMPT_COMMAND
-PS1='\[\033[36m\]\w\[\033[0m\] \$ '
+__mymux_prompt() {
+  local p="${PWD/#$HOME/\~}" cols=${COLUMNS:-80}
+  if (( cols < 12 )); then
+    __mymux_p=""
+  elif (( ${#p} + 4 > cols )); then
+    local keep=$(( cols - 8 ))
+    __mymux_p="...${p: -keep}"
+  else
+    __mymux_p=$p
+  fi
+}
+PROMPT_COMMAND=__mymux_prompt
+PS1='\[\033[36m\]${__mymux_p}\[\033[0m\] \$ '
 
 # Mymux: richer tab-completion (closer to PowerShell, where the tool supports it).
 if ! shopt -oq posix; then
