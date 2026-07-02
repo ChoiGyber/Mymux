@@ -1481,6 +1481,10 @@ html[data-theme="light"] #toolbar-actions #btn-update:hover {
   border-color: var(--accent);
 }
 #btn-github svg { flex-shrink: 0; }
+#app-version {
+  font-size: 10px;
+  opacity: 0.65;
+}
 .session-group {
   font-size: 10px;
   text-transform: uppercase;

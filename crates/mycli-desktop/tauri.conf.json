@@ -26,6 +26,11 @@
     "active": true,
     "targets": "all",
     "createUpdaterArtifacts": true,
+    "windows": {
+      "nsis": {
+        "installerHooks": "./installer-hooks.nsh"
+      }
+    },
     "resources": {
       "binaries/conpty.dll": "conpty.dll",
       "binaries/OpenConsole.exe": "OpenConsole.exe"

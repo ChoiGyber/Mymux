@@ -214,6 +214,11 @@ async function setupListeners() {
     btnGithub.addEventListener("click", () =>
       invoke("open_external", { path: "https://github.com/ChoiGyber/Mymux" }).catch((e) => toast(String(e), true)));
   }
+  // Current app version tag inside the GitHub button.
+  const versionEl = document.getElementById("app-version");
+  if (versionEl && window.__TAURI__.app && window.__TAURI__.app.getVersion) {
+    window.__TAURI__.app.getVersion().then((v) => { versionEl.textContent = "v" + v; }).catch(() => {});
+  }
   btnSplitH.addEventListener("click", () => splitPane("horizontal"));
   btnSplitV.addEventListener("click", () => splitPane("vertical"));
 
