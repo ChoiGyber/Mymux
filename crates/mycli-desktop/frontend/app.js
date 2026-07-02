@@ -20,16 +20,24 @@ async function clipboardWrite(text) {
 // the clipboard (e.g. a screenshot) is saved to a temp PNG and its path is typed
 // in, so Ctrl+V drops an attachable file path for the running tool (Claude Code
 // / Codex). Falls back to clipboard text when there's no image.
+// Text must go through term.paste(), not straight to the PTY: xterm wraps it in
+// bracketed-paste markers when the app enabled that mode (bash/vim/Claude Code —
+// without them each pasted line executes immediately) and normalizes \r\n to \r.
 async function pasteIntoPane(id) {
+  const entry = terminals.get(id);
+  const feed = (text) => {
+    if (entry && entry.term) entry.term.paste(text);
+    else invoke("pty_write", { id, data: text });
+  };
   try {
     const imgPath = await invoke("paste_clipboard_image");
-    if (imgPath) { invoke("pty_write", { id, data: imgPath }); return; }
+    if (imgPath) { feed(imgPath); return; }
   } catch {}
   try {
     const clip = window.__TAURI_PLUGIN_CLIPBOARD_MANAGER__;
     if (clip && clip.readText) {
       const text = await clip.readText();
-      if (text) invoke("pty_write", { id, data: text });
+      if (text) feed(text);
     }
   } catch {}
 }
@@ -1498,13 +1506,17 @@ async function createPane(parentEl, shell, args, cwd) {
   // xterm/PTY so the keys don't reach the shell or zoom the WebView).
   term.attachCustomKeyEventHandler((e) => {
     if (e.type === "keydown" && (e.ctrlKey || e.metaKey) && !e.altKey) {
-      // Paste with Ctrl/Cmd+V (also Ctrl+Shift+V).
-      if (e.key === "v" || e.key === "V") { e.preventDefault(); pasteIntoPane(id); return false; }
+      // Paste with Ctrl/Cmd+V (also Ctrl+Shift+V). Match e.code too — with the
+      // Korean IME active e.key arrives as "ㅍ"/"ㅊ" or "Process", never the
+      // Latin letter, and the shortcut would fall through to the shell.
+      if (e.code === "KeyV" || e.key === "v" || e.key === "V") { e.preventDefault(); pasteIntoPane(id); return false; }
       // Copy the selection with Ctrl/Cmd+C (Shift optional). When nothing is
       // selected, fall through so Ctrl+C still sends SIGINT to the shell.
-      if (e.key === "c" || e.key === "C") {
+      if (e.code === "KeyC" || e.key === "c" || e.key === "C") {
         const sel = term.getSelection();
-        if (sel) { e.preventDefault(); clipboardWrite(sel); return false; }
+        // Clear the selection after copying — if it stuck around, the next
+        // Ctrl+C would copy again instead of interrupting the process.
+        if (sel) { e.preventDefault(); clipboardWrite(sel); term.clearSelection(); return false; }
       }
       if (e.key === "=" || e.key === "+") { e.preventDefault(); adjustTerminalFontSize(1); return false; }
       if (e.key === "-" || e.key === "_") { e.preventDefault(); adjustTerminalFontSize(-1); return false; }
@@ -1533,16 +1545,51 @@ async function createPane(parentEl, shell, args, cwd) {
     term.parser.registerOscHandler(9, (data) => { if (!/^[0-9];/.test(data)) flashPaneNotify(id); return false; });
     // OSC 777 ; notify ; <title> ; <body>  (notify-send style).
     term.parser.registerOscHandler(777, (data) => { if (/^notify/.test(data)) flashPaneNotify(id); return false; });
+    // OSC 52 ; <target> ; <base64>  — clipboard write from the running app
+    // (tmux/vim/Claude Code "copied" actions). xterm drops it by default, so the
+    // TUI reports "copied" while the Windows clipboard never changes.
+    term.parser.registerOscHandler(52, (data) => {
+      const semi = data.indexOf(";");
+      if (semi < 0) return true;
+      const b64 = data.slice(semi + 1);
+      if (b64 === "?") return true; // clipboard read query — never answer
+      try {
+        const bytes = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
+        const text = new TextDecoder().decode(bytes); // base64 wraps UTF-8 bytes
+        if (text) clipboardWrite(text);
+      } catch {}
+      return true;
+    });
   }
 
-  // Focus tracking
-  term.onFocus = () => setFocusedPane(id);
+  // Focus tracking. xterm self-focuses its textarea on mousedown inside the
+  // canvas and can swallow the event when the running TUI enables mouse
+  // reporting (claude/vim/htop) — but the app only updated focusedPaneId on
+  // 'click', so state kept pointing at the old pane and its focus keeper stole
+  // focus back within a second ("click twice to enter a pane"). Track the
+  // switch on mousedown in the capture phase (runs before xterm can swallow
+  // it), plus a DOM focus listener on the helper textarea (the element that
+  // actually receives focus; xterm 5.5 has no term.onFocus event) so state
+  // syncs whenever xterm focuses itself.
+  if (term.textarea) term.textarea.addEventListener("focus", () => { if (focusedPaneId !== id) setFocusedPane(id); });
+  paneEl.addEventListener("mousedown", () => { if (focusedPaneId !== id) setFocusedPane(id); }, true);
   paneEl.addEventListener("click", () => setFocusedPane(id));
   termWrap.addEventListener("click", () => { setFocusedPane(id); term.focus(); });
   // A plain mouse drag should select text. dragDropEnabled:false re-enables the
   // webview's native HTML5 drag, which would otherwise hijack a drag that begins
   // over terminal text and stop xterm's selection — suppress it inside the pane.
   termWrap.addEventListener("dragstart", (e) => e.preventDefault());
+  // Finishing a drag-select copies automatically (PuTTY-style) — no Ctrl+C
+  // needed. onSelectionChange fires on every drag step, so let it settle before
+  // touching the clipboard; an empty selection (a clear) is skipped.
+  let selCopyTimer = null;
+  term.onSelectionChange(() => {
+    clearTimeout(selCopyTimer);
+    selCopyTimer = setTimeout(() => {
+      const sel = term.getSelection();
+      if (sel) clipboardWrite(sel);
+    }, 120);
+  });
   // Right-click: copy the selection if any, otherwise paste the clipboard (PuTTY-style).
   termWrap.addEventListener("contextmenu", async (e) => {
     e.preventDefault();
@@ -1971,6 +2018,14 @@ function movePaneToTab(ptyId, targetTabIdx) {
     console.error("movePaneToTab failed", e);
   }
 }
+
+// NOTE: resize used to leave a stale wrapped prompt + a cursor parked left of
+// the "$" in bash panes. Post-resize PTY "nudges" (cols-1→cols, rows+1→rows)
+// were tried here and made it WORSE: every extra SIGWINCH re-triggers
+// readline's buggy wrapped-prompt redisplay (stale cursor-up math + \b
+// overcorrection by the invisible color escapes — captured with
+// examples/conpty_probe.rs). The real fix is in mymux_bashrc(): the directory
+// lives outside PS1, so the prompt readline redraws can never wrap.
 
 // Refit panes to their container. By default a pane whose pixel size hasn't
 // actually changed is skipped: refitting an unchanged pane reflows xterm (which
