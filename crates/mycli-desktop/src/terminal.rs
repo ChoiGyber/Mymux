@@ -65,9 +65,11 @@ fn find_git_bash() -> Option<std::path::PathBuf> {
 }
 
 /// Write (idempotently) a Git Bash init file with a one-line `path $` prompt
-/// at every width — the path is truncated from the LEFT (`...tail`) whenever
-/// it wouldn't fit — then returns its forward-slash path for `--rcfile`.
-/// Sources the normal startup so PATH/aliases still work.
+/// at every width — when the path wouldn't fit, its leading components are
+/// abbreviated fish-style to their first character (`/d/P/ChurchLivePro-
+/// Bulletin`), with a `...tail` cut as the last resort — then returns its
+/// forward-slash path for `--rcfile`. Sources the normal startup so
+/// PATH/aliases still work.
 ///
 /// The prompt readline owns must NEVER wrap. readline's SIGWINCH redisplay of
 /// a WRAPPED prompt is broken twice over (verified with
@@ -90,20 +92,28 @@ fn mymux_bashrc() -> Option<String> {
     let dir = dirs::home_dir()?.join(".mycli");
     std::fs::create_dir_all(&dir).ok()?;
     let path = dir.join("mymux.bashrc");
-    let content = r#"# Mymux Git Bash init — one-line "path $" prompt, path left-truncated to fit.
+    let content = r#"# Mymux Git Bash init — one-line "path $" prompt; when the path is too wide
+# the leading directories are abbreviated to one character (fish-style).
 # The prompt readline owns must never wrap — see mymux_bashrc() in terminal.rs.
 [ -f /etc/profile ] && . /etc/profile
 [ -f ~/.bashrc ] && . ~/.bashrc
 __mymux_prompt() {
   local p="${PWD/#$HOME/\~}" cols=${COLUMNS:-80}
-  if (( cols < 12 )); then
-    __mymux_p=""
-  elif (( ${#p} + 4 > cols )); then
-    local keep=$(( cols - 8 ))
-    __mymux_p="...${p: -keep}"
-  else
-    __mymux_p=$p
+  if (( cols < 12 )); then __mymux_p=""; return; fi
+  if (( ${#p} + 4 > cols )); then
+    local IFS=/ out= i
+    local -a a
+    read -ra a <<< "$p"
+    local n=${#a[@]}
+    for (( i=0; i<n-1; i++ )); do out+="${a[i]:0:1}/"; done
+    out+="${a[n-1]}"
+    p=$out
+    if (( ${#p} + 4 > cols )); then
+      local keep=$(( cols - 8 ))
+      p="...${p: -keep}"
+    fi
   fi
+  __mymux_p=$p
 }
 PROMPT_COMMAND=__mymux_prompt
 PS1='\[\033[36m\]${__mymux_p}\[\033[0m\] \$ '
