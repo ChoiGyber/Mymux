@@ -8,6 +8,45 @@ For installers, see the [GitHub Releases](https://github.com/ChoiGyber/Mymux/rel
 
 ---
 
+## v0.1.13 — 2026-07-02
+
+### Added / 새 기능
+- **Drag-select copies automatically / 드래그 선택 자동 복사.**
+  Finishing a mouse selection in a terminal pane copies it to the clipboard
+  (PuTTY-style) — no Ctrl+C or right-click needed.
+
+  터미널에서 마우스로 텍스트를 드래그해 선택하면 자동으로 클립보드에 복사됩니다
+  (PuTTY 방식). Ctrl+C나 우클릭이 필요 없습니다.
+
+### Fixed / 버그 수정
+- **Ctrl+C / Ctrl+V work with the Korean IME / 한글 입력 상태에서 Ctrl+C/V 동작.**
+  With the Korean IME active the shortcuts arrived as "ㅊ"/"ㅍ" and never fired;
+  they now match the physical key. Paste also goes through xterm's
+  bracketed-paste path, so multi-line pastes no longer execute line by line.
+
+  한글 IME가 켜져 있으면 단축키가 "ㅊ"/"ㅍ"로 들어와 무시되던 문제를 물리 키 기준
+  매칭으로 수정했습니다. 붙여넣기가 bracketed-paste 경로를 타므로 여러 줄
+  붙여넣기가 줄마다 실행되지 않습니다.
+- **TUI "copied" actions reach the Windows clipboard (OSC 52) / TUI 복사가 실제
+  클립보드에 반영.** Claude Code, tmux, vim 등이 OSC 52로 보내는 복사 요청을
+  터미널이 무시해 "복사됨"이라고 떠도 클립보드가 비어 있던 문제를 수정했습니다.
+  (클립보드 읽기 질의에는 보안상 응답하지 않습니다.)
+- **One click to focus a split pane / 분할 패인 한 번 클릭 포커스.**
+  Clicking another pane could bounce focus back to the old one, needing a
+  second click. Focus state now tracks the mousedown and xterm's own focus.
+
+  다른 패인을 클릭해도 포커스가 이전 패인으로 튕겨 두 번 클릭해야 하던 문제를
+  수정했습니다.
+- **Resize no longer corrupts the bash prompt / 창 크기 변경 시 프롬프트 깨짐 수정.**
+  Widening a window whose prompt had wrapped left stale prompt rows and parked
+  the cursor left of the `$` until Enter. The prompt now always stays on one
+  row — when the pane is too narrow, leading directories abbreviate fish-style
+  (`/d/P/ChurchLivePro-Bulletin`).
+
+  프롬프트가 줄바꿈된 상태에서 창을 넓히면 잔해 줄이 남고 커서가 `$` 왼쪽에
+  박히던 문제를 수정했습니다. 프롬프트는 항상 한 줄을 유지하며, 패인이 좁으면
+  앞 디렉토리를 fish 스타일로 한 글자씩 축약합니다(`/d/P/ChurchLivePro-Bulletin`).
+
 ## v0.1.12 — 2026-07-02
 
 ### Added / 새 기능
