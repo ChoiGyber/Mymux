@@ -8,6 +8,29 @@ For installers, see the [GitHub Releases](https://github.com/ChoiGyber/Mymux/rel
 
 ---
 
+## v0.1.14 — 2026-07-03
+
+### Added / 새 기능
+- **App version shown in the session panel / 세션 패널에 앱 버전 표시.**
+  The GitHub button at the bottom right now shows the running version
+  (e.g. `v0.1.14`), so you can tell at a glance which build you're on.
+
+  오른쪽 하단 깃허브 버튼 안에 실행 중인 버전이 표시됩니다(예: `v0.1.14`).
+  어떤 빌드를 쓰고 있는지 한눈에 확인할 수 있습니다.
+
+### Fixed / 버그 수정
+- **Installer no longer fails with "Error opening file for writing:
+  OpenConsole.exe" / 설치 중 OpenConsole.exe 쓰기 오류 팝업 수정.**
+  Every open terminal session keeps the bundled ConPTY host running, which
+  locked the file and made installs/updates fail with an Abort/Retry popup.
+  The installer now moves the locked binaries aside and writes fresh copies —
+  no terminal windows are killed in the process.
+
+  터미널 세션이 열려 있으면 번들된 ConPTY 호스트(OpenConsole.exe)가 파일을
+  잠가 설치/업데이트가 Abort/Retry 팝업으로 실패하던 문제를 수정했습니다.
+  이제 설치기가 잠긴 파일을 옆으로 치워두고 새 파일을 기록하며, 실행 중인
+  터미널은 종료되지 않습니다.
+
 ## v0.1.13 — 2026-07-02
 
 ### Added / 새 기능
