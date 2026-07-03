@@ -2201,6 +2201,16 @@ function closePane(ptyId) {
   repin();
 }
 
+// A PTY that hit EOF — the shell process exited (`exit`, an SSH drop, a crash).
+// The read loop calls this so the dead session doesn't linger frozen on screen;
+// tearing it down is exactly a manual pane close (unwrap the split, close the
+// tab if it was the last pane). Historically this was CALLED from the read loop
+// but never DEFINED, so the ReferenceError was swallowed by that loop's catch
+// and exited panes were left on screen until manually closed.
+function closeTerminal(ptyId) {
+  closePane(ptyId);
+}
+
 function findTabForPane(ptyId) {
   for (const [idx, tab] of tabs) {
     if (tab.panes.includes(ptyId)) {
