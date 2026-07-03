@@ -156,6 +156,105 @@ __mymux_load_completion gh
     Some(path.to_string_lossy().replace('\\', "/"))
 }
 
+/// PowerShell init script (injected via `-EncodedCommand`): a one-line
+/// `PS path>` prompt that NEVER wraps, the PowerShell twin of mymux_bashrc().
+///
+/// The stock prompt prints the FULL cwd, so in a narrow pane it wraps — and
+/// PSReadLine repaints the input line from absolute coordinates captured when
+/// the prompt was drawn. Any pty_resize between prompt and typing (guaranteed
+/// at startup: panes spawn before flex layout/font metrics settle, then
+/// refit) reflows that wrapped line, the saved coordinates go stale, and the
+/// first keystrokes render at a bogus spot ("커서가 이상한 데" + the
+/// `PS D:\Project\Chur      ePro-Bulletin>` gap = the old width's padding
+/// merged by xterm reflow). Same disease readline had; same cure: when the
+/// path wouldn't fit, abbreviate leading directories fish-style to one
+/// character, then `...tail`-cut as a last resort. CJK chars are budgeted at
+/// 2 cells. A short prompt line never rewraps, so PSReadLine's coordinates
+/// survive resizes.
+///
+/// `-EncodedCommand` (not `-File`) because inline commands are exempt from
+/// ExecutionPolicy — a .ps1 would die on the default `Restricted` policy —
+/// and base64 sidesteps cmdline quoting. `-NoExit` keeps the session
+/// interactive; the user's $PROFILE still loads first (no `-NoProfile`), our
+/// `global:` definitions simply win afterwards, exactly like `--rcfile`.
+#[cfg(windows)]
+fn mymux_ps_init_b64() -> &'static str {
+    const PS_INIT: &str = r#"function global:__mymux_vlen([string]$s) {
+  $n = 0
+  foreach ($c in $s.ToCharArray()) { if ([int]$c -ge 0x1100) { $n += 2 } else { $n += 1 } }
+  return $n
+}
+function global:prompt {
+  $w = 0
+  try { $w = $Host.UI.RawUI.WindowSize.Width } catch {}
+  if (-not $w -or $w -lt 1) { $w = 80 }
+  $p = "$PWD"
+  $m = $w - 6
+  if ($m -lt 6) { return '> ' }
+  if ((__mymux_vlen $p) -gt $m) {
+    $parts = $p -split '\\'
+    for ($i = 1; $i -lt $parts.Count - 1; $i++) {
+      if ($parts[$i].Length -gt 1) { $parts[$i] = $parts[$i].Substring(0, 1) }
+    }
+    $p = $parts -join '\'
+    if ((__mymux_vlen $p) -gt $m) {
+      $budget = $m - 3
+      $tail = ''
+      for ($i = $p.Length - 1; $i -ge 0; $i--) {
+        $cw = 1; if ([int]$p[$i] -ge 0x1100) { $cw = 2 }
+        if ($budget - $cw -lt 0) { break }
+        $budget -= $cw
+        $tail = [string]$p[$i] + $tail
+      }
+      $p = '...' + $tail
+    }
+  }
+  "PS $p$('>' * ($NestedPromptLevel + 1)) "
+}
+"#;
+    static B64: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    B64.get_or_init(|| {
+        let utf16le: Vec<u8> = PS_INIT
+            .encode_utf16()
+            .flat_map(|u| u.to_le_bytes())
+            .collect();
+        base64_encode(&utf16le)
+    })
+}
+
+/// Standard base64 — a dozen lines beats pulling in a crate for one constant.
+#[cfg(windows)]
+fn base64_encode(data: &[u8]) -> String {
+    const TBL: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut out = String::with_capacity(data.len().div_ceil(3) * 4);
+    for chunk in data.chunks(3) {
+        let n = (u32::from(chunk[0]) << 16)
+            | (u32::from(*chunk.get(1).unwrap_or(&0)) << 8)
+            | u32::from(*chunk.get(2).unwrap_or(&0));
+        out.push(TBL[(n >> 18) as usize & 63] as char);
+        out.push(TBL[(n >> 12) as usize & 63] as char);
+        out.push(if chunk.len() > 1 { TBL[(n >> 6) as usize & 63] as char } else { '=' });
+        out.push(if chunk.len() > 2 { TBL[n as usize & 63] as char } else { '=' });
+    }
+    out
+}
+
+/// PowerShell launcher: `-NoLogo` (no banner) + the never-wrapping prompt.
+#[cfg(windows)]
+fn powershell_builder(candidates: &[&str]) -> Option<CommandBuilder> {
+    for exe in candidates {
+        if let Some(p) = find_in_path(exe) {
+            let mut c = CommandBuilder::new(p);
+            c.arg("-NoLogo");
+            c.arg("-NoExit");
+            c.arg("-EncodedCommand");
+            c.arg(mymux_ps_init_b64());
+            return Some(c);
+        }
+    }
+    None
+}
+
 /// Default shell. On Windows prefer Git Bash (clean, no product banner); if it
 /// isn't installed, fall back to PowerShell with `-NoLogo` so the startup
 /// banner is suppressed.
@@ -177,12 +276,8 @@ fn default_shell_builder() -> CommandBuilder {
             }
             return c;
         }
-        for exe in ["pwsh.exe", "powershell.exe"] {
-            if let Some(path) = find_in_path(exe) {
-                let mut c = CommandBuilder::new(path);
-                c.arg("-NoLogo");
-                return c;
-            }
+        if let Some(c) = powershell_builder(&["pwsh.exe", "powershell.exe"]) {
+            return c;
         }
     }
     CommandBuilder::new_default_prog()
@@ -200,18 +295,12 @@ fn build_command(shell: Option<&str>, args: Option<&Vec<String>>) -> CommandBuil
     {
         match s.to_lowercase().as_str() {
             "powershell" | "pwsh" | "pwsh.exe" => {
-                for exe in ["pwsh.exe", "powershell.exe"] {
-                    if let Some(p) = find_in_path(exe) {
-                        let mut c = CommandBuilder::new(p);
-                        c.arg("-NoLogo");
-                        return c;
-                    }
+                if let Some(c) = powershell_builder(&["pwsh.exe", "powershell.exe"]) {
+                    return c;
                 }
             }
             "powershell.exe" | "windows-powershell" => {
-                if let Some(p) = find_in_path("powershell.exe") {
-                    let mut c = CommandBuilder::new(p);
-                    c.arg("-NoLogo");
+                if let Some(c) = powershell_builder(&["powershell.exe"]) {
                     return c;
                 }
             }
@@ -397,4 +486,31 @@ pub fn pty_close(
     let mut sessions = state.sessions.lock().unwrap();
     sessions.remove(&id);
     Ok(())
+}
+
+#[cfg(all(test, windows))]
+mod tests {
+    use super::base64_encode;
+
+    // RFC 4648 test vectors — PowerShell decodes -EncodedCommand with
+    // Convert.FromBase64String, so any padding mistake bricks the shell launch.
+    #[test]
+    fn base64_rfc4648_vectors() {
+        assert_eq!(base64_encode(b""), "");
+        assert_eq!(base64_encode(b"f"), "Zg==");
+        assert_eq!(base64_encode(b"fo"), "Zm8=");
+        assert_eq!(base64_encode(b"foo"), "Zm9v");
+        assert_eq!(base64_encode(b"foob"), "Zm9vYg==");
+        assert_eq!(base64_encode(b"fooba"), "Zm9vYmE=");
+        assert_eq!(base64_encode(b"foobar"), "Zm9vYmFy");
+    }
+
+    // The exact bytes PowerShell will decode: UTF-16LE of the init script.
+    #[test]
+    fn ps_init_b64_roundtrip() {
+        let b64 = super::mymux_ps_init_b64();
+        assert!(!b64.is_empty());
+        assert!(b64.len() % 4 == 0);
+        assert!(b64.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'+' || b == b'/' || b == b'='));
+    }
 }

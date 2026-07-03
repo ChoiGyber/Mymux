@@ -35,6 +35,19 @@ For installers, see the [GitHub Releases](https://github.com/ChoiGyber/Mymux/rel
   어떤 빌드를 쓰고 있는지 한눈에 확인할 수 있습니다.
 
 ### Fixed / 버그 수정
+- **Typing no longer lands at the wrong spot in PowerShell panes / PowerShell
+  터미널에서 입력 커서가 엉뚱한 곳에 찍히던 문제 수정.**
+  In a narrow pane the stock `PS <full path>>` prompt wrapped onto a second
+  row; the resize that always follows startup then reflowed that line, and
+  PSReadLine kept rendering keystrokes at its stale coordinates — a torn
+  prompt with a gap in the middle and a misplaced cursor. PowerShell panes now
+  get a prompt that abbreviates the path fish-style whenever it wouldn't fit,
+  so the prompt always stays on one row at any pane width.
+
+  좁은 화면에서 PowerShell 기본 프롬프트(`PS <전체 경로>>`)가 두 줄로 감긴 뒤
+  창 크기가 바뀌면(시작 직후 항상 발생) 프롬프트가 중간이 벌어진 채 찢어지고
+  입력 커서가 엉뚱한 위치에 찍히던 문제를 수정했습니다. 이제 폭이 부족하면
+  경로를 fish 스타일로 축약해 프롬프트가 어떤 폭에서도 항상 한 줄을 유지합니다.
 - **Installer no longer fails with "Error opening file for writing:
   OpenConsole.exe" / 설치 중 OpenConsole.exe 쓰기 오류 팝업 수정.**
   Every open terminal session keeps the bundled ConPTY host running, which
