@@ -21,6 +21,7 @@
       <button id="btn-track-inc" title="Wider letter spacing">A B</button>
       <button id="btn-split-h" title="Split focused pane horizontally (Ctrl+Shift+D)">&#8596;</button>
       <button id="btn-split-v" title="Split focused pane vertically (Ctrl+Shift+E)">&#8597;</button>
+      <button id="btn-broadcast" title="Broadcast typing to every pane in this tab (Ctrl+Shift+B)">&#8649;</button>
       <span id="accent-swatches" title="Accent color">
         <button class="accent-swatch" data-accent="blue" title="Blue" style="background:#0f9ef0"></button>
         <button class="accent-swatch" data-accent="violet" title="Violet" style="background:#8b5cf6"></button>
@@ -168,6 +169,13 @@
       </div>
 
       <div id="terminal-container">
+        <!-- Scrollback search (Ctrl+Shift+F) — drives the focused pane's search addon -->
+        <div id="term-search" class="hidden">
+          <input type="text" id="term-search-input" placeholder="Search scrollback…" spellcheck="false" autocomplete="off" />
+          <button id="term-search-prev" title="Previous match (Shift+Enter)">&#9650;</button>
+          <button id="term-search-next" title="Next match (Enter)">&#9660;</button>
+          <button id="term-search-close" title="Close (Esc)">&times;</button>
+        </div>
         <div id="terminal-welcome">
           <p>Click <strong>+ Terminal</strong> to open a new terminal session.</p>
           <div id="shell-options">
@@ -296,6 +304,8 @@
 
   <script src="vendor/xterm.min.js"></script>
   <script src="vendor/addon-fit.min.js"></script>
+  <script src="vendor/addon-search.min.js"></script>
+  <script src="vendor/addon-web-links.min.js"></script>
   <script src="app.js"></script>
 </body>
 </html>

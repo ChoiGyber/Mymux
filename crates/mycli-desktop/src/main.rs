@@ -32,6 +32,7 @@ fn main() {
             commands::read_text_file,
             commands::write_text_file,
             commands::open_external,
+            commands::window_attention,
             commands::pick_key_file,
             commands::fs_copy_path,
             commands::fs_move_path,

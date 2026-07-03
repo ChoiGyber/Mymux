@@ -182,6 +182,16 @@ pub fn open_external(path: String) -> Result<(), String> {
     Ok(())
 }
 
+/// Flash the taskbar icon without stealing focus — called when a terminal
+/// bell / completion notification arrives while the window is in the
+/// background, so a finished long task is noticeable from another app.
+#[tauri::command]
+pub fn window_attention(window: tauri::WebviewWindow) -> Result<(), String> {
+    window
+        .request_user_attention(Some(tauri::UserAttentionType::Informational))
+        .map_err(|e| e.to_string())
+}
+
 /// Open a native file picker and return the chosen path (e.g. an SSH key file).
 /// Returns None if the user cancels. Runs on a worker thread (sync command) so
 /// the blocking dialog dispatches to the main thread without deadlocking.

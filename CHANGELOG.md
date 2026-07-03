@@ -8,6 +8,47 @@ For installers, see the [GitHub Releases](https://github.com/ChoiGyber/Mymux/rel
 
 ---
 
+## Unreleased
+
+### Added / 새 기능
+- **Scrollback search / 스크롤백 검색 (Ctrl+Shift+F).**
+  A search bar over the terminal finds text in the focused pane's scrollback —
+  Enter/Shift+Enter steps through matches, Esc closes and returns focus.
+
+  터미널 위 검색바로 현재 패인의 스크롤백을 검색합니다. Enter/Shift+Enter로
+  이동, Esc로 닫고 터미널로 복귀.
+- **Ctrl+Click opens links / Ctrl+클릭으로 링크 열기.**
+  URLs in terminal output are underlined on hover; Ctrl+Click opens them in
+  the in-app browser tab (or the OS browser when the Browser feature is off).
+  A plain click still selects text.
+
+  터미널 출력의 URL에 마우스를 올리면 밑줄, Ctrl+클릭 시 내장 브라우저 탭에서
+  열립니다(브라우저 기능이 꺼져 있으면 기본 브라우저). 일반 클릭은 그대로 선택.
+- **Pane zoom / 패인 최대화 (Ctrl+Shift+Z).**
+  Temporarily maximize the focused pane over its tab, tmux-style; press again
+  to restore. Any split/close/move restores the layout automatically.
+
+  tmux처럼 현재 패인을 탭 전체로 임시 확대, 다시 누르면 복원. 분할·닫기·이동
+  시 자동 복원.
+- **Activity badges & taskbar alerts / 활동 배지·작업표시줄 알림.**
+  Output or a completion bell in a hidden pane marks its session row and tab
+  with a dot until viewed; when the whole window is in the background, the
+  taskbar icon flashes (no focus steal) — so a finished Claude/Codex run is
+  noticeable from another app.
+
+  보이지 않는 패인에 출력/완료 벨이 오면 세션 목록과 탭에 점 배지가 남고,
+  창이 백그라운드면 작업표시줄 아이콘이 깜빡입니다(포커스는 안 뺏음) — 다른
+  앱을 쓰다가도 Claude/Codex 작업 종료를 알 수 있습니다.
+- **Input broadcast / 입력 브로드캐스트 (Ctrl+Shift+B).**
+  tmux synchronize-panes: toggle per tab to type into every pane at once
+  (e.g. the same command on several SSH servers). Red pane borders warn while
+  it's on.
+
+  tmux synchronize-panes처럼 탭 단위로 켜면 입력이 그 탭의 모든 패인에 동시
+  전달됩니다(여러 SSH 서버에 같은 명령 등). 켜진 동안 패인 테두리가 붉게 표시.
+
+---
+
 ## v0.1.16 — 2026-07-03
 
 ### Fixed / 버그 수정

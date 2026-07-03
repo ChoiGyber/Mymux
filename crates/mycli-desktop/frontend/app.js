@@ -346,6 +346,22 @@ async function setupListeners() {
       e.preventDefault();
       spawnTerminal();
     }
+    // Ctrl+Shift+F — search the focused pane's scrollback. Also match e.code:
+    // with the Korean IME active e.key never arrives as the Latin letter.
+    if (e.ctrlKey && e.shiftKey && (e.key === "F" || e.code === "KeyF")) {
+      e.preventDefault();
+      openTermSearch();
+    }
+    // Ctrl+Shift+Z — maximize / restore the focused pane (tmux zoom)
+    if (e.ctrlKey && e.shiftKey && (e.key === "Z" || e.code === "KeyZ")) {
+      e.preventDefault();
+      togglePaneZoom();
+    }
+    // Ctrl+Shift+B — broadcast typing to every pane in this tab
+    if (e.ctrlKey && e.shiftKey && (e.key === "B" || e.code === "KeyB")) {
+      e.preventDefault();
+      toggleBroadcast();
+    }
     // Alt+Arrow — navigate between panes
     if (e.altKey && !e.ctrlKey && !e.shiftKey) {
       const paneIds = getCurrentTabPanes();
@@ -380,8 +396,10 @@ async function setupListeners() {
       await Promise.all([...terminals].map(async ([id, t]) => {
         try {
           const [chunks, exited] = await invoke("pty_read", { id });
-          if (chunks.length) t.term.write(chunks.join("")); // one write, not per-chunk
-          else if (exited) closeTerminal(id);
+          if (chunks.length) {
+            t.term.write(chunks.join("")); // one write, not per-chunk
+            markPaneActivity(id, t); // unseen badge when this pane is hidden
+          } else if (exited) closeTerminal(id);
         } catch {}
       }));
     } finally {
@@ -413,6 +431,11 @@ async function setupListeners() {
   // Browser feature on/off toggle (top bar 🌐).
   const btnBrowser = document.getElementById("btn-toggle-browser");
   if (btnBrowser) btnBrowser.addEventListener("click", toggleBrowserEnabled);
+
+  // Scrollback search bar (Ctrl+Shift+F) + per-tab input broadcast (Ctrl+Shift+B).
+  initTermSearch();
+  const btnBroadcast = document.getElementById("btn-broadcast");
+  if (btnBroadcast) btnBroadcast.addEventListener("click", toggleBroadcast);
 
   // Terminal text zoom (top bar A−/A+) — same effect as Ctrl -/+.
   const btnFontDec = document.getElementById("btn-font-dec");
@@ -1431,6 +1454,15 @@ async function createPane(parentEl, shell, args, cwd) {
   const term = createXterm();
   const fitAddon = new FitAddon.FitAddon();
   term.loadAddon(fitAddon);
+  // Scrollback search — driven by the shared search bar (Ctrl+Shift+F).
+  const searchAddon = new SearchAddon.SearchAddon();
+  term.loadAddon(searchAddon);
+  // Ctrl+Click opens URLs (in-app browser when enabled); a plain click stays a
+  // selection click so it never hijacks text selection over a link.
+  term.loadAddon(new WebLinksAddon.WebLinksAddon((event, uri) => {
+    if (event.ctrlKey || event.metaKey) openLinkFromTerminal(uri);
+    else hintLinkOnce();
+  }));
   term.open(termWrap);
 
   await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
@@ -1459,7 +1491,7 @@ async function createPane(parentEl, shell, args, cwd) {
   const sessionLabel = shell === "ssh"
     ? "SSH"
     : (cwd ? baseName(cwd) : (shell || "Terminal"));
-  terminals.set(id, { term, fitAddon, paneEl, type: shell === "ssh" ? "ssh" : "local", label: sessionLabel, cwd: cwd || null });
+  terminals.set(id, { term, fitAddon, search: searchAddon, paneEl, type: shell === "ssh" ? "ssh" : "local", label: sessionLabel, cwd: cwd || null, unseen: false });
 
   // A brand-new pane's final size isn't settled at spawn (flex sizing, font
   // load, a split ratio applied just after). The container-level observer only
@@ -1535,7 +1567,13 @@ async function createPane(parentEl, shell, args, cwd) {
 
   term.onData((data) => {
     const result = handleTerminalInput(data, id);
-    if (result !== "consumed") {
+    if (result === "consumed") return;
+    // Per-tab broadcast (Ctrl+Shift+B): typing in any pane of a broadcasting
+    // tab goes to every pane of that tab — tmux synchronize-panes.
+    const tab = findTabForPane(id);
+    if (tab && tab.broadcast && tab.panes.length > 1) {
+      for (const pid of tab.panes) invoke("pty_write", { id: pid, data });
+    } else {
       invoke("pty_write", { id, data });
     }
   });
@@ -1645,6 +1683,10 @@ function setFocusedPane(ptyId) {
   if (t) {
     t.paneEl.classList.add("focused");
     t.term.focus();
+    if (t.unseen) {
+      t.unseen = false;
+      document.querySelector(`.session-item[data-pty-id="${ptyId}"]`)?.classList.remove("unseen");
+    }
   }
   updateSessionActive();
 }
@@ -1799,6 +1841,153 @@ function flashPaneNotify(id) {
   const t = terminals.get(id);
   if (t) pulse(t.paneEl);
   pulse(document.querySelector(`.session-item[data-pty-id="${id}"]`));
+  // The pulse is invisible when the pane is off-screen or the whole window is
+  // in the background — leave a persistent "unseen" badge for the former and
+  // flash the taskbar icon (no focus steal) for the latter.
+  if (t) {
+    const tab = findTabForPane(id);
+    if (tab && (tab.tabIdx !== activeTabIdx || browserTabActive || viewerActive)) markUnseen(id, t, tab);
+  }
+  if (!document.hasFocus()) invoke("window_attention").catch(() => {});
+}
+
+// ── Activity badges (tmux monitor-activity) ──────────────────────────────
+// Output landing in a pane the user can't see marks its session row and its
+// tab with a dot; viewing the tab clears it.
+function markPaneActivity(id, t) {
+  if (t.unseen) return; // already marked — skip the per-frame DOM work
+  const tab = findTabForPane(id);
+  if (!tab) return;
+  if (tab.tabIdx === activeTabIdx && !browserTabActive && !viewerActive) return; // visible
+  markUnseen(id, t, tab);
+}
+function markUnseen(id, t, tab) {
+  t.unseen = true;
+  document.querySelector(`.session-item[data-pty-id="${id}"]`)?.classList.add("unseen");
+  terminalTabs.querySelector(`.tab[data-id="${tab.tabIdx}"]`)?.classList.add("unseen");
+}
+function clearUnseenForTab(tabIdx) {
+  const tab = tabs.get(tabIdx);
+  if (!tab) return;
+  for (const pid of tab.panes || []) {
+    const t = terminals.get(pid);
+    if (t && t.unseen) {
+      t.unseen = false;
+      document.querySelector(`.session-item[data-pty-id="${pid}"]`)?.classList.remove("unseen");
+    }
+  }
+  terminalTabs.querySelector(`.tab[data-id="${tabIdx}"]`)?.classList.remove("unseen");
+}
+
+// ── Pane zoom (tmux prefix+z) ────────────────────────────────────────────
+// Temporarily maximize the focused pane over its tab as an absolute overlay —
+// no reparenting, so background panes stay live and scroll state is untouched.
+// Every layout operation (split/close/move) clears the zoom first so the
+// overlay never fights the flex-tree math.
+let zoomedPaneId = null;
+function togglePaneZoom() {
+  const t = terminals.get(focusedPaneId);
+  const wasZoomed = zoomedPaneId === focusedPaneId;
+  clearPaneZoom();
+  if (!wasZoomed && t) {
+    const tab = findTabForPane(focusedPaneId);
+    t.paneEl.classList.add("zoomed");
+    if (tab && tab.rootEl) tab.rootEl.classList.add("has-zoom");
+    zoomedPaneId = focusedPaneId;
+  }
+  requestAnimationFrame(() => refitAllPanes());
+}
+function clearPaneZoom() {
+  if (zoomedPaneId == null) return;
+  const t = terminals.get(zoomedPaneId);
+  if (t) t.paneEl.classList.remove("zoomed");
+  const tab = findTabForPane(zoomedPaneId);
+  if (tab && tab.rootEl) tab.rootEl.classList.remove("has-zoom");
+  zoomedPaneId = null;
+}
+
+// ── Per-tab input broadcast (tmux synchronize-panes) ─────────────────────
+function toggleBroadcast() {
+  const tab = tabs.get(activeTabIdx);
+  if (!tab) return;
+  tab.broadcast = !tab.broadcast;
+  updateBroadcastUi();
+  toast(tab.broadcast
+    ? "Broadcast ON — typing goes to every pane in this tab (Ctrl+Shift+B to stop)"
+    : "Broadcast off");
+}
+function updateBroadcastUi() {
+  const tab = tabs.get(activeTabIdx);
+  const on = !!(tab && tab.broadcast);
+  document.getElementById("btn-broadcast")?.classList.toggle("active", on);
+  tabs.forEach((t) => { if (t.rootEl) t.rootEl.classList.toggle("broadcasting", !!t.broadcast); });
+}
+
+// ── Scrollback search (Ctrl+Shift+F) ─────────────────────────────────────
+// One shared bar over the terminal area; it always drives the FOCUSED pane's
+// search addon, so switching panes retargets the same bar.
+function initTermSearch() {
+  const input = document.getElementById("term-search-input");
+  if (!input) return;
+  const addon = () => terminals.get(focusedPaneId)?.search;
+  const find = (back) => {
+    const a = addon();
+    if (!a || !input.value) return;
+    try { back ? a.findPrevious(input.value) : a.findNext(input.value); } catch {}
+  };
+  input.addEventListener("input", () => {
+    const a = addon();
+    if (!a) return;
+    try { input.value ? a.findNext(input.value, { incremental: true }) : a.clearDecorations?.(); } catch {}
+  });
+  input.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") { e.preventDefault(); find(e.shiftKey); }
+    else if (e.key === "Escape") { e.preventDefault(); closeTermSearch(); }
+  });
+  document.getElementById("term-search-prev")?.addEventListener("click", () => find(true));
+  document.getElementById("term-search-next")?.addEventListener("click", () => find(false));
+  document.getElementById("term-search-close")?.addEventListener("click", closeTermSearch);
+}
+function openTermSearch() {
+  if (browserTabActive || viewerActive || !focusedPaneId) return;
+  const bar = document.getElementById("term-search");
+  const input = document.getElementById("term-search-input");
+  if (!bar || !input) return;
+  bar.classList.remove("hidden");
+  input.focus();
+  input.select();
+}
+function closeTermSearch() {
+  const bar = document.getElementById("term-search");
+  if (!bar || bar.classList.contains("hidden")) return;
+  bar.classList.add("hidden");
+  const t = terminals.get(focusedPaneId);
+  if (t) {
+    try { t.search?.clearDecorations?.(); t.term.clearSelection(); } catch {}
+    t.term.focus();
+  }
+}
+
+// ── Terminal URL opening (web-links addon) ───────────────────────────────
+// Ctrl+Click routes into the in-app browser tab when the Browser feature is
+// enabled; otherwise falls back to the OS default browser.
+function openLinkFromTerminal(uri) {
+  if (!/^https?:\/\//i.test(uri)) return;
+  if (browserEnabled()) {
+    if (browserMode !== "native") setBrowserMode("native");
+    setBrowserView(true);
+    const nav = document.getElementById("nav-url");
+    if (nav) nav.value = uri;
+    nativeNavigate(uri);
+  } else {
+    invoke("open_external", { path: uri }).catch((e) => toast(String(e), true));
+  }
+}
+let linkHintShown = false;
+function hintLinkOnce() {
+  if (linkHintShown) return;
+  linkHintShown = true;
+  toast("Ctrl+Click opens links (Ctrl+클릭으로 링크 열기)");
 }
 
 // Resolve the user's default-shell preference into an identifier for the
@@ -1882,6 +2071,7 @@ function captureBottomPins() {
 // Split the focused pane
 async function splitPane(direction, cwd) {
   if (!focusedPaneId) return;
+  clearPaneZoom(); // layout is about to change — drop any zoom overlay first
   const tInfo = terminals.get(focusedPaneId);
   if (!tInfo) return;
 
@@ -1969,6 +2159,7 @@ function setupDividerDrag(divider, container, direction) {
 function closePane(ptyId) {
   const tInfo = terminals.get(ptyId);
   if (!tInfo) return;
+  clearPaneZoom(); // layout is about to change — drop any zoom overlay first
 
   const tab = findTabForPane(ptyId);
   if (!tab) return;
@@ -2025,6 +2216,7 @@ function movePaneToTab(ptyId, targetTabIdx) {
   const srcTab = findTabForPane(ptyId);
   const dstTab = tabs.get(targetTabIdx);
   if (!srcTab || !dstTab || srcTab.tabIdx === targetTabIdx) return;
+  clearPaneZoom(); // layout is about to change — drop any zoom overlay first
   const t = terminals.get(ptyId);
   if (!t || !dstTab.rootEl) return;
   const leaf = t.paneEl;
@@ -2296,6 +2488,7 @@ function movePane(srcId, targetId, position) {
   const src = terminals.get(srcId);
   const target = terminals.get(targetId);
   if (!src || !target) return;
+  clearPaneZoom(); // layout is about to change — drop any zoom overlay first
   const tab = findTabForPane(targetId);
   if (!tab || !tab.panes.includes(srcId)) return; // same-tab moves only
 
@@ -3306,6 +3499,8 @@ function switchToTab(tabIdx) {
     const focusPane = tabInfo.panes.includes(focusedPaneId) ? focusedPaneId : tabInfo.panes[0];
     setFocusedPane(focusPane);
   }
+  clearUnseenForTab(tabIdx); // its panes are visible now — clear activity dots
+  updateBroadcastUi();       // reflect this tab's broadcast state on the toolbar
   requestAnimationFrame(() => refitAllPanes());
 }
 
@@ -3428,6 +3623,7 @@ function refreshSessionList() {
 
       const li = document.createElement("li");
       li.className = "session-item" + (ptyId === focusedPaneId ? " active" : "");
+      if (t.unseen) li.classList.add("unseen");
       li.dataset.ptyId = ptyId;
 
       const dotEl = document.createElement("span");

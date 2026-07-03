@@ -1326,6 +1326,77 @@ html[data-theme="light"] #toolbar-actions #btn-update:hover {
 .pane-leaf.notify-flash { animation: notifyPulse 0.7s ease-in-out 3; }
 .session-item.notify-flash { animation: notifyPulse 0.7s ease-in-out 3; }
 
+/* Unseen activity (tmux monitor-activity): output/bell landed while the pane
+   was hidden — dot on the session row and its tab until the tab is viewed. */
+.session-item.unseen .session-name::after {
+  content: "●";
+  color: var(--accent);
+  font-size: 8px;
+  margin-left: 6px;
+  vertical-align: 1px;
+}
+.tab.unseen::after {
+  content: "●";
+  color: var(--accent);
+  font-size: 7px;
+  margin-left: 5px;
+  vertical-align: 1px;
+}
+
+/* Ctrl+Shift+Z: temporarily maximize a pane over its tab (tmux zoom). The
+   ancestor split containers drop their positioning while a zoom is active so
+   the overlay resolves against the tab/terminal area, not the nearest split. */
+.pane-container.has-zoom,
+.pane-container.has-zoom .pane-container { position: static; }
+.pane-leaf.zoomed {
+  position: absolute;
+  inset: 0;
+  z-index: 30;
+  background: var(--bg);
+  border-color: var(--accent);
+}
+
+/* Per-tab input broadcast (Ctrl+Shift+B): red-tinted borders warn that typing
+   reaches every pane of this tab. */
+.pane-container.broadcasting .pane-leaf { border-color: rgba(229, 72, 77, 0.45); }
+.pane-container.broadcasting .pane-leaf.focused { border-color: #e5484d; }
+#btn-broadcast.active { color: #e5484d; border-color: rgba(229, 72, 77, 0.6); }
+
+/* ── Scrollback search bar (Ctrl+Shift+F) ── */
+#term-search {
+  position: absolute;
+  top: 10px;
+  right: 16px;
+  z-index: 40;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 5px 7px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+}
+#term-search.hidden { display: none; }
+#term-search input {
+  width: 210px;
+  background: transparent;
+  border: none;
+  outline: none;
+  color: inherit;
+  font: inherit;
+}
+#term-search button {
+  background: none;
+  border: none;
+  color: inherit;
+  opacity: 0.65;
+  cursor: pointer;
+  padding: 2px 6px;
+  font-size: 11px;
+}
+#term-search button:hover { opacity: 1; }
+
 .pane-divider {
   flex-shrink: 0;
   background: var(--border);
