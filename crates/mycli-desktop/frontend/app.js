@@ -1572,7 +1572,12 @@ async function createPane(parentEl, shell, args, cwd) {
       // to readline's beginning-of-line); use Home to jump to the line start.
       // In a full-screen TUI (alt screen) it passes through to the app.
       if (!e.shiftKey && (e.key === "a" || e.key === "A" || e.code === "KeyA")) {
-        if (atIntegratedPrompt(terminals.get(id))) { e.preventDefault(); selectCurrentInput(id); return false; }
+        if (atIntegratedPrompt(terminals.get(id))) {
+          e.preventDefault();
+          const did = selectCurrentInput(id);
+          if (did) hintCtrlAOnce();
+          return false;
+        }
       }
       // Ctrl+X — cut the selection, or the current input line, and clear it.
       if (!e.shiftKey && (e.key === "x" || e.key === "X" || e.code === "KeyX")) {
@@ -2036,6 +2041,12 @@ function hintLinkOnce() {
   if (linkHintShown) return;
   linkHintShown = true;
   toast("Ctrl+Click opens links (Ctrl+클릭으로 링크 열기)");
+}
+let ctrlAHintShown = false;
+function hintCtrlAOnce() {
+  if (ctrlAHintShown) return;
+  ctrlAHintShown = true;
+  toast("입력줄 전체 선택됨 — Ctrl+C 복사 / Ctrl+X 잘라내기 (줄 시작은 Home)");
 }
 
 // ── OSC 133 shell integration: prompt jump, block copy, input line copy/cut ──
@@ -4165,6 +4176,13 @@ function currentThemeMode() {
   return document.documentElement.getAttribute("data-theme") || "dark";
 }
 
+// #rrggbb → rgba(r,g,b,a); falls back to a visible blue if the value isn't hex.
+function hexToRgba(hex, a) {
+  const m = /^#?([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i.exec(String(hex).trim());
+  if (!m) return `rgba(90,150,255,${a})`;
+  return `rgba(${parseInt(m[1], 16)},${parseInt(m[2], 16)},${parseInt(m[3], 16)},${a})`;
+}
+
 function terminalTheme() {
   const bg = cssVar("--term-bg", "#1a1a2e");
   const fg = cssVar("--term-fg", "#e0e0e0");
@@ -4174,7 +4192,11 @@ function terminalTheme() {
     background: bg,
     foreground: fg,
     cursor: accent,
-    selectionBackground: border,
+    // Accent-tinted, translucent selection — the old `border` color sat almost
+    // on top of the terminal background, so a selection (e.g. Ctrl+A on the
+    // input line) was nearly invisible. Translucent keeps the text readable.
+    selectionBackground: hexToRgba(accent, 0.42),
+    selectionInactiveBackground: hexToRgba(accent, 0.30),
     black: bg,
     red: cssVar("--red", "#f44747"),
     green: cssVar("--green", "#4ec9b0"),
