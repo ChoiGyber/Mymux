@@ -436,6 +436,8 @@ async function setupListeners() {
   initTermSearch();
   const btnBroadcast = document.getElementById("btn-broadcast");
   if (btnBroadcast) btnBroadcast.addEventListener("click", toggleBroadcast);
+  // Command palette (Ctrl+Shift+P).
+  initCommandPalette();
 
   // Terminal text zoom (top bar A−/A+) — same effect as Ctrl -/+.
   const btnFontDec = document.getElementById("btn-font-dec");
@@ -1491,7 +1493,7 @@ async function createPane(parentEl, shell, args, cwd) {
   const sessionLabel = shell === "ssh"
     ? "SSH"
     : (cwd ? baseName(cwd) : (shell || "Terminal"));
-  terminals.set(id, { term, fitAddon, search: searchAddon, paneEl, type: shell === "ssh" ? "ssh" : "local", label: sessionLabel, cwd: cwd || null, unseen: false });
+  terminals.set(id, { term, fitAddon, search: searchAddon, paneEl, type: shell === "ssh" ? "ssh" : "local", shell: shell || null, label: sessionLabel, cwd: cwd || null, unseen: false, marks: [], inputMark: null });
 
   // A brand-new pane's final size isn't settled at spawn (flex sizing, font
   // load, a split ratio applied just after). The container-level observer only
@@ -1559,6 +1561,20 @@ async function createPane(parentEl, shell, args, cwd) {
       if (e.key === "-" || e.key === "_") { e.preventDefault(); adjustTerminalFontSize(-1); return false; }
       if (e.key === "0") { e.preventDefault(); setTerminalFontSize(14); return false; }
       if (e.key === "Tab") { e.preventDefault(); focusNextPane(e.shiftKey ? -1 : 1); return false; }
+      // Ctrl+Shift+P — command palette.
+      if (e.shiftKey && (e.key === "P" || e.code === "KeyP")) { e.preventDefault(); openCommandPalette(); return false; }
+      // Ctrl+Shift+↑/↓ — jump between shell prompts (OSC 133 marks).
+      if (e.shiftKey && (e.key === "ArrowUp" || e.key === "ArrowDown")) { e.preventDefault(); jumpPrompt(e.key === "ArrowUp" ? -1 : 1); return false; }
+      // Ctrl+A — select the CURRENT command-input line (shell integration). Only
+      // when something is typed; on an empty line it falls through so readline's
+      // beginning-of-line still works. Use Home to jump to line start regardless.
+      if (!e.shiftKey && (e.key === "a" || e.key === "A" || e.code === "KeyA")) {
+        if (selectCurrentInput(id)) { e.preventDefault(); return false; }
+      }
+      // Ctrl+X — cut the selection (or the current input line) and clear it.
+      if (!e.shiftKey && (e.key === "x" || e.key === "X" || e.code === "KeyX")) {
+        if (cutCurrentInput(id)) { e.preventDefault(); return false; }
+      }
     }
     // Shift+Insert → paste
     if (e.type === "keydown" && e.shiftKey && e.key === "Insert") { e.preventDefault(); pasteIntoPane(id); return false; }
@@ -1601,6 +1617,32 @@ async function createPane(parentEl, shell, args, cwd) {
         const text = new TextDecoder().decode(bytes); // base64 wraps UTF-8 bytes
         if (text) clipboardWrite(text);
       } catch {}
+      return true;
+    });
+    // OSC 133 shell-integration marks (emitted by our bash rcfile / PS prompt):
+    //   A = prompt start, B = command-input start, D;<code> = command finished.
+    // A registerMarker() tracks each prompt row as the buffer scrolls/trims, so
+    // we can jump between prompts and copy command output blocks; B records where
+    // the typed command begins so we can copy/cut the current input line.
+    term.parser.registerOscHandler(133, (data) => {
+      const t = terminals.get(id);
+      if (!t) return true;
+      const k = data[0];
+      if (k === "A") {
+        try {
+          const m = term.registerMarker(0);
+          if (m) { t.marks.push({ marker: m, exit: null }); if (t.marks.length > 400) t.marks.shift(); }
+        } catch {}
+      } else if (k === "B") {
+        try {
+          const m = term.registerMarker(0);
+          if (m) t.inputMark = { marker: m, col: term.buffer.active.cursorX };
+        } catch {}
+      } else if (k === "D") {
+        const ec = parseInt((data.split(";")[1] || ""), 10);
+        const last = t.marks[t.marks.length - 1];
+        if (last && Number.isFinite(ec)) last.exit = ec;
+      }
       return true;
     });
   }
@@ -1988,6 +2030,222 @@ function hintLinkOnce() {
   if (linkHintShown) return;
   linkHintShown = true;
   toast("Ctrl+Click opens links (Ctrl+클릭으로 링크 열기)");
+}
+
+// ── OSC 133 shell integration: prompt jump, block copy, input line copy/cut ──
+// Marks come from our bash rcfile / PowerShell prompt (see terminal.rs).
+
+// The current command-input line as { startLine, startCol, cellLen, text }, or
+// null when nothing is typed or the shell hasn't emitted a 133;B mark yet.
+function getInputRegion(t) {
+  const im = t && t.inputMark;
+  if (!im || !im.marker || im.marker.isDisposed) return null;
+  const buf = t.term.buffer.active;
+  const cols = t.term.cols;
+  const startLine = im.marker.line;
+  const startCol = im.col;
+  // Extend across wrapped continuation rows of the input.
+  let endRow = startLine;
+  while (true) { const n = buf.getLine(endRow + 1); if (n && n.isWrapped) endRow++; else break; }
+  let text = "", lastRow = startLine, lastCellExcl = startCol;
+  for (let row = startLine; row <= endRow; row++) {
+    const line = buf.getLine(row);
+    if (!line) break;
+    const from = row === startLine ? startCol : 0;
+    for (let c = from; c < cols; c++) {
+      const cell = line.getCell(c);
+      if (!cell) continue;
+      const w = cell.getWidth();
+      if (w === 0) continue; // trailing cell of a wide char
+      const ch = cell.getChars() || " ";
+      text += ch;
+      if (ch !== " ") { lastRow = row; lastCellExcl = c + w; }
+    }
+  }
+  const trimmed = text.replace(/[\s ]+$/, "");
+  if (!trimmed) return null;
+  const cellLen = (lastRow - startLine) * cols + (lastCellExcl - startCol);
+  return { startLine, startCol, cellLen, text: trimmed };
+}
+
+// Visually select the current input line. Returns false when there's nothing to
+// select (so Ctrl+A can fall through to readline's beginning-of-line).
+function selectCurrentInput(id) {
+  const t = terminals.get(id);
+  const r = getInputRegion(t);
+  if (!r) return false;
+  try { t.term.select(r.startCol, r.startLine, r.cellLen); } catch { return false; }
+  return true;
+}
+
+function copyCurrentInput(id) {
+  const t = terminals.get(id || focusedPaneId);
+  const r = getInputRegion(t);
+  if (!r) { toast("입력 중인 명령이 없어요 (셸 통합 준비 전이거나 빈 줄)"); return false; }
+  clipboardWrite(r.text);
+  toast("현재 명령줄 복사됨");
+  return true;
+}
+
+// Cut the selection (or, if none, the current input line) and clear it in the
+// shell. Returns false when there's nothing to cut (Ctrl+X falls through).
+function cutCurrentInput(id) {
+  const t = terminals.get(id);
+  if (!t) return false;
+  const sel = t.term.getSelection();
+  const r = getInputRegion(t);
+  const text = sel || (r && r.text);
+  if (!text) return false;
+  clipboardWrite(text);
+  t.term.clearSelection();
+  // Clear the shell's input line: Escape reverts the line in PSReadLine and
+  // cmd.exe; readline (bash/zsh/ssh) uses Ctrl+E then Ctrl+U (to-end, kill-to-start).
+  const sh = (t.shell || "").toLowerCase();
+  const winShell = /power|pwsh|cmd/.test(sh);
+  invoke("pty_write", { id, data: winShell ? "\x1b" : "\x05\x15" });
+  toast("현재 명령줄 잘라냄");
+  return true;
+}
+
+function promptLines(t) {
+  return t.marks
+    .filter((m) => m.marker && !m.marker.isDisposed)
+    .map((m) => m.marker.line)
+    .sort((a, b) => a - b);
+}
+
+// Scroll to the previous / next prompt mark (Ctrl+Shift+↑/↓).
+function jumpPrompt(dir) {
+  const t = terminals.get(focusedPaneId);
+  if (!t) return;
+  const lines = promptLines(t);
+  if (!lines.length) { toast("프롬프트 마크 없음 (bash·PowerShell에서 동작)"); return; }
+  const view = t.term.buffer.active.viewportY;
+  let target = null;
+  if (dir < 0) { for (let i = lines.length - 1; i >= 0; i--) if (lines[i] < view) { target = lines[i]; break; } }
+  else { for (const l of lines) if (l > view) { target = l; break; } }
+  if (target != null) t.term.scrollToLine(target);
+  else toast(dir < 0 ? "첫 프롬프트입니다" : "마지막 프롬프트입니다");
+}
+
+// Copy the command + output block visible at the top of the viewport.
+function copyCommandBlock(id) {
+  const t = terminals.get(id || focusedPaneId);
+  if (!t) return false;
+  const lines = promptLines(t);
+  if (!lines.length) { toast("명령 블록 마크 없음 (bash·PowerShell에서 동작)"); return false; }
+  const buf = t.term.buffer.active;
+  const view = buf.viewportY;
+  let start = lines[0];
+  for (const l of lines) { if (l <= view) start = l; else break; }
+  let end = buf.length - 1;
+  for (const l of lines) if (l > start) { end = l - 1; break; }
+  let text = "";
+  for (let row = start; row <= end; row++) {
+    const line = buf.getLine(row);
+    if (line) text += line.translateToString(true) + "\n";
+  }
+  text = text.replace(/\n+$/, "");
+  if (!text.trim()) { toast("빈 블록"); return false; }
+  clipboardWrite(text);
+  toast("명령 블록 복사됨 (" + (end - start + 1) + "줄)");
+  return true;
+}
+
+// ── Command palette (Ctrl+Shift+P) ───────────────────────────────────────
+function commandPaletteActions() {
+  return [
+    { name: "New terminal / 새 터미널", hint: "Ctrl+Shift+N", run: () => spawnTerminal() },
+    { name: "Split pane horizontally / 가로 분할", hint: "Ctrl+Shift+D", run: () => splitPane("horizontal") },
+    { name: "Split pane vertically / 세로 분할", hint: "Ctrl+Shift+E", run: () => splitPane("vertical") },
+    { name: "Close pane / 패인 닫기", hint: "Ctrl+Shift+W", run: () => focusedPaneId && closePane(focusedPaneId) },
+    { name: "Zoom / restore pane / 패인 최대화", hint: "Ctrl+Shift+Z", run: () => togglePaneZoom() },
+    { name: "Search scrollback / 스크롤백 검색", hint: "Ctrl+Shift+F", run: () => openTermSearch() },
+    { name: "Broadcast input to tab / 입력 브로드캐스트", hint: "Ctrl+Shift+B", run: () => toggleBroadcast() },
+    { name: "Jump to previous prompt / 이전 프롬프트", hint: "Ctrl+Shift+↑", run: () => jumpPrompt(-1) },
+    { name: "Jump to next prompt / 다음 프롬프트", hint: "Ctrl+Shift+↓", run: () => jumpPrompt(1) },
+    { name: "Copy command output block / 명령 블록 복사", hint: "", run: () => copyCommandBlock() },
+    { name: "Copy current command line / 현재 명령줄 복사", hint: "", run: () => copyCurrentInput() },
+    { name: "Cut current command line / 현재 명령줄 잘라내기", hint: "Ctrl+X", run: () => cutCurrentInput(focusedPaneId) },
+    { name: "Select current command line / 현재 명령줄 전체 선택", hint: "Ctrl+A", run: () => selectCurrentInput(focusedPaneId) },
+    { name: "New SSH connection / SSH 연결", hint: "", run: () => openSshModal() },
+    { name: "Toggle browser panel / 브라우저 패널", hint: "", run: () => toggleBrowserEnabled() },
+    { name: "Toggle light / dark theme / 테마 전환", hint: "", run: () => setTheme(currentThemeMode() === "dark" ? "light" : "dark") },
+    { name: "Increase font size / 글자 크게", hint: "Ctrl +", run: () => adjustTerminalFontSize(1) },
+    { name: "Decrease font size / 글자 작게", hint: "Ctrl -", run: () => adjustTerminalFontSize(-1) },
+  ];
+}
+
+let paletteFiltered = [], paletteIndex = 0;
+function initCommandPalette() {
+  const input = document.getElementById("palette-input");
+  const ov = document.getElementById("palette-overlay");
+  if (!input || !ov) return;
+  input.addEventListener("input", () => renderPalette(input.value));
+  input.addEventListener("keydown", (e) => {
+    if (e.key === "Escape") { e.preventDefault(); closeCommandPalette(); }
+    else if (e.key === "ArrowDown") { e.preventDefault(); movePalette(1); }
+    else if (e.key === "ArrowUp") { e.preventDefault(); movePalette(-1); }
+    else if (e.key === "Enter") { e.preventDefault(); runPaletteSelection(); }
+  });
+  ov.addEventListener("mousedown", (e) => { if (e.target === ov) closeCommandPalette(); });
+}
+function openCommandPalette() {
+  const ov = document.getElementById("palette-overlay");
+  const input = document.getElementById("palette-input");
+  if (!ov || !input) return;
+  ov.classList.remove("hidden");
+  input.value = "";
+  renderPalette("");
+  input.focus();
+}
+function closeCommandPalette() {
+  document.getElementById("palette-overlay")?.classList.add("hidden");
+  const t = terminals.get(focusedPaneId);
+  if (t) try { t.term.focus(); } catch {}
+}
+function fuzzyScore(q, s) {
+  if (!q) return 0;
+  q = q.toLowerCase(); s = s.toLowerCase();
+  let qi = 0, score = 0, streak = 0;
+  for (let i = 0; i < s.length && qi < q.length; i++) {
+    if (s[i] === q[qi]) { qi++; streak++; score += streak; } else streak = 0;
+  }
+  return qi === q.length ? score : -1;
+}
+function renderPalette(q) {
+  const list = document.getElementById("palette-list");
+  if (!list) return;
+  const actions = commandPaletteActions();
+  paletteFiltered = (q
+    ? actions.map((a) => ({ a, s: fuzzyScore(q, a.name) })).filter((x) => x.s >= 0).sort((x, y) => y.s - x.s).map((x) => x.a)
+    : actions);
+  paletteIndex = 0;
+  list.innerHTML = "";
+  paletteFiltered.forEach((a, i) => {
+    const li = document.createElement("li");
+    li.className = "palette-item" + (i === 0 ? " sel" : "");
+    li.innerHTML = `<span class="palette-name"></span>${a.hint ? `<span class="palette-hint">${esc(a.hint)}</span>` : ""}`;
+    li.querySelector(".palette-name").textContent = a.name;
+    li.addEventListener("mousemove", () => setPaletteIndex(i));
+    li.addEventListener("click", () => { setPaletteIndex(i); runPaletteSelection(); });
+    list.appendChild(li);
+  });
+  if (!paletteFiltered.length) list.innerHTML = `<li class="palette-empty">No matching command</li>`;
+}
+function setPaletteIndex(i) {
+  paletteIndex = i;
+  document.querySelectorAll("#palette-list .palette-item").forEach((el, idx) => el.classList.toggle("sel", idx === i));
+}
+function movePalette(d) {
+  if (!paletteFiltered.length) return;
+  setPaletteIndex((paletteIndex + d + paletteFiltered.length) % paletteFiltered.length);
+  document.querySelectorAll("#palette-list .palette-item")[paletteIndex]?.scrollIntoView({ block: "nearest" });
+}
+function runPaletteSelection() {
+  const a = paletteFiltered[paletteIndex];
+  closeCommandPalette();
+  if (a) { try { a.run(); } catch (e) { toast(String(e), true); } }
 }
 
 // Resolve the user's default-shell preference into an identifier for the

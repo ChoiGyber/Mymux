@@ -238,6 +238,14 @@
     <ul id="autocomplete-list"></ul>
   </div>
 
+  <!-- Command palette (Ctrl+Shift+P) -->
+  <div id="palette-overlay" class="hidden">
+    <div id="palette">
+      <input type="text" id="palette-input" placeholder="Type a command…  (명령 검색)" spellcheck="false" autocomplete="off" />
+      <ul id="palette-list"></ul>
+    </div>
+  </div>
+
   <!-- Right-click menu for the file viewer (text selection) -->
   <div id="viewer-ctx" class="ctx-menu hidden">
     <button type="button" data-act="copy">Copy</button>

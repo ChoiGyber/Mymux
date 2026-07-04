@@ -8,6 +8,35 @@ For installers, see the [GitHub Releases](https://github.com/ChoiGyber/Mymux/rel
 
 ---
 
+## Unreleased
+
+### Added / 새 기능
+- **Shell prompt jump & command blocks (OSC 133) / 프롬프트 점프·명령 블록.**
+  The shells Mymux launches (Git Bash, PowerShell) now mark each prompt.
+  **Ctrl+Shift+↑ / ↓** jumps between prompts, and the command palette can copy a
+  whole command + its output as one block — no manual drag-selecting.
+
+  Mymux가 실행하는 셸(Git Bash·PowerShell)이 각 프롬프트를 표시합니다.
+  **Ctrl+Shift+↑ / ↓** 로 프롬프트 사이를 이동하고, 커맨드 팔레트로 명령과 그
+  출력을 블록째 복사할 수 있습니다(드래그 선택 불필요).
+- **Copy / cut the current command line / 현재 명령줄 복사·잘라내기.**
+  While typing, **Ctrl+A** selects the whole command you're editing,
+  **Ctrl+C** copies it, and **Ctrl+X** cuts it (clearing the line in the shell).
+  On an empty line Ctrl+A still passes through to the shell (readline
+  beginning-of-line); use Home to jump to the start regardless.
+
+  명령을 입력하는 중 **Ctrl+A** 로 편집 중인 명령 전체를 선택하고, **Ctrl+C**
+  복사, **Ctrl+X** 잘라내기(셸 입력줄도 비움). 빈 줄에서는 Ctrl+A가 셸로
+  전달되어 줄 시작 이동으로 동작합니다(줄 시작 이동은 Home 사용).
+- **Command palette / 커맨드 팔레트 (Ctrl+Shift+P).**
+  A fuzzy launcher for every action — split, zoom, broadcast, search, prompt
+  jump, input copy/cut, SSH, theme, font — findable by typing.
+
+  모든 동작(분할·줌·브로드캐스트·검색·프롬프트 점프·입력 복사/잘라내기·SSH·
+  테마·글꼴)을 타이핑으로 찾아 실행하는 퍼지 런처.
+
+---
+
 ## v0.1.17 — 2026-07-04
 
 ### Added / 새 기능

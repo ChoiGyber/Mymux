@@ -97,6 +97,11 @@ fn mymux_bashrc() -> Option<String> {
 [ -f /etc/profile ] && . /etc/profile
 [ -f ~/.bashrc ] && . ~/.bashrc
 __mymux_prompt() {
+  local __e=$?
+  # OSC 133;D — previous command finished (with its exit code). Emitted here in
+  # PROMPT_COMMAND (before PS1's 133;A) so the frontend can bracket command
+  # output for prompt-jump / block-copy. Zero-width; consumed by the parser.
+  printf '\033]133;D;%s\033\\' "$__e"
   local p="${PWD/#$HOME/\~}" cols=${COLUMNS:-80}
   if (( cols < 12 )); then __mymux_p=""; return; fi
   if (( ${#p} + 4 > cols )); then
@@ -115,7 +120,11 @@ __mymux_prompt() {
   __mymux_p=$p
 }
 PROMPT_COMMAND=__mymux_prompt
-PS1='\[\033[36m\]${__mymux_p}\[\033[0m\] \$ '
+# 133;A marks the prompt start, 133;B the prompt end / command-input start
+# (both wrapped in \[ \] so readline counts them as zero-width — they must not
+# affect the never-wrap prompt width). 133;B lets the frontend locate where the
+# typed command begins, for copy/cut of the current input line.
+PS1='\[\033]133;A\033\\\]\[\033[36m\]${__mymux_p}\[\033[0m\] \$ \[\033]133;B\033\\\]'
 
 # Mymux: richer tab-completion (closer to PowerShell, where the tool supports it).
 if ! shopt -oq posix; then
@@ -184,6 +193,7 @@ fn mymux_ps_init_b64() -> &'static str {
   return $n
 }
 function global:prompt {
+  $__ok = $?; $__lec = $LASTEXITCODE
   $w = 0
   try { $w = $Host.UI.RawUI.WindowSize.Width } catch {}
   if (-not $w -or $w -lt 1) { $w = 80 }
@@ -208,7 +218,16 @@ function global:prompt {
       $p = '...' + $tail
     }
   }
-  "PS $p$('>' * ($NestedPromptLevel + 1)) "
+  # OSC 133 shell-integration marks (zero-width): D = previous command's exit,
+  # A = prompt start, B = command-input start. Lets the frontend jump between
+  # prompts, copy command output blocks, and copy/cut the current input line.
+  # PSReadLine ignores OSC escapes when measuring the prompt, so these don't
+  # affect the never-wrap layout (same approach Windows Terminal uses).
+  $__e = if ($__ok) { 0 } elseif ($__lec) { $__lec } else { 1 }
+  $__x = [char]27
+  $__m = "$__x]133;D;$__e$__x\" + "$__x]133;A$__x\"
+  $__b = "$__x]133;B$__x\"
+  "$__m" + "PS $p$('>' * ($NestedPromptLevel + 1)) " + "$__b"
 }
 "#;
     static B64: std::sync::OnceLock<String> = std::sync::OnceLock::new();

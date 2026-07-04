@@ -1397,6 +1397,64 @@ html[data-theme="light"] #toolbar-actions #btn-update:hover {
 }
 #term-search button:hover { opacity: 1; }
 
+/* ── Command palette (Ctrl+Shift+P) ── */
+#palette-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 200;
+  background: rgba(0, 0, 0, 0.4);
+  display: flex;
+  justify-content: center;
+  align-items: flex-start;
+  padding-top: 12vh;
+}
+#palette-overlay.hidden { display: none; }
+#palette {
+  width: min(620px, 92vw);
+  background: var(--bg-2, var(--bg));
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.5);
+  overflow: hidden;
+}
+#palette-input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 14px 16px;
+  border: none;
+  border-bottom: 1px solid var(--border);
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: 15px;
+  outline: none;
+}
+#palette-list {
+  list-style: none;
+  margin: 0;
+  padding: 6px;
+  max-height: 50vh;
+  overflow-y: auto;
+}
+.palette-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 9px 12px;
+  border-radius: 7px;
+  cursor: pointer;
+}
+.palette-item.sel { background: var(--accent); color: #fff; }
+.palette-hint {
+  font-size: 11px;
+  opacity: 0.7;
+  font-family: var(--mono, monospace);
+  white-space: nowrap;
+}
+.palette-item.sel .palette-hint { opacity: 0.9; }
+.palette-empty { padding: 14px; text-align: center; opacity: 0.6; }
+
 .pane-divider {
   flex-shrink: 0;
   background: var(--border);
