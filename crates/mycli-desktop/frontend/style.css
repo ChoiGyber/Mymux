@@ -276,7 +276,9 @@ html[data-theme="light"] #toolbar-actions #btn-update:hover {
   direction: rtl;
   text-align: left;
   flex: 1;
+  cursor: pointer;
 }
+#explorer-path:hover { color: var(--text); text-decoration: underline; }
 
 #explorer-source {
   padding: 4px 8px;

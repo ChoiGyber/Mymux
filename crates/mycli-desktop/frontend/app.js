@@ -115,6 +115,12 @@ window.addEventListener("DOMContentLoaded", async () => {
   btnToggleSidebar = document.getElementById("btn-toggle-sidebar");
   btnNewTerminal = document.getElementById("btn-new-terminal");
   explorerPath = document.getElementById("explorer-path");
+  // Clicking the path label copies the current directory to the clipboard.
+  explorerPath.addEventListener("click", () => {
+    if (!currentExplorerPath) return;
+    clipboardWrite(currentExplorerPath);
+    toast("Copied: " + currentExplorerPath);
+  });
   btnExplorerUp = document.getElementById("btn-explorer-up");
   explorerMode = document.getElementById("explorer-mode");
   fileListEl = document.getElementById("file-list");
@@ -507,7 +513,7 @@ async function setupListeners() {
 async function loadExplorer() {
   fileListEl.innerHTML = "";
   explorerPath.textContent = currentExplorerPath || "/";
-  explorerPath.title = currentExplorerPath;
+  explorerPath.title = (currentExplorerPath || "") + " — click to copy";
   highlightActiveDrive();
 
   try {
@@ -4523,7 +4529,7 @@ function toast(msg, isError) {
   toastEl.style.background = isError ? "var(--red)" : "var(--accent)";
   toastEl.classList.remove("hidden");
   clearTimeout(toastEl._timer);
-  toastEl._timer = setTimeout(() => toastEl.classList.add("hidden"), 2500);
+  toastEl._timer = setTimeout(() => toastEl.classList.add("hidden"), 2000);
 }
 
 function formatSize(bytes) {
