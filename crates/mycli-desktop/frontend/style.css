@@ -112,6 +112,7 @@ header h1 .byline {
   cursor: pointer;
   transition: all 0.12s;
 }
+#toolbar-actions #btn-notify-settings svg { display: block; }
 #toolbar-actions button:hover {
   background: var(--accent);
   color: #fff;
@@ -1167,7 +1168,7 @@ html[data-theme="light"] #toolbar-actions #btn-update:hover {
 .cmd-item.is-fav { border-left: 2px solid var(--accent); }
 
 /* Generic centered modal (close prompt, ssh password prompt) */
-#close-modal, #sshpw-modal, #ssh-modal, #update-modal {
+#close-modal, #sshpw-modal, #ssh-modal, #update-modal, #notify-modal {
   position: fixed;
   inset: 0;
   background: rgba(0, 0, 0, 0.55);

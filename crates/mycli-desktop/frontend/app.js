@@ -214,6 +214,31 @@ async function setupListeners() {
   btnToggleSidebar.addEventListener("click", () => { sidebar.classList.toggle("collapsed"); persistPanelState(); updatePanelToggleIcons(); });
   btnToggleSessions.addEventListener("click", () => { sessionPanel.classList.toggle("collapsed"); persistPanelState(); updatePanelToggleIcons(); });
 
+  // 🔔 Task-done flash settings modal (where the completion pulse shows).
+  const btnNotifySettings = document.getElementById("btn-notify-settings");
+  const notifyModal = document.getElementById("notify-modal");
+  const notifyChkPane = document.getElementById("notify-chk-pane");
+  const notifyChkList = document.getElementById("notify-chk-list");
+  if (btnNotifySettings && notifyModal) {
+    const closeNotifyModal = () => {
+      notifyModal.classList.add("hidden");
+      // Restore the native browser overlay only if we're still on the browser view.
+      if (browserTabActive && browserMode === "native") openNativePane();
+    };
+    btnNotifySettings.addEventListener("click", () => {
+      notifyChkPane.checked = notifyFlashPrefs.pane;
+      notifyChkList.checked = notifyFlashPrefs.list;
+      // The native browser overlay floats above all HTML; hide it so the modal shows.
+      if (browserTabActive && browserMode === "native") invoke("browser_pane_hide").catch(() => {});
+      notifyModal.classList.remove("hidden");
+    });
+    document.getElementById("notify-modal-close").addEventListener("click", closeNotifyModal);
+    notifyModal.addEventListener("click", (e) => { if (e.target === notifyModal) closeNotifyModal(); });
+    notifyModal.addEventListener("keydown", (e) => { if (e.key === "Escape") closeNotifyModal(); });
+    notifyChkPane.addEventListener("change", () => { notifyFlashPrefs.pane = notifyChkPane.checked; saveNotifyFlashPrefs(); });
+    notifyChkList.addEventListener("change", () => { notifyFlashPrefs.list = notifyChkList.checked; saveNotifyFlashPrefs(); });
+  }
+
   // GitHub shortcut (session panel footer) → open the repo in the OS default browser.
   const btnGithub = document.getElementById("btn-github");
   if (btnGithub) {
@@ -1955,6 +1980,17 @@ function trackOutputSilence(id, t) {
   }, NOTIFY_SILENCE_MS);
 }
 
+// Where the task-done pulse shows (🔔 toolbar modal): pane border and/or the
+// session-list row. Both off = no visual flash (unseen badge / taskbar
+// attention still apply).
+const notifyFlashPrefs = (() => {
+  try { return { pane: true, list: true, ...JSON.parse(localStorage.getItem("notifyFlashPrefs") || "{}") }; }
+  catch { return { pane: true, list: true }; }
+})();
+function saveNotifyFlashPrefs() {
+  try { localStorage.setItem("notifyFlashPrefs", JSON.stringify(notifyFlashPrefs)); } catch {}
+}
+
 // Briefly pulse a pane + its session-list row to notify task completion
 // (driven by the terminal bell — see the pty read loop).
 function flashPaneNotify(id) {
@@ -1972,8 +2008,8 @@ function flashPaneNotify(id) {
     el._notifyTimeout = setTimeout(() => el.classList.remove("notify-flash"), 10200);
   };
   const t = terminals.get(id);
-  if (t) pulse(t.paneEl);
-  pulse(document.querySelector(`.session-item[data-pty-id="${id}"]`));
+  if (notifyFlashPrefs.pane && t) pulse(t.paneEl);
+  if (notifyFlashPrefs.list) pulse(document.querySelector(`.session-item[data-pty-id="${id}"]`));
   // The pulse is invisible when the pane is off-screen or the whole window is
   // in the background — leave a persistent "unseen" badge for the former and
   // flash the taskbar icon (no focus steal) for the latter.

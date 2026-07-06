@@ -14,6 +14,7 @@
     <h1>Mymux <span class="byline">- by ChoiGyber</span></h1>
     <div id="toolbar-actions">
       <button id="btn-update" class="hidden" title="A new version is available — click to update">⬆ Update</button>
+      <button id="btn-notify-settings" title="Task-done flash settings / 작업 완료 알림 설정"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.7 21a2 2 0 0 1-3.4 0"/></svg></button>
       <button id="btn-toggle-browser" title="Show / hide the browser tab">🌐</button>
       <button id="btn-font-dec" title="Smaller text (Ctrl -)">A<sup>&#8722;</sup></button>
       <button id="btn-font-inc" title="Larger text (Ctrl +)">A<sup>+</sup></button>
@@ -316,6 +317,19 @@
         <button id="ssh-save-cmd" class="secondary" title="Save this connection as a Commands shortcut">Save as command</button>
         <button id="ssh-modal-cancel" class="secondary">Cancel</button>
         <button id="ssh-modal-connect">Connect</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Task-done flash settings: choose where the completion pulse shows -->
+  <div id="notify-modal" class="hidden">
+    <div class="modal-box">
+      <h2>Task-done flash / 작업 완료 알림</h2>
+      <p>작업이 끝났을 때 번쩍임을 어디에 표시할지 선택하세요. 둘 다 끄면 번쩍이지 않습니다.</p>
+      <label class="chk-row"><input type="checkbox" id="notify-chk-pane" /> 창 틀(패인 테두리) 번쩍임 / Pane border flash</label>
+      <label class="chk-row"><input type="checkbox" id="notify-chk-list" /> 세션 목록 이름 번쩍임 / Session list flash</label>
+      <div class="modal-actions">
+        <button id="notify-modal-close">확인</button>
       </div>
     </div>
   </div>
