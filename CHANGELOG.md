@@ -8,6 +8,33 @@ For installers, see the [GitHub Releases](https://github.com/ChoiGyber/Mymux/rel
 
 ---
 
+## v0.1.20 — 2026-07-06
+
+### Added / 새 기능
+- **Hover dismisses the task-done flash / 알림 깜빡임 hover 해제.**
+  Moving the mouse over a flashing pane (or its session-list row) acknowledges
+  the notification and stops the pulse on both immediately, instead of waiting
+  out the 10-second animation.
+
+  깜빡이는 패인(또는 세션 목록 행)에 마우스를 올리면 알림을 확인한 것으로
+  간주해 두 곳의 펄스를 즉시 멈춥니다. 10초 애니메이션이 끝나길 기다릴
+  필요가 없습니다.
+
+### Fixed / 버그 수정
+- **Mouse wheel works over Claude Code (and similar CLIs) / 휠 스크롤 정상화.**
+  Programs that turn on mouse tracking without switching to the full-screen
+  buffer (e.g. Claude Code) used to swallow the mouse wheel — the view only
+  moved by dragging the scrollbar, and wheel-triggered redraws could leave
+  blank, half-painted regions. The wheel now always scrolls the scrollback on
+  the normal screen; full-screen apps (vim, htop, less) still receive wheel
+  events as before.
+
+  전체 화면 버퍼 없이 마우스 트래킹만 켜는 프로그램(예: Claude Code)이 휠
+  이벤트를 삼켜서 스크롤바를 드래그해야만 화면이 움직이고, 휠에 반응한
+  리드로우가 화면 중간을 비워 놓는 문제를 수정했습니다. 이제 일반 화면에서는
+  휠이 항상 스크롤백을 움직이며, 전체 화면 앱(vim·htop·less)은 기존대로 휠
+  이벤트를 받습니다.
+
 ## v0.1.19 — 2026-07-06
 
 ### Added / 새 기능

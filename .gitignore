@@ -16,3 +16,4 @@ release/
 *.key
 *.key.pub
 mymux_updater.key*
+/target-rel/
