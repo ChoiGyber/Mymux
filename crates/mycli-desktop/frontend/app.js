@@ -1544,6 +1544,33 @@ async function createPane(parentEl, shell, args, cwd) {
     startPaneDrag(id, e);
   });
 
+  // Mouse-wheel must always scroll the scrollback while on the NORMAL buffer.
+  // Some CLIs (Claude Code among them) enable mouse tracking without switching
+  // to the alt screen; xterm then forwards every wheel event to the program as
+  // escape sequences instead of scrolling the viewport — and through ConPTY
+  // those reports don't round-trip usefully, so the wheel goes dead (only the
+  // scrollbar drag still works) and the program's wheel-triggered redraws can
+  // leave half-painted / blank regions. Reclaim the wheel here: on the normal
+  // buffer we scroll the viewport ourselves and swallow the event. Alt-screen
+  // TUIs (vim/htop/less) keep receiving wheel reports as before, and
+  // Ctrl+wheel is left alone for future zoom gestures.
+  if (term.attachCustomWheelEventHandler) {
+    term.attachCustomWheelEventHandler((e) => {
+      try {
+        if (e.ctrlKey) return true;
+        if (term.buffer.active.type !== "normal") return true;
+        if ((term.modes.mouseTrackingMode || "none") === "none") return true; // no conflict — default handling already scrolls
+        // deltaMode 1 = lines, 0 = pixels (~one row per ≈ fontSize*1.2 px).
+        const rowPx = (term.options.fontSize || 14) * 1.2;
+        const lines = e.deltaMode === 1
+          ? Math.trunc(e.deltaY)
+          : Math.sign(e.deltaY) * Math.max(1, Math.round(Math.abs(e.deltaY) / rowPx / 3));
+        if (lines) term.scrollLines(lines);
+        return false;
+      } catch { return true; }
+    });
+  }
+
   // Ctrl +/- to change terminal font size, Ctrl+0 to reset (intercept before
   // xterm/PTY so the keys don't reach the shell or zoom the WebView).
   term.attachCustomKeyEventHandler((e) => {
