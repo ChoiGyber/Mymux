@@ -8,6 +8,35 @@ For installers, see the [GitHub Releases](https://github.com/ChoiGyber/Mymux/rel
 
 ---
 
+## v0.1.21 — 2026-07-06
+
+### Added / 새 기능
+- **Update confirmation with open sessions / 업데이트 확인 모달.**
+  Clicking the Update button while sessions are open now shows a confirmation
+  modal warning that updating closes every session and restarts the app.
+  Confirm to update; Cancel (or Esc / clicking outside) keeps Mymux running
+  as-is. With no sessions open the update starts immediately, as before.
+
+  세션이 열려 있는 상태에서 업데이트 버튼을 누르면, 모든 세션(창)이 닫히고
+  앱이 재시작된다는 확인 모달을 먼저 보여줍니다. 확인하면 업데이트가
+  진행되고, 취소(또는 Esc·바깥 클릭)하면 Mymux가 그대로 유지됩니다. 열린
+  세션이 없으면 기존처럼 바로 업데이트합니다.
+
+### Fixed / 버그 수정
+- **Task-done flash for sporadic-output tasks / 띄엄띄엄 출력 작업도 완료 알림.**
+  Tasks that print in bursts with quiet gaps in between (plugin updates,
+  downloads) never triggered the task-done pane flash, because each burst had
+  to stream continuously for 5 seconds on its own. The work window now
+  accumulates across quiet gaps since the last keystroke, and flashes at most
+  once per keystroke cycle so periodic-output programs (watch, pollers) don't
+  re-flash every few seconds.
+
+  중간중간 조용해지며 띄엄띄엄 출력하는 작업(플러그인 업데이트, 다운로드)은
+  각 출력 구간이 단독으로 5초를 채워야 해서 완료 반짝임이 전혀 뜨지
+  않았습니다. 이제 작업 시간이 마지막 키 입력 이후로 조용한 틈을 넘어
+  누적되며, 키 입력 사이에 최대 1회만 반짝여 주기적 출력 프로그램(watch 등)이
+  몇 초마다 반복해서 반짝이는 일도 없습니다.
+
 ## v0.1.20 — 2026-07-06
 
 ### Added / 새 기능
