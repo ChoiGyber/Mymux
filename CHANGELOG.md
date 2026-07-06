@@ -8,6 +8,30 @@ For installers, see the [GitHub Releases](https://github.com/ChoiGyber/Mymux/rel
 
 ---
 
+## v0.1.23 — 2026-07-06
+
+### Added / 새 기능
+- **Remote explorer shortcuts / SSH 탐색기 바로가기.**
+  In SFTP mode the drive-button row now shows remote shortcuts instead of
+  being empty: root (/) and home (~), plus one button per mounted volume when
+  the server has /Volumes (macOS — USB sticks and external drives mount
+  there). Symlinks that point at directories (e.g. /Volumes/"Macintosh HD")
+  now open as folders too.
+
+  SSH(SFTP) 모드에서 비어 있던 드라이브 버튼 줄에 원격 바로가기가 표시됩니다:
+  루트(/)·홈(~), 그리고 서버에 /Volumes가 있으면(macOS) 마운트된 볼륨마다
+  버튼 하나씩 — USB·외장장치를 원클릭으로 진입합니다. 디렉토리를 가리키는
+  심볼릭 링크("Macintosh HD" 등)도 폴더로 열립니다.
+
+- **Task-done flash settings / 작업 완료 알림 설정.**
+  A new bell button in the toolbar opens a settings modal to choose where the
+  completion pulse shows: the pane border, the session-list row, either, both,
+  or neither. The choice persists across restarts.
+
+  툴바의 종(🔔) 버튼으로 알림 설정 모달을 열어 작업 완료 번쩍임을 어디에
+  표시할지 선택합니다: 창 틀(패인 테두리)·세션 목록 이름 중 하나, 둘 다,
+  또는 모두 해제. 설정은 재시작 후에도 유지됩니다.
+
 ## v0.1.22 — 2026-07-06
 
 ### Added / 새 기능
