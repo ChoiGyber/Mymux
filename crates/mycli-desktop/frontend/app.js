@@ -514,7 +514,7 @@ async function loadExplorer() {
   fileListEl.innerHTML = "";
   explorerPath.textContent = currentExplorerPath || "/";
   explorerPath.title = (currentExplorerPath || "") + " — click to copy";
-  highlightActiveDrive();
+  renderDriveRow();
 
   try {
     let entries;
@@ -4370,11 +4370,66 @@ async function loadDrives() {
 
 function highlightActiveDrive() {
   if (!explorerDrives) return;
-  const cur = (currentExplorerPath || "").toUpperCase().replace(/\//g, "\\");
-  explorerDrives.querySelectorAll(".drive-btn").forEach((b) => {
-    const d = (b.dataset.drive || "").toUpperCase().replace(/[\\/]+$/, "");
-    b.classList.toggle("active", !!d && cur.startsWith(d));
-  });
+  const btns = [...explorerDrives.querySelectorAll(".drive-btn")];
+  if (currentSftpId == null) {
+    const cur = (currentExplorerPath || "").toUpperCase().replace(/\//g, "\\");
+    btns.forEach((b) => {
+      const d = (b.dataset.drive || "").toUpperCase().replace(/[\\/]+$/, "");
+      b.classList.toggle("active", !!d && cur.startsWith(d));
+    });
+    return;
+  }
+  // Remote shortcuts: only the LONGEST matching prefix lights up ("/" would
+  // otherwise match every path).
+  const cur = currentExplorerPath || "";
+  let best = null;
+  for (const b of btns) {
+    const p = b.dataset.path;
+    if (!p) continue;
+    if (cur === p || cur.startsWith(p.endsWith("/") ? p : p + "/")) {
+      if (!best || p.length > best.dataset.path.length) best = b;
+    }
+  }
+  btns.forEach((b) => b.classList.toggle("active", b === best));
+}
+
+// Which source the drive-button row is rendered for ("local" or an sftp id).
+// Local shows Windows drive letters; SFTP shows remote shortcuts instead:
+// root + home, plus each mounted volume when the server has /Volumes (macOS —
+// USB sticks and external drives live there).
+let driveRowMode = "local";
+async function renderDriveRow() {
+  if (!explorerDrives) return;
+  const mode = currentSftpId == null ? "local" : String(currentSftpId);
+  if (driveRowMode === mode) { highlightActiveDrive(); return; }
+  driveRowMode = mode;
+  if (mode === "local") { await loadDrives(); highlightActiveDrive(); return; }
+  explorerDrives.innerHTML = "";
+  const sftpId = currentSftpId;
+  const stale = () => currentSftpId !== sftpId || driveRowMode !== mode;
+  const add = (label, path, title) => {
+    const btn = document.createElement("button");
+    btn.className = "drive-btn";
+    btn.dataset.path = path;
+    btn.textContent = label;
+    btn.title = title || path;
+    btn.addEventListener("click", () => explorerGo(path, sftpId));
+    explorerDrives.appendChild(btn);
+  };
+  add("/", "/", "Root");
+  try {
+    const home = await invoke("sftp_home_dir", { sessionId: sftpId });
+    if (stale()) return;
+    if (home && home !== "/") add("~", home, "Home: " + home);
+  } catch {}
+  try {
+    const vols = await invoke("sftp_list_dir", { sessionId: sftpId, path: "/Volumes" });
+    if (stale()) return;
+    for (const v of vols.filter((e) => e.is_dir)) {
+      add(v.name.length > 12 ? v.name.slice(0, 11) + "…" : v.name, v.path, v.name);
+    }
+  } catch {} // no /Volumes — not a Mac; root/home shortcuts still apply
+  highlightActiveDrive();
 }
 
 // ═══════════════════════════════════════════════

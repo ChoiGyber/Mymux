@@ -316,8 +316,18 @@ pub fn sftp_list_dir(
             } else {
                 format!("{}/{}", path, name)
             };
-            let is_dir = entry.file_type().is_dir();
+            let mut is_dir = entry.file_type().is_dir();
             let is_symlink = entry.file_type().is_symlink();
+            // read_dir lstats entries, so a symlink to a directory (e.g. macOS
+            // /Volumes/"Macintosh HD" -> /) reports as a plain link. Stat the
+            // target so such links open as folders in the explorer.
+            if is_symlink && !is_dir {
+                if let Ok(meta) = session.sftp.metadata(full_path.as_str()).await {
+                    if meta.is_dir() {
+                        is_dir = true;
+                    }
+                }
+            }
             let size = entry.metadata().size.unwrap_or(0);
 
             result.push(FileEntry {
