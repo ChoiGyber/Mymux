@@ -336,6 +336,7 @@
       <p>작업이 끝났을 때 번쩍임을 어디에 표시할지 선택하세요. 둘 다 끄면 번쩍이지 않습니다.</p>
       <label class="chk-row"><input type="checkbox" id="notify-chk-pane" /> 창 틀(패인 테두리) 번쩍임 / Pane border flash</label>
       <label class="chk-row"><input type="checkbox" id="notify-chk-list" /> 세션 목록 이름 번쩍임 / Session list flash</label>
+      <label class="chk-row"><input type="checkbox" id="notify-chk-fox" /> 🦊 여우 캐릭터 — 완료된 세션에 나타남 / Fox buddy on the finished pane</label>
       <div class="modal-actions">
         <button id="notify-modal-close">확인</button>
       </div>
@@ -352,6 +353,34 @@
         <button id="update-modal-ok">업데이트</button>
       </div>
     </div>
+  </div>
+
+  <!-- Fox buddy: glides to the pane whose task just finished (drag to move, click to dismiss) -->
+  <div id="fox-buddy" class="hidden" title="작업 완료! (드래그: 이동 · 클릭: 닫기)">
+    <svg viewBox="0 0 120 104" width="68" height="59" aria-hidden="true">
+      <!-- ears -->
+      <polygon points="22,44 10,6 48,26" fill="#e8833a"/>
+      <polygon points="98,44 110,6 72,26" fill="#e8833a"/>
+      <polygon points="25,40 17,15 43,29" fill="#7c4a21"/>
+      <polygon points="95,40 103,15 77,29" fill="#7c4a21"/>
+      <!-- head -->
+      <ellipse cx="60" cy="62" rx="46" ry="38" fill="#f09144"/>
+      <!-- white muzzle/cheeks -->
+      <ellipse cx="38" cy="74" rx="20" ry="16" fill="#fdf4e8"/>
+      <ellipse cx="82" cy="74" rx="20" ry="16" fill="#fdf4e8"/>
+      <ellipse cx="60" cy="82" rx="18" ry="13" fill="#fdf4e8"/>
+      <!-- eyes (blink) -->
+      <ellipse class="fox-eye" cx="42" cy="58" rx="5" ry="7" fill="#2b1c12"/>
+      <ellipse class="fox-eye" cx="78" cy="58" rx="5" ry="7" fill="#2b1c12"/>
+      <circle cx="44" cy="55" r="1.6" fill="#fff" opacity="0.9"/>
+      <circle cx="80" cy="55" r="1.6" fill="#fff" opacity="0.9"/>
+      <!-- nose + mouth -->
+      <polygon points="60,72 54,66 66,66" fill="#3a2417"/>
+      <path d="M60 72 Q60 78 54 80 M60 72 Q60 78 66 80" stroke="#3a2417" stroke-width="2" fill="none" stroke-linecap="round"/>
+      <!-- whiskers -->
+      <path d="M20 70 L34 72 M20 78 L34 77" stroke="#d97b2e" stroke-width="1.6" stroke-linecap="round"/>
+      <path d="M100 70 L86 72 M100 78 L86 77" stroke="#d97b2e" stroke-width="1.6" stroke-linecap="round"/>
+    </svg>
   </div>
 
   <div id="toast" class="hidden"></div>

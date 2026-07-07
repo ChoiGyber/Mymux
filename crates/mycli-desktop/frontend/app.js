@@ -219,6 +219,8 @@ async function setupListeners() {
   const notifyModal = document.getElementById("notify-modal");
   const notifyChkPane = document.getElementById("notify-chk-pane");
   const notifyChkList = document.getElementById("notify-chk-list");
+  const notifyChkFox = document.getElementById("notify-chk-fox");
+  initFoxDrag();
   if (btnNotifySettings && notifyModal) {
     const closeNotifyModal = () => {
       notifyModal.classList.add("hidden");
@@ -228,6 +230,7 @@ async function setupListeners() {
     btnNotifySettings.addEventListener("click", () => {
       notifyChkPane.checked = notifyFlashPrefs.pane;
       notifyChkList.checked = notifyFlashPrefs.list;
+      if (notifyChkFox) notifyChkFox.checked = notifyFlashPrefs.fox;
       // The native browser overlay floats above all HTML; hide it so the modal shows.
       if (browserTabActive && browserMode === "native") invoke("browser_pane_hide").catch(() => {});
       notifyModal.classList.remove("hidden");
@@ -237,6 +240,11 @@ async function setupListeners() {
     notifyModal.addEventListener("keydown", (e) => { if (e.key === "Escape") closeNotifyModal(); });
     notifyChkPane.addEventListener("change", () => { notifyFlashPrefs.pane = notifyChkPane.checked; saveNotifyFlashPrefs(); });
     notifyChkList.addEventListener("change", () => { notifyFlashPrefs.list = notifyChkList.checked; saveNotifyFlashPrefs(); });
+    if (notifyChkFox) notifyChkFox.addEventListener("change", () => {
+      notifyFlashPrefs.fox = notifyChkFox.checked;
+      saveNotifyFlashPrefs();
+      if (!notifyChkFox.checked) hideFox();
+    });
   }
 
   // GitHub shortcut (session panel footer) → open the repo in the OS default browser.
@@ -1991,8 +1999,8 @@ function trackOutputSilence(id, t) {
 // session-list row. Both off = no visual flash (unseen badge / taskbar
 // attention still apply).
 const notifyFlashPrefs = (() => {
-  try { return { pane: true, list: true, ...JSON.parse(localStorage.getItem("notifyFlashPrefs") || "{}") }; }
-  catch { return { pane: true, list: true }; }
+  try { return { pane: true, list: true, fox: true, ...JSON.parse(localStorage.getItem("notifyFlashPrefs") || "{}") }; }
+  catch { return { pane: true, list: true, fox: true }; }
 })();
 function saveNotifyFlashPrefs() {
   try { localStorage.setItem("notifyFlashPrefs", JSON.stringify(notifyFlashPrefs)); } catch {}
@@ -2017,6 +2025,7 @@ function flashPaneNotify(id) {
   const t = terminals.get(id);
   if (notifyFlashPrefs.pane && t) pulse(t.paneEl);
   if (notifyFlashPrefs.list) pulse(document.querySelector(`.session-item[data-pty-id="${id}"]`));
+  if (notifyFlashPrefs.fox && t) showFoxAt(t.paneEl, id);
   // The pulse is invisible when the pane is off-screen or the whole window is
   // in the background — leave a persistent "unseen" badge for the former and
   // flash the taskbar icon (no focus steal) for the latter.
@@ -2040,6 +2049,72 @@ function clearPaneFlash(id) {
     el.classList.remove("notify-flash");
     if (el._notifyTimeout) { clearTimeout(el._notifyTimeout); el._notifyTimeout = null; }
   }
+  // Acknowledging the pane also sends the fox away (if it's sitting there).
+  const fox = document.getElementById("fox-buddy");
+  if (fox && fox._paneId === id) hideFox();
+}
+
+// ── Fox buddy 🦊 — a little mascot that glides to the pane whose task just
+// finished and sways/blinks there for the pulse duration. Drag to move it
+// anywhere; click to dismiss. Toggled in the 🔔 notify settings modal.
+let foxHideTimer = null;
+function showFoxAt(paneEl, paneId) {
+  const fox = document.getElementById("fox-buddy");
+  if (!fox || !paneEl) return;
+  const r = paneEl.getBoundingClientRect();
+  if (r.width === 0 || r.height === 0) return; // pane on a hidden tab — unseen badge covers it
+  // Bottom-right INSIDE the pane, lifted off the edge so it never covers
+  // scrollbars or anything below the pane.
+  const left = Math.max(4, r.right - 68 - 14);
+  const top = Math.max(4, r.bottom - 59 - 18);
+  fox._paneId = paneId;
+  if (fox.classList.contains("hidden")) {
+    // First appearance: place instantly (no glide from a stale position).
+    fox.style.transition = "none";
+    fox.style.left = left + "px";
+    fox.style.top = top + "px";
+    fox.classList.remove("hidden");
+    void fox.offsetWidth;
+    fox.style.transition = "";
+  } else {
+    // Already out: glide over to the newly finished pane.
+    fox.style.left = left + "px";
+    fox.style.top = top + "px";
+  }
+  if (foxHideTimer) clearTimeout(foxHideTimer);
+  foxHideTimer = setTimeout(hideFox, 10200); // matches the border-pulse lifetime
+}
+function hideFox() {
+  const fox = document.getElementById("fox-buddy");
+  if (fox) { fox.classList.add("hidden"); fox._paneId = null; }
+  if (foxHideTimer) { clearTimeout(foxHideTimer); foxHideTimer = null; }
+}
+// Drag to move (transition off while dragging); a plain click dismisses.
+function initFoxDrag() {
+  const fox = document.getElementById("fox-buddy");
+  if (!fox) return;
+  fox.addEventListener("mousedown", (e) => {
+    e.preventDefault();
+    const startX = e.clientX, startY = e.clientY;
+    const r = fox.getBoundingClientRect();
+    let moved = false;
+    fox.classList.add("dragging");
+    const onMove = (ev) => {
+      if (Math.abs(ev.clientX - startX) + Math.abs(ev.clientY - startY) > 3) moved = true;
+      fox.style.left = (r.left + ev.clientX - startX) + "px";
+      fox.style.top = (r.top + ev.clientY - startY) + "px";
+    };
+    const onUp = () => {
+      fox.classList.remove("dragging");
+      document.removeEventListener("mousemove", onMove);
+      document.removeEventListener("mouseup", onUp);
+      if (!moved) { hideFox(); return; } // click = acknowledge
+      // Dragged somewhere on purpose — keep it around a bit longer.
+      if (foxHideTimer) { clearTimeout(foxHideTimer); foxHideTimer = setTimeout(hideFox, 20000); }
+    };
+    document.addEventListener("mousemove", onMove);
+    document.addEventListener("mouseup", onUp);
+  });
 }
 document.addEventListener("mouseover", (e) => {
   const el = e.target.closest?.(".notify-flash");

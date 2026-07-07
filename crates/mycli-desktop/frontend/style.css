@@ -152,6 +152,37 @@ header h1 .byline {
 .ssh-fav-item:hover .ssh-fav-x { visibility: visible; }
 .ssh-fav-x:hover { color: var(--red); }
 
+/* ── Fox buddy: glides to the pane whose task finished ── */
+#fox-buddy {
+  position: fixed;
+  z-index: 1500;
+  width: 68px;
+  height: 59px;
+  cursor: grab;
+  user-select: none;
+  filter: drop-shadow(0 3px 8px rgba(0, 0, 0, 0.35));
+  transition: left 0.6s cubic-bezier(0.35, 0.9, 0.35, 1), top 0.6s cubic-bezier(0.35, 0.9, 0.35, 1), opacity 0.25s;
+}
+#fox-buddy.dragging { transition: none; cursor: grabbing; }
+#fox-buddy svg {
+  display: block;
+  animation: fox-sway 2.4s ease-in-out infinite;
+  transform-origin: 50% 88%;
+}
+@keyframes fox-sway {
+  0%, 100% { transform: rotate(-7deg); }
+  50%      { transform: rotate(7deg); }
+}
+.fox-eye {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: fox-blink 3.6s ease-in-out infinite;
+}
+@keyframes fox-blink {
+  0%, 90%, 100% { transform: scaleY(1); }
+  93%, 96%      { transform: scaleY(0.08); }
+}
+
 /* Star on SSH session rows (saves the connection as a favorite) */
 .session-fav {
   border: none; background: none; color: var(--text-dim);
