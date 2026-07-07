@@ -113,6 +113,52 @@ header h1 .byline {
   transition: all 0.12s;
 }
 #toolbar-actions #btn-notify-settings svg { display: block; }
+
+/* Alias badge on saved commands (Commands panel + autocomplete popup) */
+.cmd-alias {
+  display: inline-block;
+  padding: 0 5px;
+  margin-right: 6px;
+  border: 1px solid var(--accent);
+  border-radius: 4px;
+  color: var(--accent);
+  font-size: 10px;
+  line-height: 15px;
+  vertical-align: 1px;
+}
+.cmd-cwd { margin-right: 4px; font-size: 11px; }
+
+/* SSH favorites (session panel): one-click reconnect rows */
+#ssh-fav-list { list-style: none; margin: 0; padding: 0; }
+#ssh-fav-list:not(:empty) { border-bottom: 1px solid var(--border); padding: 2px 0; }
+.ssh-fav-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  font-size: 12px;
+  color: var(--text-dim);
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+}
+.ssh-fav-item:hover { background: var(--surface); color: var(--text); }
+.ssh-fav-star { color: #f5b301; font-size: 11px; }
+.ssh-fav-name { flex: 1; overflow: hidden; text-overflow: ellipsis; }
+.ssh-fav-x {
+  border: none; background: none; color: var(--text-dim);
+  cursor: pointer; font-size: 13px; padding: 0 2px; visibility: hidden;
+}
+.ssh-fav-item:hover .ssh-fav-x { visibility: visible; }
+.ssh-fav-x:hover { color: var(--red); }
+
+/* Star on SSH session rows (saves the connection as a favorite) */
+.session-fav {
+  border: none; background: none; color: var(--text-dim);
+  cursor: pointer; font-size: 11px; padding: 0 2px; visibility: hidden;
+}
+.session-item:hover .session-fav { visibility: visible; }
+.session-fav:hover { color: #f5b301; }
 #toolbar-actions button:hover {
   background: var(--accent);
   color: #fff;

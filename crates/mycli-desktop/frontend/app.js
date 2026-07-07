@@ -267,6 +267,9 @@ async function setupListeners() {
   const sshModalConnect = document.getElementById("ssh-modal-connect");
   const sshModalCancel = document.getElementById("ssh-modal-cancel");
   if (sshModalCancel) sshModalCancel.addEventListener("click", closeSshModal);
+  const sshSaveFav = document.getElementById("ssh-save-fav");
+  if (sshSaveFav) sshSaveFav.addEventListener("click", saveSshFavFromModal);
+  renderSshFavs(); // SSH favorites in the session panel (one-click reconnect)
   if (sshModalConnect) sshModalConnect.addEventListener("click", submitSshModal);
   const sshSaveCmd = document.getElementById("ssh-save-cmd");
   if (sshSaveCmd) sshSaveCmd.addEventListener("click", saveSshAsCommand);
@@ -602,10 +605,14 @@ function renderFileList(entries) {
       });
     }
 
-    li.querySelector(".cd-btn").addEventListener("click", (e) => {
+    const cdBtn = li.querySelector(".cd-btn");
+    cdBtn.addEventListener("click", (e) => {
       e.stopPropagation();
       cdToTerminal(entry.is_dir ? entry.path : currentExplorerPath);
     });
+    // Right-click the cd button: open a session there AND run a saved command.
+    cdBtn.addEventListener("contextmenu", (e) => showCdCommandMenu(e, entry.is_dir ? entry.path : currentExplorerPath));
+    cdBtn.title = "Open a new terminal here (right-click: run a saved command here)";
 
     fileListEl.appendChild(li);
   }
@@ -2504,6 +2511,7 @@ async function spawnTerminal(shell, cwd) {
     addTab(tabIdx, label);
     switchToTab(tabIdx);
     refreshSessionList();
+    return ptyId;
   } catch (err) {
     toast("Failed: " + err, true);
     tabEl.remove();
@@ -2586,6 +2594,7 @@ async function splitPane(direction, cwd) {
     await new Promise((r) => requestAnimationFrame(r));
     refitAllPanes();
     repin();
+    return newPtyId;
   } catch (err) {
     toast("Split failed: " + err, true);
   }
@@ -3171,6 +3180,78 @@ async function saveSshAsCommand() {
   }
 }
 
+// ── SSH favorites: one-click reconnect from the session panel ─────────────
+// Stored WITHOUT passwords: {target, port, keyPath, tmux, tmuxName}.
+// Key auth → connects immediately; no key → asks for the password only.
+function getSshFavs() {
+  try { return JSON.parse(localStorage.getItem("mymux.sshFavorites") || "[]"); } catch { return []; }
+}
+function setSshFavs(arr) {
+  try { localStorage.setItem("mymux.sshFavorites", JSON.stringify(arr)); } catch {}
+  renderSshFavs();
+}
+function addSshFav(f) {
+  if (!f || !f.target) return;
+  const key = (x) => `${x.target}|${x.tmux ? x.tmuxName || "(tmux)" : ""}`;
+  const arr = getSshFavs().filter((x) => key(x) !== key(f));
+  arr.unshift({ target: f.target, port: f.port || 22, keyPath: f.keyPath || "", tmux: !!f.tmux, tmuxName: f.tmuxName || "" });
+  setSshFavs(arr.slice(0, 20));
+  toast("★ SSH favorite saved");
+}
+function renderSshFavs() {
+  const list = document.getElementById("ssh-fav-list");
+  if (!list) return;
+  list.innerHTML = "";
+  for (const f of getSshFavs()) {
+    const li = document.createElement("li");
+    li.className = "ssh-fav-item";
+    const label = f.target + (f.tmux ? ` (tmux${f.tmuxName ? ":" + f.tmuxName : ""})` : "") + (f.keyPath ? " 🔑" : "");
+    li.innerHTML = `<span class="ssh-fav-star">★</span><span class="ssh-fav-name"></span><button class="ssh-fav-x" title="Remove favorite">×</button>`;
+    li.querySelector(".ssh-fav-name").textContent = label;
+    li.title = "Click to connect" + (f.keyPath ? "" : " (asks for the password)");
+    li.addEventListener("click", () => connectSshFav(f));
+    li.querySelector(".ssh-fav-x").addEventListener("click", (e) => {
+      e.stopPropagation();
+      setSshFavs(getSshFavs().filter((x) => !(x.target === f.target && x.tmuxName === f.tmuxName && x.tmux === f.tmux)));
+    });
+    list.appendChild(li);
+  }
+}
+function connectSshFav(f) {
+  const parts = (f.target || "").split("@");
+  if (parts.length !== 2) { toast("Format: user@hostname", true); return; }
+  const opts = {
+    target: f.target, username: parts[0], host: parts[1],
+    port: f.port || 22, keyPath: f.keyPath || null,
+    tmux: !!f.tmux, tmuxName: f.tmuxName || null,
+  };
+  if (f.keyPath) {
+    // Key auth → straight in, no questions.
+    doSshConnect({ ...opts, password: null, auth: "key" });
+  } else {
+    // Password auth → ask for the password only (same prompt as restore).
+    promptSshPassword(opts);
+  }
+}
+// Save the connection of a live SSH pane as a favorite (star on its row).
+function addSshFavFromSession(s) {
+  if (!s || s.kind !== "ssh") return;
+  addSshFav({ target: s.target, port: s.port, keyPath: s.keyPath || "", tmux: !!s.tmux, tmuxName: s.tmuxName || "" });
+}
+// Save the ssh-modal form as a favorite without connecting.
+function saveSshFavFromModal() {
+  const target = (document.getElementById("ssh-modal-input").value || "").trim();
+  if (!target || target.split("@").length !== 2) { toast("Enter an address (user@host)", true); return; }
+  const tmuxChk = document.getElementById("ssh-tmux");
+  addSshFav({
+    target,
+    port: parseInt(document.getElementById("ssh-modal-port").value) || 22,
+    keyPath: (document.getElementById("ssh-modal-keyfile").value || "").trim(),
+    tmux: !!(tmuxChk && tmuxChk.checked),
+    tmuxName: (document.getElementById("ssh-tmux-name").value || "").trim(),
+  });
+}
+
 // One-click: SSH in with the saved key and start/attach a tmux session.
 function quickConnectTmux(c) {
   const parts = (c.target || "").split("@");
@@ -3216,17 +3297,23 @@ async function doSshConnect(opts) {
   }
 
   try {
+    // No password is ever persisted — only the auth *kind*. tmux settings ride
+    // along so favorites / session restore reattach the same tmux session.
+    const sessionMeta = {
+      kind: "ssh", target, username, host, port,
+      keyPath: keyPath || null, auth,
+      tmux: !!opts.tmux, tmuxName: (opts.tmuxName || "").trim() || null,
+    };
     const ptyId = await createPane(rootContainer, "ssh", sshArgs);
     terminals.get(ptyId).sshTarget = target;
-    terminals.get(ptyId).session = { kind: "ssh", target, username, host, port, keyPath: keyPath || null, auth };
+    terminals.get(ptyId).session = sessionMeta;
 
     tabs.set(tabIdx, {
       el: tabEl,
       rootEl: rootContainer,
       panes: [ptyId],
       label: `SSH: ${target}`,
-      // No password is ever persisted — only the auth *kind*.
-      session: { kind: "ssh", target, username, host, port, keyPath: keyPath || null, auth },
+      session: sessionMeta,
     });
     addTab(tabIdx, `SSH: ${target}`);
     switchToTab(tabIdx);
@@ -3810,6 +3897,11 @@ async function restoreSession() {
   return tabs.size > 0;
 }
 
+// Password-only prompt used by session restore AND favorite clicks.
+// `s` carries target/username/host/port(/keyPath/tmux/tmuxName).
+function promptSshPassword(s) {
+  return promptSshPasswordRestore(s);
+}
 function promptSshPasswordRestore(s) {
   return new Promise((resolve) => {
     const modal = document.getElementById("sshpw-modal");
@@ -3839,6 +3931,8 @@ function promptSshPasswordRestore(s) {
         password,
         keyPath: s.keyPath || null,
         auth: "password",
+        tmux: !!s.tmux,
+        tmuxName: s.tmuxName || null,
       });
       resolve();
     }
@@ -4031,6 +4125,110 @@ function sendToTerminal(command) {
   terminals.get(activeTermId)?.term.focus();
 }
 
+// ── Directory-bound commands (cwd + alias combos) ─────────────────────────
+// Detect a pane's shell family so the "cd here, then run" line uses syntax
+// that shell actually supports (PowerShell 5.1 has no `&&`).
+function paneShellKind(t) {
+  if (!t) return "powershell";
+  if (t.type === "ssh") return "posix";
+  const s = (t.shell || (localStorage.getItem("mymux.defaultShell") || "powershell")).toLowerCase();
+  if (s.includes("pwsh") || s.includes("powershell")) return "powershell";
+  if (s.includes("cmd")) return "cmd";
+  return "posix";
+}
+
+// One line that cds into the command's directory (when set) and runs it.
+// The command only runs if the cd succeeded.
+function commandComboLine(cmd, kind) {
+  const dir = (cmd.cwd || "").trim();
+  if (!dir) return cmd.command;
+  if (kind === "powershell") return `cd '${dir.replace(/'/g, "''")}'; if ($?) { ${cmd.command} }`;
+  if (kind === "cmd") return `cd /d "${dir}" && ${cmd.command}`;
+  return `cd '${dir.replace(/'/g, "'\\''")}' && ${cmd.command}`;
+}
+
+function runCommandCombo(cmd, ptyId = activeTermId) {
+  if (ptyId == null || !terminals.has(ptyId)) {
+    toast("No active terminal.", true);
+    return;
+  }
+  const line = commandComboLine(cmd, paneShellKind(terminals.get(ptyId)));
+  invoke("pty_write", { id: ptyId, data: line + "\r" });
+  terminals.get(ptyId)?.term.focus();
+}
+
+// Write a command line once the new pane's shell is ready: wait for the first
+// OSC 133;A prompt mark (bash rcfile / PS prompt emit it), with a timeout
+// fallback for shells without integration (ConPTY queues the input anyway).
+function sendCommandWhenReady(ptyId, line) {
+  const t0 = performance.now();
+  const tick = () => {
+    const t = terminals.get(ptyId);
+    if (!t) return; // pane closed before the shell came up
+    if ((t.marks && t.marks.length > 0) || performance.now() - t0 > 2500) {
+      invoke("pty_write", { id: ptyId, data: line + "\r" });
+      return;
+    }
+    setTimeout(tick, 120);
+  };
+  setTimeout(tick, 150);
+}
+
+// cd-button context menu: open a session AT the folder and run a saved command.
+async function openSessionWithCommand(path, cmd) {
+  if (currentSftpId) {
+    // Remote: reuse the cd routing (owning SSH pane), as one guarded line.
+    let targetId = null;
+    for (const [id, t] of terminals) {
+      if (t.sftpId === currentSftpId) { targetId = id; break; }
+    }
+    if (targetId == null) targetId = activeTermId;
+    if (targetId == null || !terminals.has(targetId)) { toast("이 서버의 SSH 세션을 찾을 수 없습니다.", true); return; }
+    const safe = String(path).replace(/'/g, "'\\''");
+    invoke("pty_write", { id: targetId, data: `cd '${safe}' && ${cmd.command}\r` });
+    const tab = findTabForPane(targetId);
+    if (tab && tab.tabIdx !== activeTabIdx) switchToTab(tab.tabIdx);
+    setFocusedPane(targetId);
+    return;
+  }
+  // Local: new pane already starts in the folder — just run the command there.
+  let ptyId = null;
+  if (!browserTabActive && activeTabIdx != null && focusedPaneId != null && terminals.has(focusedPaneId)) {
+    ptyId = await splitPane("horizontal", path);
+  } else {
+    ptyId = await spawnTerminal(undefined, path);
+  }
+  if (ptyId != null) sendCommandWhenReady(ptyId, cmd.command);
+}
+
+function showCdCommandMenu(e, dirPath) {
+  const menu = document.getElementById("cdcmd-menu");
+  if (!menu) return;
+  e.preventDefault();
+  e.stopPropagation();
+  if (!savedCmds.length) { toast("No saved commands."); return; }
+  menu.innerHTML = "";
+  const items = [...savedCmds].sort((a, b) => (b.favorite === true) - (a.favorite === true)).slice(0, 15);
+  for (const cmd of items) {
+    const item = document.createElement("button");
+    item.type = "button";
+    item.textContent = (cmd.favorite ? "★ " : "") + cmd.name;
+    item.title = cmd.command;
+    item.addEventListener("click", () => {
+      menu.classList.add("hidden");
+      openSessionWithCommand(dirPath, cmd);
+    });
+    menu.appendChild(item);
+  }
+  menu.style.left = `${e.clientX}px`;
+  menu.style.top = `${e.clientY}px`;
+  menu.classList.remove("hidden");
+  const hide = (ev) => {
+    if (!menu.contains(ev.target)) { menu.classList.add("hidden"); document.removeEventListener("mousedown", hide, true); }
+  };
+  document.addEventListener("mousedown", hide, true);
+}
+
 // ═══════════════════════════════════════════════
 // SESSION LIST (right panel)
 // ═══════════════════════════════════════════════
@@ -4132,7 +4330,17 @@ function refreshSessionList() {
       closeBtn.textContent = "×";
       closeBtn.title = "Close session";
 
-      li.append(dotEl, nameEl, renameBtn, paneNo, closeBtn);
+      // SSH panes: star saves this connection as a one-click favorite.
+      if (t.type === "ssh" && t.session && t.session.kind === "ssh") {
+        const favBtn = document.createElement("button");
+        favBtn.className = "session-fav";
+        favBtn.textContent = "★";
+        favBtn.title = "Save as SSH favorite (one-click reconnect)";
+        favBtn.addEventListener("click", (e) => { e.stopPropagation(); addSshFavFromSession(t.session); });
+        li.append(dotEl, nameEl, renameBtn, favBtn, paneNo, closeBtn);
+      } else {
+        li.append(dotEl, nameEl, renameBtn, paneNo, closeBtn);
+      }
 
       // Drag a session: reorder it within its own tab, or drop it onto another
       // tab's session (or that tab's group header) to move it to that tab.
@@ -4507,7 +4715,7 @@ function renderCmdList(cmds) {
       <button class="cmd-x" title="Delete (no confirm)">&times;</button>
       <div class="cmd-name">${esc(cmd.name)}</div>
       <div class="cmd-row">
-        <span class="cmd-text">${esc(cmd.command)}</span>
+        <span class="cmd-text" title="${esc(cmd.cwd ? "in " + cmd.cwd : "")}">${cmd.alias ? `<span class="cmd-alias">${esc(cmd.alias)}</span>` : ""}${cmd.cwd ? `<span class="cmd-cwd" title="${esc(cmd.cwd)}">📁</span>` : ""}${esc(cmd.command)}</span>
         <span class="cmd-actions">
           <button class="fav-btn${cmd.favorite ? " on" : ""}" title="Favorite">${cmd.favorite ? "★" : "☆"}</button>
           <button class="copy-btn" title="Copy">Copy</button>
@@ -4517,12 +4725,12 @@ function renderCmdList(cmds) {
       </div>
       ${cmd.description ? `<div class="cmd-desc">${esc(cmd.description)}</div>` : ""}
     `;
-    li.querySelector(".send-btn").addEventListener("click", (e) => { e.stopPropagation(); sendToTerminal(cmd.command); });
+    li.querySelector(".send-btn").addEventListener("click", (e) => { e.stopPropagation(); runCommandCombo(cmd); });
     li.querySelector(".fav-btn").addEventListener("click", (e) => { e.stopPropagation(); toggleFavorite(cmd); });
     li.querySelector(".copy-btn").addEventListener("click", (e) => { e.stopPropagation(); copyCmd(cmd); });
     li.querySelector(".edit-btn").addEventListener("click", (e) => { e.stopPropagation(); openModal(cmd); });
     li.querySelector(".cmd-x").addEventListener("click", (e) => { e.stopPropagation(); quickDeleteCmd(cmd); });
-    li.addEventListener("dblclick", () => sendToTerminal(cmd.command));
+    li.addEventListener("dblclick", () => runCommandCombo(cmd));
     cmdListEl.appendChild(li);
   }
 }
@@ -4548,11 +4756,15 @@ async function quickDeleteCmd(cmd) {
 
 // ── Modal ──
 function openModal(cmd) {
+  const inputCwd = document.getElementById("input-cwd");
+  const inputAlias = document.getElementById("input-alias");
   if (cmd) {
     modalTitle.textContent = "Edit Command";
     inputName.value = cmd.name;
     inputCommand.value = cmd.command;
     inputDesc.value = cmd.description || "";
+    if (inputCwd) inputCwd.value = cmd.cwd || "";
+    if (inputAlias) inputAlias.value = cmd.alias || "";
     editingId = cmd.id;
   } else {
     modalTitle.textContent = "Add Command";
@@ -4581,13 +4793,15 @@ async function handleSave(e) {
   const name = inputName.value.trim();
   const command = inputCommand.value.trim();
   const description = inputDesc.value.trim();
+  const cwd = (document.getElementById("input-cwd")?.value || "").trim();
+  const alias = (document.getElementById("input-alias")?.value || "").trim();
   if (!name || !command) return;
   try {
     if (editingId) {
-      await invoke("update_command", { id: editingId, name, command, description });
+      await invoke("update_command", { id: editingId, name, command, description, cwd, alias });
       toast("Updated");
     } else {
-      await invoke("add_command", { name, command, description });
+      await invoke("add_command", { name, command, description, cwd, alias });
       toast("Added");
     }
     closeModal();
@@ -4646,9 +4860,19 @@ function handleTerminalInput(data, ptyId) {
   // Track what user types to build current input line
   if (data === "\r" || data === "\n") {
     // Enter pressed — detect cd command and sync explorer
-    syncExplorerOnCd(currentInput.trim(), ptyId);
+    const typedRaw = currentInput;
+    const typed = currentInput.trim();
+    syncExplorerOnCd(typed, ptyId);
     currentInput = "";
     hideAutocomplete();
+    // Alias typed at the prompt: erase it and run the full combo instead
+    // (cd into the saved directory, then the command — one Enter).
+    const aliasCmd = typed && savedCmds.find((c) => c.alias && c.alias === typed);
+    if (aliasCmd) {
+      invoke("pty_write", { id: ptyId, data: "\x7f".repeat(typedRaw.length) });
+      runCommandCombo(aliasCmd, ptyId);
+      return "consumed";
+    }
     return;
   }
 
@@ -4663,7 +4887,11 @@ function handleTerminalInput(data, ptyId) {
     if (!acPopup.classList.contains("hidden") && acSelectedIdx >= 0) {
       const items = acList.querySelectorAll(".ac-item");
       if (items[acSelectedIdx]) {
-        const cmd = items[acSelectedIdx].dataset.command;
+        const saved = savedCmds.find((c) => c.id === items[acSelectedIdx].dataset.cmdId);
+        // cwd-bound commands expand to the full "cd … then run" line.
+        const cmd = saved
+          ? commandComboLine(saved, paneShellKind(terminals.get(ptyId)))
+          : items[acSelectedIdx].dataset.command;
         // Clear current input and type the command
         const backspaces = "\x7f".repeat(currentInput.length);
         invoke("pty_write", { id: ptyId, data: backspaces });
@@ -4714,9 +4942,14 @@ function showAutocomplete(input, ptyId) {
   const lower = input.toLowerCase();
   const matches = savedCmds.filter(
     (c) =>
+      (c.alias && c.alias.toLowerCase().startsWith(lower)) ||
       c.name.toLowerCase().includes(lower) ||
       c.command.toLowerCase().includes(lower)
   );
+  // Alias hits first — they are deliberate abbreviations, not substring luck.
+  matches.sort((a, b) =>
+    ((b.alias && b.alias.toLowerCase().startsWith(lower)) ? 1 : 0) -
+    ((a.alias && a.alias.toLowerCase().startsWith(lower)) ? 1 : 0));
 
   if (matches.length === 0) {
     hideAutocomplete();
@@ -4730,14 +4963,16 @@ function showAutocomplete(input, ptyId) {
     const li = document.createElement("li");
     li.className = "ac-item" + (i === 0 ? " selected" : "");
     li.dataset.command = cmd.command;
+    li.dataset.cmdId = cmd.id;
     li.innerHTML = `
-      <span class="ac-name">${esc(cmd.name)}</span>
-      <span class="ac-cmd">${esc(cmd.command)}</span>
+      <span class="ac-name">${cmd.alias ? `<span class="cmd-alias">${esc(cmd.alias)}</span>` : ""}${esc(cmd.name)}</span>
+      <span class="ac-cmd">${cmd.cwd ? "📁 " : ""}${esc(cmd.command)}</span>
     `;
     li.addEventListener("click", () => {
+      const line = commandComboLine(cmd, paneShellKind(terminals.get(ptyId)));
       const backspaces = "\x7f".repeat(currentInput.length);
-      invoke("pty_write", { id: ptyId, data: backspaces + cmd.command });
-      currentInput = cmd.command;
+      invoke("pty_write", { id: ptyId, data: backspaces + line });
+      currentInput = line;
       hideAutocomplete();
       terminals.get(ptyId)?.term.focus();
     });

@@ -401,18 +401,16 @@ impl App {
 
         let was_edit = self.mode == Mode::Edit;
         let result = if let Some(id) = self.editing_id.take() {
-            let favorite = self
-                .commands
-                .iter()
-                .find(|c| c.id == id)
-                .map(|c| c.favorite)
-                .unwrap_or(false);
+            // Preserve fields the TUI edit form doesn't carry (favorite, cwd, alias).
+            let prev = self.commands.iter().find(|c| c.id == id);
             let cmd = SavedCommand {
-                id,
+                id: id.clone(),
                 name: self.input_name.trim().to_string(),
                 command: self.input_command.trim().to_string(),
                 description: self.input_description.trim().to_string(),
-                favorite,
+                favorite: prev.map(|c| c.favorite).unwrap_or(false),
+                cwd: prev.map(|c| c.cwd.clone()).unwrap_or_default(),
+                alias: prev.map(|c| c.alias.clone()).unwrap_or_default(),
             };
             self.store.update(cmd)
         } else {

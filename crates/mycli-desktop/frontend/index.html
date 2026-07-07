@@ -207,6 +207,8 @@
         <span>Sessions</span>
         <button id="btn-toggle-sessions" class="panel-collapse" title="Collapse / expand session panel"><svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.4"><rect x="2.5" y="3.5" width="11" height="9" rx="1.5"/><line x1="8" y1="3.5" x2="8" y2="12.5"/></svg></button>
       </div>
+      <!-- SSH favorites: one click reconnects (key → direct, password → prompt) -->
+      <ul id="ssh-fav-list"></ul>
       <ul id="session-list">
         <li class="session-empty">No active sessions.</li>
       </ul>
@@ -228,6 +230,8 @@
         <label>Name <input type="text" id="input-name" required placeholder="e.g. Git Status" /></label>
         <label>Command <input type="text" id="input-command" required placeholder="e.g. git status" /></label>
         <label>Description <input type="text" id="input-description" placeholder="Short description (optional)" /></label>
+        <label>Directory <input type="text" id="input-cwd" placeholder="Run in this directory (optional) — e.g. D:\Project\Mymux" spellcheck="false" /></label>
+        <label>Alias <input type="text" id="input-alias" placeholder="Abbreviation — type it at a prompt + Enter to run (optional)" spellcheck="false" autocomplete="off" /></label>
         <div class="modal-actions">
           <button type="button" id="btn-cancel" class="secondary">Cancel</button>
           <button type="submit" id="btn-save">Save</button>
@@ -267,6 +271,9 @@
 
   <!-- Right-click menu for the explorer (file operations); built dynamically -->
   <div id="explorer-ctx" class="ctx-menu hidden"></div>
+
+  <!-- Right-click menu on a folder's cd button: open a session there AND run a saved command -->
+  <div id="cdcmd-menu" class="ctx-menu hidden"></div>
 
   <!-- Close / remember-session popup -->
   <div id="close-modal" class="hidden">
@@ -314,6 +321,7 @@
       <label class="chk-row"><input type="checkbox" id="ssh-tmux" /> Connect into a tmux session</label>
       <input type="text" id="ssh-tmux-name" placeholder="Session name (create or attach by name · blank = attach existing)" spellcheck="false" autocomplete="off" style="display:none" />
       <div class="modal-actions">
+        <button id="ssh-save-fav" class="secondary" title="Save as an SSH favorite (one-click reconnect from the session panel)">★ Favorite</button>
         <button id="ssh-save-cmd" class="secondary" title="Save this connection as a Commands shortcut">Save as command</button>
         <button id="ssh-modal-cancel" class="secondary">Cancel</button>
         <button id="ssh-modal-connect">Connect</button>

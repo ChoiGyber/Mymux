@@ -8,6 +8,8 @@ pub struct CommandDto {
     pub command: String,
     pub description: String,
     pub favorite: bool,
+    pub cwd: String,
+    pub alias: String,
 }
 
 impl From<SavedCommand> for CommandDto {
@@ -18,6 +20,8 @@ impl From<SavedCommand> for CommandDto {
             command: c.command,
             description: c.description,
             favorite: c.favorite,
+            cwd: c.cwd,
+            alias: c.alias,
         }
     }
 }
@@ -72,16 +76,31 @@ pub fn list_commands() -> Result<Vec<CommandDto>, String> {
 }
 
 #[tauri::command]
-pub fn add_command(name: String, command: String, description: String) -> Result<CommandDto, String> {
+pub fn add_command(
+    name: String,
+    command: String,
+    description: String,
+    cwd: Option<String>,
+    alias: Option<String>,
+) -> Result<CommandDto, String> {
     let s = store()?;
-    let cmd = SavedCommand::new(name, command, description);
+    let mut cmd = SavedCommand::new(name, command, description);
+    cmd.cwd = cwd.unwrap_or_default();
+    cmd.alias = alias.unwrap_or_default();
     let dto = CommandDto::from(cmd.clone());
     s.add(cmd).map_err(|e| e.to_string())?;
     Ok(dto)
 }
 
 #[tauri::command]
-pub fn update_command(id: String, name: String, command: String, description: String) -> Result<(), String> {
+pub fn update_command(
+    id: String,
+    name: String,
+    command: String,
+    description: String,
+    cwd: Option<String>,
+    alias: Option<String>,
+) -> Result<(), String> {
     let s = store()?;
     // Preserve the existing favorite flag (the edit form doesn't carry it).
     let favorite = s
@@ -91,7 +110,15 @@ pub fn update_command(id: String, name: String, command: String, description: St
         .find(|c| c.id == id)
         .map(|c| c.favorite)
         .unwrap_or(false);
-    let cmd = SavedCommand { id, name, command, description, favorite };
+    let cmd = SavedCommand {
+        id,
+        name,
+        command,
+        description,
+        favorite,
+        cwd: cwd.unwrap_or_default(),
+        alias: alias.unwrap_or_default(),
+    };
     s.update(cmd).map_err(|e| e.to_string())
 }
 
