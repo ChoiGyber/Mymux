@@ -4959,14 +4959,18 @@ function showAutocomplete(input, ptyId) {
   acList.innerHTML = "";
   acSelectedIdx = 0;
 
+  const shellKind = paneShellKind(terminals.get(ptyId));
   matches.slice(0, 8).forEach((cmd, i) => {
     const li = document.createElement("li");
     li.className = "ac-item" + (i === 0 ? " selected" : "");
     li.dataset.command = cmd.command;
     li.dataset.cmdId = cmd.id;
+    // Show what will ACTUALLY run — for cwd-bound commands that's the full
+    // "cd <dir> then command" line, not just the bare command.
+    const preview = commandComboLine(cmd, shellKind);
     li.innerHTML = `
       <span class="ac-name">${cmd.alias ? `<span class="cmd-alias">${esc(cmd.alias)}</span>` : ""}${esc(cmd.name)}</span>
-      <span class="ac-cmd">${cmd.cwd ? "📁 " : ""}${esc(cmd.command)}</span>
+      <span class="ac-cmd" title="${esc(preview)}">${esc(preview)}</span>
     `;
     li.addEventListener("click", () => {
       const line = commandComboLine(cmd, paneShellKind(terminals.get(ptyId)));
@@ -4994,14 +4998,16 @@ function showAutocomplete(input, ptyId) {
     const curX = buf ? buf.cursorX : 0;
     const curY = buf ? buf.cursorY : rows - 1;
     let left = r.left + curX * cw - 16; // tail aligns near the cursor
-    left = Math.max(r.left + 4, Math.min(left, window.innerWidth - 250));
     const lineTop = r.top + curY * ch;
     const lineBottom = r.top + (curY + 1) * ch;
     const gap = 12;
     acPopup.style.left = left + "px";
-    // Reveal first so offsetHeight is measurable (no repaint until JS yields).
+    // Reveal first so offsetHeight/Width are measurable (no repaint until JS yields).
     acPopup.classList.remove("hidden");
     const popupH = acPopup.offsetHeight;
+    // Clamp with the ACTUAL width — the popup grows for long combo lines.
+    left = Math.max(4, Math.min(left, window.innerWidth - acPopup.offsetWidth - 8));
+    acPopup.style.left = left + "px";
     if (lineTop - gap - popupH >= 4) {
       // Enough room above → keep the bubble above the cursor.
       acPopup.style.bottom = (window.innerHeight - lineTop + gap) + "px";

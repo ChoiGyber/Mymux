@@ -1995,6 +1995,7 @@ html[data-theme="light"] #toolbar-actions #btn-update:hover {
   border-radius: 10px;
   box-shadow: 0 6px 20px rgba(0, 0, 0, 0.45);
   min-width: 240px;
+  max-width: 620px; /* wide enough to read the full expanded combo line */
   opacity: 0.85; /* 15% transparent so it doesn't fully cover the input line */
 }
 /* Speech-bubble tail pointing down toward the input line */
