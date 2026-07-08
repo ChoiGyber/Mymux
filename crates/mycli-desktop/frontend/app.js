@@ -219,7 +219,7 @@ async function setupListeners() {
   const notifyModal = document.getElementById("notify-modal");
   const notifyChkPane = document.getElementById("notify-chk-pane");
   const notifyChkList = document.getElementById("notify-chk-list");
-  const notifyChkFox = document.getElementById("notify-chk-fox");
+  const notifyCharRadios = document.querySelectorAll('input[name="notify-char"]');
   initFoxDrag();
   if (btnNotifySettings && notifyModal) {
     const closeNotifyModal = () => {
@@ -230,7 +230,7 @@ async function setupListeners() {
     btnNotifySettings.addEventListener("click", () => {
       notifyChkPane.checked = notifyFlashPrefs.pane;
       notifyChkList.checked = notifyFlashPrefs.list;
-      if (notifyChkFox) notifyChkFox.checked = notifyFlashPrefs.fox;
+      notifyCharRadios.forEach((r) => { r.checked = r.value === notifyFlashPrefs.character; });
       // The native browser overlay floats above all HTML; hide it so the modal shows.
       if (browserTabActive && browserMode === "native") invoke("browser_pane_hide").catch(() => {});
       notifyModal.classList.remove("hidden");
@@ -240,11 +240,15 @@ async function setupListeners() {
     notifyModal.addEventListener("keydown", (e) => { if (e.key === "Escape") closeNotifyModal(); });
     notifyChkPane.addEventListener("change", () => { notifyFlashPrefs.pane = notifyChkPane.checked; saveNotifyFlashPrefs(); });
     notifyChkList.addEventListener("change", () => { notifyFlashPrefs.list = notifyChkList.checked; saveNotifyFlashPrefs(); });
-    if (notifyChkFox) notifyChkFox.addEventListener("change", () => {
-      notifyFlashPrefs.fox = notifyChkFox.checked;
+    notifyCharRadios.forEach((r) => r.addEventListener("change", () => {
+      if (!r.checked) return;
+      notifyFlashPrefs.character = r.value;
+      notifyFlashPrefs.fox = r.value !== "none"; // keep legacy flag roughly in sync
       saveNotifyFlashPrefs();
-      if (!notifyChkFox.checked) hideFox();
-    });
+      const fox = document.getElementById("fox-buddy");
+      if (r.value === "none") hideFox();
+      else if (fox) fox.dataset.char = r.value; // live-switch the visible character
+    }));
   }
 
   // GitHub shortcut (session panel footer) → open the repo in the OS default browser.
@@ -1672,6 +1676,17 @@ async function createPane(parentEl, shell, args, cwd) {
     // output-silence watch so keystroke echo never counts as "work output".
     const ti = terminals.get(id);
     if (ti) { ti.lastInputAt = performance.now(); ti.outStart = null; ti.notifiedQuiet = false; }
+    // Remember the command being submitted so a restored session can offer to
+    // re-run it (e.g. relaunch `claude`/`codex`). Capture on Enter, only at a
+    // Mymux-integrated shell prompt — so keystrokes typed INTO a full-screen app
+    // (claude/vim, alt-screen) never overwrite the last real shell command.
+    if (ti && data.includes("\r") && commandReplayEnabled()) {
+      try {
+        const r = getInputRegion(ti);
+        const cmd = r && r.text ? r.text.trim() : "";
+        if (cmd) { ti.lastCmd = cmd; if (ti.session) ti.session.lastCmd = cmd; }
+      } catch {}
+    }
     const result = handleTerminalInput(data, id);
     if (result === "consumed") return;
     // Per-tab broadcast (Ctrl+Shift+B): typing in any pane of a broadcasting
@@ -1723,6 +1738,8 @@ async function createPane(parentEl, shell, args, cwd) {
           const m = term.registerMarker(0);
           if (m) { t.marks.push({ marker: m, exit: null }); if (t.marks.length > 400) t.marks.shift(); }
         } catch {}
+        // First prompt after restore is ready → replay the remembered command.
+        if (t.pendingReplay) firePendingReplay(id);
       } else if (k === "B") {
         try {
           const m = term.registerMarker(0);
@@ -1735,7 +1752,14 @@ async function createPane(parentEl, shell, args, cwd) {
         // Command finished: if it ran ≥5s since the last keystroke, treat it as
         // a task completing and flash the pane. Short interactive commands
         // (ls, cd…) finish well inside the window and stay quiet.
-        if (performance.now() - (t.lastInputAt || 0) >= NOTIFY_MIN_WORK_MS) flashPaneNotify(id);
+        // Guard with notifiedQuiet (shared with the silence watcher) so an idle
+        // session whose prompt periodically re-emits 133;D — its lastInputAt is
+        // long stale, so the ≥5s test always passes — flashes only ONCE and then
+        // stays put until the user actually types again (term.onData clears it).
+        if (!t.notifiedQuiet && performance.now() - (t.lastInputAt || 0) >= NOTIFY_MIN_WORK_MS) {
+          t.notifiedQuiet = true;
+          flashPaneNotify(id);
+        }
         t.outStart = null; // the shell prompt is back — don't double-fire the silence watcher
       }
       return true;
@@ -1834,6 +1858,25 @@ function setFocusedPane(ptyId) {
 // terminal mode and focus has fallen to nothing (body/null) rather than a real
 // element (another pane, an input, an overlay), pull it back to the active pane.
 // This is why a focused session stays selectable until you click elsewhere.
+
+// On window return, WebView2/Chromium leaves xterm's rAF-based renderer paused
+// for a beat, so shell echo written by the poll loop buffers and only paints in
+// a burst (cursor sits still, then a clump of chars appears — the "coming back
+// from another session lags" report). Force an immediate re-render of every
+// visible pane so what's already buffered paints right away.
+function forceRepaintVisiblePanes() {
+  const tab = tabs.get(activeTabIdx);
+  if (!tab || !tab.panes) return;
+  for (const pid of tab.panes) {
+    const t = terminals.get(pid);
+    if (!t || !t.term) continue;
+    try {
+      const rows = t.term.rows || 0;
+      if (rows > 0) t.term.refresh(0, rows - 1);
+    } catch {}
+  }
+}
+
 let focusKeeperStarted = false;
 // Assigned by startFocusKeeper; called from the global keydown handler so that
 // real typing after an Alt-Tab return cancels the remaining focus-restore
@@ -1888,6 +1931,7 @@ function startFocusKeeper() {
     lastReturn = now;
     cancelFocusReturnRetries();
     restore(true);
+    forceRepaintVisiblePanes(); // wake xterm's rAF renderer so buffered echo paints now, not in a burst
     returnRetries = [
       setTimeout(() => restore(true), 80),
       setTimeout(() => restore(true), 220),
@@ -1999,8 +2043,13 @@ function trackOutputSilence(id, t) {
 // session-list row. Both off = no visual flash (unseen badge / taskbar
 // attention still apply).
 const notifyFlashPrefs = (() => {
-  try { return { pane: true, list: true, fox: true, ...JSON.parse(localStorage.getItem("notifyFlashPrefs") || "{}") }; }
-  catch { return { pane: true, list: true, fox: true }; }
+  const base = { pane: true, list: true, fox: true, character: null };
+  let p;
+  try { p = { ...base, ...JSON.parse(localStorage.getItem("notifyFlashPrefs") || "{}") }; }
+  catch { p = { ...base }; }
+  // Migrate the old boolean `fox` flag → `character` ("classic" | "none").
+  if (p.character == null) p.character = p.fox ? "classic" : "none";
+  return p;
 })();
 function saveNotifyFlashPrefs() {
   try { localStorage.setItem("notifyFlashPrefs", JSON.stringify(notifyFlashPrefs)); } catch {}
@@ -2025,7 +2074,7 @@ function flashPaneNotify(id) {
   const t = terminals.get(id);
   if (notifyFlashPrefs.pane && t) pulse(t.paneEl);
   if (notifyFlashPrefs.list) pulse(document.querySelector(`.session-item[data-pty-id="${id}"]`));
-  if (notifyFlashPrefs.fox && t) showFoxAt(t.paneEl, id);
+  if (notifyFlashPrefs.character && notifyFlashPrefs.character !== "none" && t) showFoxAt(t.paneEl, id);
   // The pulse is invisible when the pane is off-screen or the whole window is
   // in the background — leave a persistent "unseen" badge for the former and
   // flash the taskbar icon (no focus steal) for the latter.
@@ -2058,12 +2107,29 @@ function clearPaneFlash(id) {
 // finished and sways/blinks there for the pulse duration. Drag to move it
 // anywhere; click to dismiss. Toggled in the 🔔 notify settings modal.
 let foxHideTimer = null;
+let foxFadeTimer = null;
+let foxMascotRevert = null;
 function showFoxAt(paneEl, paneId) {
   const fox = document.getElementById("fox-buddy");
   if (!fox || !paneEl) return;
+  // Cancel any in-flight fade-out so a re-appearance shows a solid fox.
+  if (foxFadeTimer) { clearTimeout(foxFadeTimer); foxFadeTimer = null; }
+  fox.classList.remove("fox-leaving");
+  // Pick the character chosen in the 🔔 modal ("classic" | "mascot").
+  const char = notifyFlashPrefs.character === "mascot" ? "mascot" : "classic";
+  fox.dataset.char = char;
+  if (char === "mascot") {
+    // Celebrate: restart the cheer animation, then settle back to idle.
+    const mascot = fox.querySelector(".fox-mascot");
+    if (mascot) {
+      mascot.dataset.state = "idle"; void mascot.offsetWidth; mascot.dataset.state = "cheer";
+      if (foxMascotRevert) clearTimeout(foxMascotRevert);
+      foxMascotRevert = setTimeout(() => { mascot.dataset.state = "idle"; }, 1600);
+    }
+  }
   const r = paneEl.getBoundingClientRect();
   if (r.width === 0 || r.height === 0) return; // pane on a hidden tab — unseen badge covers it
-  const FW = 68, FH = 59;
+  const FW = 64, FH = 55;
   // Bottom-right INSIDE the pane, lifted off the edge so it never covers
   // scrollbars or the bar below. Narrow panes: center horizontally and clamp
   // into the pane so the fox is never squeezed off the edge.
@@ -2092,9 +2158,18 @@ function showFoxAt(paneEl, paneId) {
   foxHideTimer = setTimeout(hideFox, 10200); // matches the border-pulse lifetime
 }
 function hideFox() {
-  const fox = document.getElementById("fox-buddy");
-  if (fox) { fox.classList.add("hidden"); fox._paneId = null; }
   if (foxHideTimer) { clearTimeout(foxHideTimer); foxHideTimer = null; }
+  const fox = document.getElementById("fox-buddy");
+  if (!fox || fox.classList.contains("hidden")) return;
+  // Fade + shrink out (CSS transition), then fully hide once it's invisible.
+  fox.classList.add("fox-leaving");
+  if (foxFadeTimer) clearTimeout(foxFadeTimer);
+  foxFadeTimer = setTimeout(() => {
+    foxFadeTimer = null;
+    fox.classList.add("hidden");
+    fox.classList.remove("fox-leaving");
+    fox._paneId = null;
+  }, 450); // matches the opacity/transform transition
 }
 // Drag to move (transition off while dragging); a plain click dismisses.
 function initFoxDrag() {
@@ -3856,8 +3931,12 @@ function collectSession() {
       // Multi-pane tab → persist the full split layout (tree).
       arr.push({ label: tab.label, tree: serializePane(tab.rootEl) });
     } else if (tab.session) {
-      // Single-pane tab → flat entry (backward-compatible with v1).
-      arr.push({ ...tab.session, label: tab.label });
+      // Single-pane tab → flat entry (backward-compatible with v1). Pull the
+      // live pane's remembered command (tab.session is a separate object that
+      // isn't updated as the user types).
+      const t0 = tab.panes && terminals.get(tab.panes[0]);
+      const lastCmd = (t0 && t0.session && t0.session.lastCmd) || tab.session.lastCmd || null;
+      arr.push({ ...tab.session, lastCmd, label: tab.label });
     }
   }
   return { version: 2, tabs: arr };
@@ -3874,7 +3953,7 @@ async function buildPaneNode(parentEl, node) {
     } else {
       const id = await createPane(parentEl, s.shell || getDefaultShellId(), null, s.cwd || undefined);
       const t = terminals.get(id);
-      if (t) t.session = { kind: "local", shell: s.shell || null, cwd: s.cwd || null };
+      if (t) t.session = { kind: "local", shell: s.shell || null, cwd: s.cwd || null, lastCmd: s.lastCmd || null };
     }
     return;
   }
@@ -3964,7 +4043,9 @@ async function restoreSession() {
           pwSessions.push(s); // password auth → prompt below
         }
       } else {
-        await spawnTerminal(s.shell || undefined, s.cwd || undefined);
+        const pid = await spawnTerminal(s.shell || undefined, s.cwd || undefined);
+        const t = pid != null ? terminals.get(pid) : null;
+        if (t && t.session && s.lastCmd) t.session.lastCmd = s.lastCmd;
       }
     } catch (e) {
       console.error("restore tab failed", e);
@@ -3976,7 +4057,86 @@ async function restoreSession() {
     await promptSshPasswordRestore(s);
   }
 
+  // Offer to re-run the commands that were running before quit (claude/codex…).
+  try { await maybeReplayCommands(); } catch (e) { console.error("replay prompt failed", e); }
+
   return tabs.size > 0;
+}
+
+// ── Command replay: after restore, offer to re-run each pane's last command ──
+function commandReplayEnabled() {
+  try { return localStorage.getItem("mymux.replayCommands") !== "false"; } catch { return true; }
+}
+async function maybeReplayCommands() {
+  if (!commandReplayEnabled()) return;
+  const cands = [];
+  for (const [pid, t] of terminals) {
+    const cmd = t.session && t.session.lastCmd;
+    if (cmd) cands.push({ id: pid, cmd, label: t.label || "Terminal" });
+  }
+  if (!cands.length) return;
+  const chosen = await promptReplayCommands(cands);
+  for (const c of chosen) scheduleReplay(c.id, c.cmd);
+}
+// Fire the remembered command once the pane's shell prompt is ready. 133;A
+// (prompt start) is the reliable local trigger; a timed fallback covers SSH /
+// shells without Mymux shell-integration.
+function scheduleReplay(id, cmd) {
+  const t = terminals.get(id);
+  if (!t) return;
+  t.pendingReplay = cmd;
+  if (atIntegratedPrompt(t)) { firePendingReplay(id); return; }
+  if (t._replayFallback) clearTimeout(t._replayFallback);
+  t._replayFallback = setTimeout(() => firePendingReplay(id), 2500);
+}
+function firePendingReplay(id) {
+  const t = terminals.get(id);
+  if (!t || !t.pendingReplay) return;
+  const cmd = t.pendingReplay;
+  t.pendingReplay = null;
+  if (t._replayFallback) { clearTimeout(t._replayFallback); t._replayFallback = null; }
+  invoke("pty_write", { id, data: cmd + "\r" });
+}
+// Batch confirm modal: one list, checkboxes (default on), run selected.
+function promptReplayCommands(cands) {
+  return new Promise((resolve) => {
+    const modal = document.getElementById("replay-modal");
+    const list = document.getElementById("replay-list");
+    const btnRun = document.getElementById("replay-run");
+    const btnSkip = document.getElementById("replay-skip");
+    const chkOff = document.getElementById("replay-disable");
+    if (!modal || !list) { resolve([]); return; }
+    list.innerHTML = "";
+    cands.forEach((c, i) => {
+      const row = document.createElement("label");
+      row.className = "chk-row";
+      row.innerHTML = `<input type="checkbox" data-i="${i}" checked /> <b>${esc(c.label)}</b> — <code>${esc(c.cmd)}</code>`;
+      list.appendChild(row);
+    });
+    if (chkOff) chkOff.checked = false;
+    modal.classList.remove("hidden");
+
+    function cleanup() {
+      modal.classList.add("hidden");
+      btnRun.removeEventListener("click", onRun);
+      btnSkip.removeEventListener("click", onSkip);
+    }
+    function finish(chosen) {
+      if (chkOff && chkOff.checked) { try { localStorage.setItem("mymux.replayCommands", "false"); } catch {} }
+      cleanup();
+      resolve(chosen);
+    }
+    function onRun() {
+      const picked = [];
+      list.querySelectorAll('input[type="checkbox"]').forEach((cb) => {
+        if (cb.checked) { const c = cands[Number(cb.dataset.i)]; if (c) picked.push(c); }
+      });
+      finish(picked);
+    }
+    function onSkip() { finish([]); }
+    btnRun.addEventListener("click", onRun);
+    btnSkip.addEventListener("click", onSkip);
+  });
 }
 
 // Password-only prompt used by session restore AND favorite clicks.

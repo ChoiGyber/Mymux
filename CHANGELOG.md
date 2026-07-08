@@ -8,6 +8,51 @@ For installers, see the [GitHub Releases](https://github.com/ChoiGyber/Mymux/rel
 
 ---
 
+## v0.1.25 — 2026-07-09
+
+### Added / 새 기능
+- **Buddy character picker with a mascot fox / 마스코트 여우 + 캐릭터 선택기.**
+  The completion buddy can now be the original fox or a rounder mascot fox that
+  cheers when a task finishes. Pick it from preview cards in the bell (🔔) modal —
+  Off / Fox / Mascot — so the two characters are easy to tell apart.
+
+  작업 완료 캐릭터로 기존 여우 외에 둥근 **마스코트 여우**(완료 시 환호 모션)를
+  고를 수 있습니다. 종(🔔) 모달의 **미리보기 카드**(끄기 / 여우 / 마스코트)로
+  선택해 두 캐릭터를 한눈에 구별합니다.
+
+- **Re-run last commands after restore / 세션 복원 시 명령 재실행.**
+  Mymux remembers the last command each pane ran and, after restoring a session,
+  offers to re-run them (e.g. relaunch `claude`/`codex`) from a single checklist.
+  Toggle with "don't ask again".
+
+  각 패인에서 마지막으로 실행한 명령을 기억했다가, 세션 복원 후 **일괄 확인
+  목록**으로 다시 실행할지 물어봅니다(예: `claude`/`codex` 재실행). "앞으로 묻지
+  않기"로 끌 수 있습니다.
+
+### Fixed / 버그 수정
+- **Completion buddy no longer repeats on idle sessions / 멈춘 세션 알림 반복 제거.**
+  A finished-but-idle pane whose prompt re-emitted shell-integration marks could
+  re-trigger the fox/flash repeatedly. It now notifies once until you type again.
+
+  프롬프트가 셸 통합 마크를 다시 내보내던 멈춘 패인에서 여우/번쩍임이 반복
+  발생하던 문제를 고쳐, 다시 입력하기 전까지 **한 번만** 알립니다.
+
+- **Snappier typing when returning to a session / 세션 복귀 시 입력 지연 완화.**
+  Coming back from another window no longer leaves typed characters buffered for a
+  beat; visible panes are force-repainted on return so echo shows immediately.
+
+  다른 창에서 돌아올 때 입력한 글자가 잠시 멈췄다 몰려 표시되던 현상을 줄였습니다.
+  복귀 시 보이는 패인을 강제로 다시 그려 에코가 즉시 나타납니다.
+
+- **More visible scrollback scrollbar / 스크롤바 가시성 개선.**
+  The terminal's scrollback scrollbar is wider and higher-contrast so it's easy to
+  see when content scrolls above the command line.
+
+  터미널 스크롤백 스크롤바를 더 굵고 대비 높게 바꿔, 명령줄 위로 내용이 스크롤될
+  때 잘 보이도록 했습니다.
+
+---
+
 ## v0.1.24 — 2026-07-07
 
 ### Added / 새 기능

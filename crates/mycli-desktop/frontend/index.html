@@ -336,7 +336,55 @@
       <p>작업이 끝났을 때 번쩍임을 어디에 표시할지 선택하세요. 둘 다 끄면 번쩍이지 않습니다.</p>
       <label class="chk-row"><input type="checkbox" id="notify-chk-pane" /> 창 틀(패인 테두리) 번쩍임 / Pane border flash</label>
       <label class="chk-row"><input type="checkbox" id="notify-chk-list" /> 세션 목록 이름 번쩍임 / Session list flash</label>
-      <label class="chk-row"><input type="checkbox" id="notify-chk-fox" /> 🦊 여우 캐릭터 — 완료된 세션에 나타남 / Fox buddy on the finished pane</label>
+      <div class="chk-row" style="margin-top:6px;opacity:.85;">🦊 완료 세션에 나타날 캐릭터 / Buddy character</div>
+      <div class="char-picker">
+        <label class="char-card">
+          <input type="radio" name="notify-char" value="none" />
+          <span class="char-thumb char-thumb-off">🚫</span>
+          <span class="char-name">끄기<br>Off</span>
+        </label>
+        <label class="char-card">
+          <input type="radio" name="notify-char" value="classic" />
+          <span class="char-thumb">
+            <svg viewBox="0 0 120 104" width="46" height="40" aria-hidden="true">
+              <polygon points="30,44 15,9 50,30" fill="#e8833a" stroke="#e8833a" stroke-width="7" stroke-linejoin="round"/>
+              <polygon points="90,44 105,9 70,30" fill="#e8833a" stroke="#e8833a" stroke-width="7" stroke-linejoin="round"/>
+              <polygon points="33,40 21,17 47,32" fill="#7c4a21" stroke="#7c4a21" stroke-width="4" stroke-linejoin="round"/>
+              <polygon points="87,40 99,17 73,32" fill="#7c4a21" stroke="#7c4a21" stroke-width="4" stroke-linejoin="round"/>
+              <ellipse cx="60" cy="64" rx="37" ry="40" fill="#f09144"/>
+              <ellipse cx="45" cy="76" rx="16" ry="16" fill="#fdf4e8"/>
+              <ellipse cx="75" cy="76" rx="16" ry="16" fill="#fdf4e8"/>
+              <ellipse cx="60" cy="84" rx="16" ry="13" fill="#fdf4e8"/>
+              <ellipse cx="34" cy="72" rx="6.5" ry="4.5" fill="#f7938c" opacity="0.55"/>
+              <ellipse cx="86" cy="72" rx="6.5" ry="4.5" fill="#f7938c" opacity="0.55"/>
+              <ellipse cx="43" cy="60" rx="6.5" ry="8.5" fill="#2b1c12"/>
+              <ellipse cx="77" cy="60" rx="6.5" ry="8.5" fill="#2b1c12"/>
+              <circle cx="45.5" cy="56.5" r="2.6" fill="#fff" opacity="0.95"/>
+              <circle cx="79.5" cy="56.5" r="2.6" fill="#fff" opacity="0.95"/>
+              <ellipse cx="60" cy="72" rx="4" ry="3.2" fill="#3a2417"/>
+              <path d="M60 74 Q60 79 55 81 M60 74 Q60 79 65 81" stroke="#3a2417" stroke-width="2" fill="none" stroke-linecap="round"/>
+            </svg>
+          </span>
+          <span class="char-name">여우<br>Fox</span>
+        </label>
+        <label class="char-card">
+          <input type="radio" name="notify-char" value="mascot" />
+          <span class="char-thumb">
+            <svg viewBox="0 0 100 100" width="44" height="44" aria-hidden="true">
+              <circle cx="50" cy="52" r="32" fill="#f97316"/>
+              <polygon points="24,33 28,13 42,27" fill="#f97316"/>
+              <polygon points="76,33 72,13 58,27" fill="#f97316"/>
+              <ellipse cx="50" cy="60" rx="20" ry="14" fill="rgba(255,255,255,0.92)"/>
+              <circle cx="40" cy="48" r="3.5" fill="#1f1f1f"/>
+              <circle cx="60" cy="48" r="3.5" fill="#1f1f1f"/>
+              <circle cx="41" cy="47" r="1.2" fill="#fff"/>
+              <circle cx="61" cy="47" r="1.2" fill="#fff"/>
+              <path d="M 44 62 Q 50 67 56 62" fill="none" stroke="#1f1f1f" stroke-width="2" stroke-linecap="round"/>
+            </svg>
+          </span>
+          <span class="char-name">마스코트<br>Mascot</span>
+        </label>
+      </div>
       <div class="modal-actions">
         <button id="notify-modal-close">확인</button>
       </div>
@@ -355,32 +403,69 @@
     </div>
   </div>
 
+  <!-- Restore: re-run the commands that were running before quit (claude/codex…) -->
+  <div id="replay-modal" class="hidden">
+    <div class="modal-box">
+      <h2>이전 명령 다시 실행 / Re-run last commands</h2>
+      <p>종료 전에 각 세션에서 실행하던 명령을 다시 실행할까요? 체크된 항목만 실행됩니다.</p>
+      <div id="replay-list" class="replay-list"></div>
+      <label class="chk-row" style="margin-top:6px;opacity:.8;"><input type="checkbox" id="replay-disable" /> 앞으로 묻지 않기 / Don't ask again</label>
+      <div class="modal-actions">
+        <button id="replay-skip" class="secondary">건너뛰기</button>
+        <button id="replay-run">실행</button>
+      </div>
+    </div>
+  </div>
+
   <!-- Fox buddy: glides to the pane whose task just finished (drag to move, click to dismiss) -->
-  <div id="fox-buddy" class="hidden" title="작업 완료! (드래그: 이동 · 클릭: 닫기)">
-    <svg viewBox="0 0 120 104" width="68" height="59" aria-hidden="true">
-      <!-- ears -->
-      <polygon points="22,44 10,6 48,26" fill="#e8833a"/>
-      <polygon points="98,44 110,6 72,26" fill="#e8833a"/>
-      <polygon points="25,40 17,15 43,29" fill="#7c4a21"/>
-      <polygon points="95,40 103,15 77,29" fill="#7c4a21"/>
-      <!-- head -->
-      <ellipse cx="60" cy="62" rx="46" ry="38" fill="#f09144"/>
+  <div id="fox-buddy" class="hidden" data-char="classic" title="작업 완료! (드래그: 이동 · 클릭: 닫기)">
+    <svg class="fox-classic" viewBox="0 0 120 104" width="64" height="55" aria-hidden="true">
+      <!-- ears (base corners tucked inside the head outline = no gap;
+           rounded joins so the tips are soft, not sharp) -->
+      <polygon points="30,44 15,9 50,30" fill="#e8833a" stroke="#e8833a" stroke-width="7" stroke-linejoin="round"/>
+      <polygon points="90,44 105,9 70,30" fill="#e8833a" stroke="#e8833a" stroke-width="7" stroke-linejoin="round"/>
+      <polygon points="33,40 21,17 47,32" fill="#7c4a21" stroke="#7c4a21" stroke-width="4" stroke-linejoin="round"/>
+      <polygon points="87,40 99,17 73,32" fill="#7c4a21" stroke="#7c4a21" stroke-width="4" stroke-linejoin="round"/>
+      <!-- head (slimmer, gently tapered = cuter) -->
+      <ellipse cx="60" cy="64" rx="37" ry="40" fill="#f09144"/>
       <!-- white muzzle/cheeks -->
-      <ellipse cx="38" cy="74" rx="20" ry="16" fill="#fdf4e8"/>
-      <ellipse cx="82" cy="74" rx="20" ry="16" fill="#fdf4e8"/>
-      <ellipse cx="60" cy="82" rx="18" ry="13" fill="#fdf4e8"/>
-      <!-- eyes (blink) -->
-      <ellipse class="fox-eye" cx="42" cy="58" rx="5" ry="7" fill="#2b1c12"/>
-      <ellipse class="fox-eye" cx="78" cy="58" rx="5" ry="7" fill="#2b1c12"/>
-      <circle cx="44" cy="55" r="1.6" fill="#fff" opacity="0.9"/>
-      <circle cx="80" cy="55" r="1.6" fill="#fff" opacity="0.9"/>
-      <!-- nose + mouth -->
-      <polygon points="60,72 54,66 66,66" fill="#3a2417"/>
-      <path d="M60 72 Q60 78 54 80 M60 72 Q60 78 66 80" stroke="#3a2417" stroke-width="2" fill="none" stroke-linecap="round"/>
+      <ellipse cx="45" cy="76" rx="16" ry="16" fill="#fdf4e8"/>
+      <ellipse cx="75" cy="76" rx="16" ry="16" fill="#fdf4e8"/>
+      <ellipse cx="60" cy="84" rx="16" ry="13" fill="#fdf4e8"/>
+      <!-- rosy blush cheeks -->
+      <ellipse cx="34" cy="72" rx="6.5" ry="4.5" fill="#f7938c" opacity="0.55"/>
+      <ellipse cx="86" cy="72" rx="6.5" ry="4.5" fill="#f7938c" opacity="0.55"/>
+      <!-- eyes (bigger, blink) -->
+      <ellipse class="fox-eye" cx="43" cy="60" rx="6.5" ry="8.5" fill="#2b1c12"/>
+      <ellipse class="fox-eye" cx="77" cy="60" rx="6.5" ry="8.5" fill="#2b1c12"/>
+      <circle cx="45.5" cy="56.5" r="2.6" fill="#fff" opacity="0.95"/>
+      <circle cx="79.5" cy="56.5" r="2.6" fill="#fff" opacity="0.95"/>
+      <circle cx="41" cy="62" r="1.1" fill="#fff" opacity="0.7"/>
+      <circle cx="75" cy="62" r="1.1" fill="#fff" opacity="0.7"/>
+      <!-- soft round nose + mouth -->
+      <ellipse cx="60" cy="72" rx="4" ry="3.2" fill="#3a2417"/>
+      <path d="M60 74 Q60 79 55 81 M60 74 Q60 79 65 81" stroke="#3a2417" stroke-width="2" fill="none" stroke-linecap="round"/>
       <!-- whiskers -->
-      <path d="M20 70 L34 72 M20 78 L34 77" stroke="#d97b2e" stroke-width="1.6" stroke-linecap="round"/>
-      <path d="M100 70 L86 72 M100 78 L86 77" stroke="#d97b2e" stroke-width="1.6" stroke-linecap="round"/>
+      <path d="M22 71 L35 73 M22 79 L35 78" stroke="#d97b2e" stroke-width="1.6" stroke-linecap="round"/>
+      <path d="M98 71 L85 73 M98 79 L85 78" stroke="#d97b2e" stroke-width="1.6" stroke-linecap="round"/>
     </svg>
+    <!-- Mascot fox variant (from ChurchLivePro demo) — celebrates with data-state -->
+    <div class="fox-mascot" data-state="idle">
+      <svg viewBox="0 0 100 100" class="mascot-svg" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+        <ellipse cx="50" cy="88" rx="22" ry="3" fill="rgba(0,0,0,0.25)"/>
+        <circle cx="50" cy="52" r="32" class="m-body" fill="#f97316"/>
+        <polygon points="24,33 28,13 42,27" class="m-ear m-ear-l" fill="#f97316"/>
+        <polygon points="76,33 72,13 58,27" class="m-ear m-ear-r" fill="#f97316"/>
+        <ellipse cx="50" cy="60" rx="20" ry="14" class="m-belly" fill="rgba(255,255,255,0.92)"/>
+        <g class="m-eyes">
+          <circle cx="40" cy="48" r="3.5" class="m-eye m-eye-l" fill="#1f1f1f"/>
+          <circle cx="60" cy="48" r="3.5" class="m-eye m-eye-r" fill="#1f1f1f"/>
+          <circle cx="41" cy="47" r="1.2" class="m-eye-shine m-eye-shine-l" fill="#fff"/>
+          <circle cx="61" cy="47" r="1.2" class="m-eye-shine m-eye-shine-r" fill="#fff"/>
+        </g>
+        <path d="M 44 62 Q 50 67 56 62" class="m-mouth" fill="none" stroke="#1f1f1f" stroke-width="2" stroke-linecap="round"/>
+      </svg>
+    </div>
   </div>
 
   <div id="toast" class="hidden"></div>

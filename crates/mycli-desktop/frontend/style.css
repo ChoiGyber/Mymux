@@ -156,14 +156,16 @@ header h1 .byline {
 #fox-buddy {
   position: fixed;
   z-index: 1500;
-  width: 68px;
-  height: 59px;
+  width: 64px;
+  height: 55px;
   cursor: grab;
   user-select: none;
   filter: drop-shadow(0 3px 8px rgba(0, 0, 0, 0.35));
-  transition: left 0.6s cubic-bezier(0.35, 0.9, 0.35, 1), top 0.6s cubic-bezier(0.35, 0.9, 0.35, 1), opacity 0.25s;
+  transition: left 0.6s cubic-bezier(0.35, 0.9, 0.35, 1), top 0.6s cubic-bezier(0.35, 0.9, 0.35, 1), opacity 0.45s ease, transform 0.45s ease;
 }
 #fox-buddy.dragging { transition: none; cursor: grabbing; }
+/* Fade + shrink away when the fox leaves (click, timer, or toggle-off). */
+#fox-buddy.fox-leaving { opacity: 0; transform: scale(0.6); }
 /* Attention-grabbing pop when the fox lands on a freshly finished pane. */
 #fox-buddy.fox-pop { animation: fox-pop 0.5s cubic-bezier(0.2, 1.6, 0.4, 1); }
 @keyframes fox-pop {
@@ -171,7 +173,7 @@ header h1 .byline {
   60%  { transform: scale(1.18); }
   100% { transform: scale(1); }
 }
-#fox-buddy svg {
+#fox-buddy .fox-classic {
   display: block;
   animation: fox-sway 2.4s ease-in-out infinite;
   transform-origin: 50% 88%;
@@ -188,6 +190,33 @@ header h1 .byline {
 @keyframes fox-blink {
   0%, 90%, 100% { transform: scaleY(1); }
   93%, 96%      { transform: scaleY(0.08); }
+}
+
+/* ── Character switch: show only the selected buddy ── */
+#fox-buddy[data-char="classic"] .fox-mascot { display: none; }
+#fox-buddy[data-char="mascot"]  .fox-classic { display: none; }
+
+/* ── Mascot fox variant (adapted from ChurchLivePro demo, scoped to .fox-mascot) ── */
+.fox-mascot { width: 62px; height: 62px; }
+.fox-mascot .mascot-svg { display: block; width: 100%; height: 100%; pointer-events: none; }
+.fox-mascot .m-eye-l, .fox-mascot .m-eye-r,
+.fox-mascot .m-eye-shine-l, .fox-mascot .m-eye-shine-r,
+.fox-mascot .m-mouth { transform-box: fill-box; transform-origin: center; }
+.fox-mascot[data-state="idle"] { animation: mascot-breathe 3s ease-in-out infinite; }
+.fox-mascot[data-state="idle"] .m-eye-l, .fox-mascot[data-state="idle"] .m-eye-r,
+.fox-mascot[data-state="idle"] .m-eye-shine-l, .fox-mascot[data-state="idle"] .m-eye-shine-r {
+  animation: mascot-blink 4.2s ease-in-out infinite;
+}
+.fox-mascot[data-state="cheer"] { animation: mascot-cheer-shake 1.6s ease-in-out; }
+.fox-mascot[data-state="cheer"] .m-eye-l, .fox-mascot[data-state="cheer"] .m-eye-r { d: path("M 36 48 Q 40 44 44 48"); }
+.fox-mascot[data-state="cheer"] .m-mouth { d: path("M 43 61 Q 50 69 57 61"); stroke-width: 2.5; }
+@keyframes mascot-breathe { 0%,100% { transform: scale(1) translateY(0); } 50% { transform: scale(1.02) translateY(-1px); } }
+@keyframes mascot-blink { 0%,91%,100% { transform: scaleY(1); } 94% { transform: scaleY(0.08); } 97% { transform: scaleY(1); } }
+@keyframes mascot-cheer-shake {
+  0%,100% { transform: rotate(0) translateX(0); }
+  15% { transform: rotate(-7deg) translateX(-2px); } 30% { transform: rotate(7deg) translateX(2px); }
+  45% { transform: rotate(-6deg) translateX(-2px); } 60% { transform: rotate(6deg) translateX(2px); }
+  75% { transform: rotate(-3deg) translateX(-1px); }
 }
 
 /* Star on SSH session rows (saves the connection as a favorite) */
@@ -1252,7 +1281,7 @@ html[data-theme="light"] #toolbar-actions #btn-update:hover {
 .cmd-item.is-fav { border-left: 2px solid var(--accent); }
 
 /* Generic centered modal (close prompt, ssh password prompt) */
-#close-modal, #sshpw-modal, #ssh-modal, #update-modal, #notify-modal {
+#close-modal, #sshpw-modal, #ssh-modal, #update-modal, #notify-modal, #replay-modal {
   position: fixed;
   inset: 0;
   background: rgba(0, 0, 0, 0.55);
@@ -2121,10 +2150,52 @@ html[data-theme="light"] #toolbar-actions #btn-update:hover {
 
 .hidden { display: none !important; }
 
+/* ── Buddy character picker (🔔 modal): selectable preview cards ── */
+.char-picker { display: flex; gap: 8px; margin-bottom: 16px; }
+.char-card {
+  flex: 1;
+  display: flex; flex-direction: column; align-items: center; gap: 4px;
+  padding: 8px 4px 6px;
+  border: 2px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg);
+  cursor: pointer;
+  transition: border-color 0.12s, background 0.12s, transform 0.12s;
+}
+.char-card:hover { border-color: var(--text-dim); }
+.char-card input { position: absolute; opacity: 0; pointer-events: none; }
+.char-thumb { display: flex; align-items: center; justify-content: center; height: 44px; }
+.char-thumb-off { font-size: 26px; opacity: 0.6; }
+.char-name { font-size: 11px; line-height: 1.25; text-align: center; color: var(--text-dim); }
+/* Selected card: accent ring + tint + a little lift, and a ✓ over the label */
+.char-card:has(input:checked) {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 16%, var(--bg));
+  transform: translateY(-1px);
+}
+.char-card:has(input:checked) .char-name { color: var(--text); font-weight: 600; }
+
+/* ── Command-replay modal list ── */
+.replay-list { max-height: 240px; overflow-y: auto; margin: 8px 0; display: flex; flex-direction: column; gap: 2px; }
+.replay-list .chk-row { align-items: baseline; }
+.replay-list code { color: var(--accent); word-break: break-all; }
+
 /* ── xterm ── */
 .xterm { height: 100%; }
-.xterm-viewport::-webkit-scrollbar { width: 6px; }
-.xterm-viewport::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+/* Scrollback scrollbar — wider + higher-contrast so it's actually noticeable
+   when content scrolls above the command line (appears only when there IS
+   scrollback to scroll). */
+.xterm-viewport::-webkit-scrollbar { width: 10px; }
+.xterm-viewport::-webkit-scrollbar-track { background: transparent; }
+.xterm-viewport::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.28);
+  border-radius: 5px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+.xterm-viewport::-webkit-scrollbar-thumb:hover { background: rgba(255, 255, 255, 0.45); background-clip: padding-box; }
+html[data-theme="light"] .xterm-viewport::-webkit-scrollbar-thumb { background: rgba(0, 0, 0, 0.28); background-clip: padding-box; }
+html[data-theme="light"] .xterm-viewport::-webkit-scrollbar-thumb:hover { background: rgba(0, 0, 0, 0.45); background-clip: padding-box; }
 
 ::-webkit-scrollbar { width: 6px; }
 ::-webkit-scrollbar-track { background: transparent; }
