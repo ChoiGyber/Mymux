@@ -8,6 +8,22 @@ For installers, see the [GitHub Releases](https://github.com/ChoiGyber/Mymux/rel
 
 ---
 
+## v0.1.28 — 2026-07-09
+
+### Fixed / 버그 수정
+- **No more doubled Hangul input after returning to the window / 창 복귀 후 한글 중복 입력 수정.**
+  Alt-Tabbing back and typing Korean could commit each syllable twice and pop a
+  detached IME candidate window, because the focus restore blurred/refocused the
+  input mid-composition. Mymux now leaves an actively-composing textarea alone and
+  stops the post-return refocus retries as soon as IME composition begins.
+
+  창에 돌아와 한글을 입력하면 음절이 두 번씩 입력되고 작은 IME 후보창이 분리돼
+  뜨던 문제를 고쳤습니다. 포커스 복원이 조합 도중 입력창을 blur/refocus 하던 것이
+  원인으로, 이제 조합 중인 입력창은 건드리지 않고 IME 조합이 시작되면 복귀
+  재포커스 재시도를 중단합니다.
+
+---
+
 ## v0.1.27 — 2026-07-09
 
 ### Added / 새 기능

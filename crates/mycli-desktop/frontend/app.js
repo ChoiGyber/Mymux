@@ -1819,7 +1819,22 @@ async function createPane(parentEl, shell, args, cwd) {
   // it), plus a DOM focus listener on the helper textarea (the element that
   // actually receives focus; xterm 5.5 has no term.onFocus event) so state
   // syncs whenever xterm focuses itself.
-  if (term.textarea) term.textarea.addEventListener("focus", () => { if (focusedPaneId !== id) setFocusedPane(id); });
+  if (term.textarea) {
+    term.textarea.addEventListener("focus", () => { if (focusedPaneId !== id) setFocusedPane(id); });
+    // IME (Hangul) composition guard. When returning to the window, the focus
+    // keeper blurs+refocuses this textarea; doing that mid-composition makes the
+    // IME commit the syllable twice ("글자가 2개씩") and detaches its candidate
+    // window. Track composition so restore() leaves an actively-composing textarea
+    // alone, and cancel the pending post-return refocus retries the moment the
+    // user starts composing (composition proves input focus is alive).
+    term.textarea.addEventListener("compositionstart", () => {
+      const ti = terminals.get(id); if (ti) ti.imeComposing = true;
+      cancelFocusReturnRetries();
+    });
+    term.textarea.addEventListener("compositionend", () => {
+      const ti = terminals.get(id); if (ti) ti.imeComposing = false;
+    });
+  }
   paneEl.addEventListener("mousedown", () => { if (focusedPaneId !== id) setFocusedPane(id); }, true);
   paneEl.addEventListener("click", () => setFocusedPane(id));
   termWrap.addEventListener("click", () => { setFocusedPane(id); term.focus(); });
@@ -1945,6 +1960,7 @@ function startFocusKeeper() {
     if (tab && tab.panes.length && !tab.panes.includes(pid)) pid = tab.panes[0];
     if (pid == null || !terminals.has(pid)) return;
     const t = terminals.get(pid);
+    if (t.imeComposing) return; // mid-Hangul composition — blur/refocus here double-types & breaks the IME
     const el = t.term.element;
     if (!el || !el.offsetParent) return; // not visible → leave it
     const ta = el.querySelector(".xterm-helper-textarea");
