@@ -446,6 +446,7 @@ async function setupListeners() {
             t.term.write(chunks.join("")); // one write, not per-chunk
             markPaneActivity(id, t); // unseen badge when this pane is hidden
             trackOutputSilence(id, t); // flash when sustained output goes quiet
+            if (t.pendingReplay) armReplaySettle(id, t); // SSH: replay once the prompt settles
           } else if (exited) closeTerminal(id);
         } catch {}
       }));
@@ -1493,6 +1494,28 @@ function removeSftpOption(sftpId) {
 // ═══════════════════════════════════════════════
 
 // Create a new PTY-backed pane and return its ptyId
+// Best-effort local tracking of the command line the user is typing, for panes
+// without OSC 133 shell-integration (SSH to a plain server). Accumulates
+// printable keystrokes; applies backspace; and gives up on the current line the
+// moment an escape sequence (arrow keys / history / tab-complete) or a control
+// key (Ctrl-C/U/W) arrives — those edit the line in ways we can't mirror, so a
+// partial guess would be wrong. Only tracks while xterm is on the NORMAL buffer,
+// so typing inside a full-screen TUI never leaks in.
+function trackTypedInput(ti, data) {
+  if (!ti || !ti.term) return;
+  if (ti.term.buffer.active.type !== "normal") { ti.typedBuf = ""; return; }
+  let buf = ti.typedBuf || "";
+  for (let i = 0; i < data.length; i++) {
+    const ch = data[i];
+    if (ch === "\r" || ch === "\n") continue;         // submit — handled by caller
+    if (ch === "\x1b") { buf = ""; break; }           // escape seq (arrows/history) → bail
+    if (ch === "\x7f" || ch === "\b") { buf = buf.slice(0, -1); continue; } // backspace
+    if (ch.charCodeAt(0) < 0x20) { buf = ""; continue; }  // Ctrl-C/U/W… → reset line
+    buf += ch;
+  }
+  ti.typedBuf = buf;
+}
+
 async function createPane(parentEl, shell, args, cwd) {
   const paneEl = document.createElement("div");
   paneEl.className = "pane-leaf";
@@ -1677,14 +1700,22 @@ async function createPane(parentEl, shell, args, cwd) {
     const ti = terminals.get(id);
     if (ti) { ti.lastInputAt = performance.now(); ti.outStart = null; ti.notifiedQuiet = false; }
     // Remember the command being submitted so a restored session can offer to
-    // re-run it (e.g. relaunch `claude`/`codex`). Capture on Enter, only at a
-    // Mymux-integrated shell prompt — so keystrokes typed INTO a full-screen app
-    // (claude/vim, alt-screen) never overwrite the last real shell command.
-    if (ti && data.includes("\r") && commandReplayEnabled()) {
+    // re-run it (e.g. relaunch `claude`/`codex`). Two capture paths:
+    //   • Local shells with Mymux OSC 133 integration → getInputRegion (exact).
+    //   • SSH / shells without 133 (a plain remote server) → a locally-tracked
+    //     keystroke line buffer, so re-run works even without tmux on the remote.
+    // Both are gated to the NORMAL buffer, so keystrokes typed INTO a full-screen
+    // app (vim/htop/claude, alt-screen) never masquerade as a shell command.
+    if (ti && commandReplayEnabled()) {
       try {
-        const r = getInputRegion(ti);
-        const cmd = r && r.text ? r.text.trim() : "";
-        if (cmd) { ti.lastCmd = cmd; if (ti.session) ti.session.lastCmd = cmd; }
+        trackTypedInput(ti, data);
+        if (data.includes("\r") || data.includes("\n")) {
+          const r = getInputRegion(ti);
+          let cmd = r && r.text ? r.text.trim() : "";
+          if (!cmd && ti.term.buffer.active.type === "normal") cmd = (ti.typedBuf || "").trim();
+          if (cmd) { ti.lastCmd = cmd; if (ti.session) ti.session.lastCmd = cmd; }
+          ti.typedBuf = "";
+        }
       } catch {}
     }
     const result = handleTerminalInput(data, id);
@@ -3483,6 +3514,7 @@ async function doSshConnect(opts) {
       kind: "ssh", target, username, host, port,
       keyPath: keyPath || null, auth,
       tmux: !!opts.tmux, tmuxName: (opts.tmuxName || "").trim() || null,
+      lastCmd: opts.lastCmd || null, // carried through restore so re-run works over SSH
     };
     const ptyId = await createPane(rootContainer, "ssh", sshArgs);
     terminals.get(ptyId).sshTarget = target;
@@ -4061,6 +4093,9 @@ async function restoreSession() {
             password: null,
             keyPath: s.keyPath || null,
             auth: "key",
+            tmux: !!s.tmux,
+            tmuxName: s.tmuxName || null,
+            lastCmd: s.lastCmd || null,
           });
         } else {
           pwSessions.push(s); // password auth → prompt below
@@ -4109,8 +4144,19 @@ function scheduleReplay(id, cmd) {
   if (!t) return;
   t.pendingReplay = cmd;
   if (atIntegratedPrompt(t)) { firePendingReplay(id); return; }
+  // No shell-integration (SSH to a plain server): the remote prompt appears
+  // after a network round-trip, so a fixed delay is unreliable. armReplaySettle
+  // (called from the read loop) fires ~700ms after the prompt output settles;
+  // this hard cap guarantees it still runs if no output ever arrives.
   if (t._replayFallback) clearTimeout(t._replayFallback);
-  t._replayFallback = setTimeout(() => firePendingReplay(id), 2500);
+  t._replayFallback = setTimeout(() => firePendingReplay(id), 6000);
+}
+// Re-armed on each output burst for a pane awaiting replay: once output has been
+// quiet for a beat, the remote prompt is up → send the command.
+function armReplaySettle(id, t) {
+  if (!t.pendingReplay) return;
+  if (t._replaySettle) clearTimeout(t._replaySettle);
+  t._replaySettle = setTimeout(() => firePendingReplay(id), 700);
 }
 function firePendingReplay(id) {
   const t = terminals.get(id);
@@ -4118,6 +4164,7 @@ function firePendingReplay(id) {
   const cmd = t.pendingReplay;
   t.pendingReplay = null;
   if (t._replayFallback) { clearTimeout(t._replayFallback); t._replayFallback = null; }
+  if (t._replaySettle) { clearTimeout(t._replaySettle); t._replaySettle = null; }
   invoke("pty_write", { id, data: cmd + "\r" });
 }
 // Batch confirm modal: one list, checkboxes (default on), run selected.
@@ -4198,6 +4245,7 @@ function promptSshPasswordRestore(s) {
         auth: "password",
         tmux: !!s.tmux,
         tmuxName: s.tmuxName || null,
+        lastCmd: s.lastCmd || null,
       });
       resolve();
     }

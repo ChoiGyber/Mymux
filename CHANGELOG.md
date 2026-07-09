@@ -8,6 +8,34 @@ For installers, see the [GitHub Releases](https://github.com/ChoiGyber/Mymux/rel
 
 ---
 
+## v0.1.27 — 2026-07-09
+
+### Added / 새 기능
+- **Re-run last command over SSH without tmux / tmux 없는 SSH에서도 명령 재실행.**
+  Command re-run on session restore previously needed Mymux shell-integration
+  (OSC 133), which a plain remote server doesn't have. Mymux now also tracks the
+  typed command line locally, so an SSH pane's last command (e.g. `htop`,
+  `tail -f log`) can be re-run on reconnect even without tmux on the remote.
+  Full-screen apps (vim/htop/tmux) are ignored via alt-screen detection, and the
+  command fires once the remote prompt settles. Best-effort: line editing and
+  history navigation aren't tracked — tmux still restores state most fully.
+
+  세션 복원 시 명령 재실행이 기존엔 Mymux 셸 통합(OSC 133)에 의존해, 그것이 없는
+  일반 원격 서버에선 동작하지 않았습니다. 이제 입력한 명령줄을 로컬에서도 추적해,
+  원격에 tmux가 없어도 SSH 패인의 마지막 명령(`htop`, `tail -f log` 등)을 재접속
+  시 재실행합니다. 전체화면 앱(vim/htop/tmux)은 alt-screen 감지로 무시하고, 원격
+  프롬프트가 준비되면 실행합니다. best-effort(줄 편집·히스토리 추적은 제외) —
+  가장 완전한 상태 복원은 여전히 tmux입니다.
+
+### Fixed / 버그 수정
+- **SSH tmux setting now restored for key-auth too / key 인증 SSH의 tmux 설정 복원.**
+  Key/agent-auth SSH sessions now reattach their tmux session on restore, matching
+  password-auth behavior.
+
+  키·에이전트 인증 SSH 세션도 복원 시 tmux 세션에 다시 붙습니다(비밀번호 인증과 동일).
+
+---
+
 ## v0.1.26 — 2026-07-09
 
 ### Fixed / 버그 수정
