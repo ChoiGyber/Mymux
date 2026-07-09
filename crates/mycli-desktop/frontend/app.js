@@ -422,6 +422,11 @@ async function setupListeners() {
       e.preventDefault();
       toggleBroadcast();
     }
+    // Ctrl+PageUp / Ctrl+PageDown — switch between sessions/tabs
+    if (e.ctrlKey && !e.shiftKey && !e.altKey && (e.key === "PageUp" || e.key === "PageDown")) {
+      e.preventDefault();
+      switchToAdjacentTab(e.key === "PageDown" ? 1 : -1);
+    }
     // Alt+Arrow — navigate between panes
     if (e.altKey && !e.ctrlKey && !e.shiftKey) {
       const paneIds = getCurrentTabPanes();
@@ -2725,6 +2730,7 @@ const SHORTCUTS = [
     ["Ctrl+Tab", "Next pane / 다음 패인"],
     ["Ctrl+Shift+Tab", "Previous pane / 이전 패인"],
     ["Alt + ← ↑ ↓ →", "Move focus between panes / 패인 간 이동"],
+    ["Ctrl+PageUp / PageDown", "Switch sessions / tabs / 세션(탭) 전환"],
     ["Ctrl+Shift+Z", "Zoom / restore pane / 패인 최대화"],
     ["Ctrl + `", "Focus terminal / 터미널 포커스"],
   ]],
@@ -4457,6 +4463,14 @@ function addTab(tabIdx, label) {
   });
   tab.title = "Double-click to rename";
   terminalTabs.appendChild(tab);
+}
+
+function switchToAdjacentTab(dir) {
+  const tabEls = Array.from(terminalTabs.querySelectorAll(".tab"));
+  if (tabEls.length < 2) return;
+  const idx = tabEls.findIndex((el) => Number(el.dataset.id) === activeTabIdx);
+  const nextEl = tabEls[(idx + dir + tabEls.length) % tabEls.length];
+  if (nextEl) switchToTab(Number(nextEl.dataset.id));
 }
 
 function switchToTab(tabIdx) {
