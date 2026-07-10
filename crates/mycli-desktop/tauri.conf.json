@@ -33,7 +33,10 @@
       "icons/128x128.png",
       "icons/icon.ico",
       "icons/icon.png"
-    ]
+    ],
+    "macOS": {
+      "signingIdentity": "Apple Development: Gwonseung Choi (3N3MW99Q9A)"
+    }
   },
   "plugins": {
     "shell": {

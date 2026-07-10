@@ -1,6 +1,12 @@
 // Globals - set after init
 let invoke;
 
+// Platform: on macOS we lock to the system shell (zsh) and use Mac-native
+// monospace fonts; the Windows shell choices (Git Bash/PowerShell/CMD) are hidden.
+const IS_MAC =
+  /Mac/i.test(navigator.platform || "") ||
+  /Mac OS X|Macintosh/i.test(navigator.userAgent || "");
+
 // Monochrome inline-SVG icons (use currentColor → theme-aware: white in dark, black in light)
 const ICON = {
   globe: `<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M3 12h18"/><path d="M12 3c2.6 2.7 3.9 5.9 3.9 9s-1.3 6.3-3.9 9c-2.6-2.7-3.9-5.9-3.9-9S9.4 5.7 12 3z"/></svg>`,
@@ -325,10 +331,28 @@ async function setupListeners() {
 
   const shellSel = document.getElementById("default-shell");
   if (shellSel) {
-    try { shellSel.value = localStorage.getItem("mymux.defaultShell") || "powershell"; } catch {}
-    shellSel.addEventListener("change", () => {
-      try { localStorage.setItem("mymux.defaultShell", shellSel.value); } catch {}
-      toast("Default shell: " + shellSel.options[shellSel.selectedIndex].text + " (applies to new terminals)");
+    if (IS_MAC) {
+      // macOS uses the fixed system shell — hide the Windows shell picker.
+      shellSel.style.display = "none";
+    } else {
+      try { shellSel.value = localStorage.getItem("mymux.defaultShell") || "powershell"; } catch {}
+      shellSel.addEventListener("change", () => {
+        try { localStorage.setItem("mymux.defaultShell", shellSel.value); } catch {}
+        toast("Default shell: " + shellSel.options[shellSel.selectedIndex].text + " (applies to new terminals)");
+      });
+    }
+  }
+
+  // macOS: hide the Windows-only shell quick-buttons (PowerShell/CMD/Git Bash).
+  // Keep only "Default Shell", which routes to the system shell.
+  if (IS_MAC) {
+    document.querySelectorAll(".shell-btn").forEach((btn) => {
+      const ds = (btn.dataset.shell || "").toLowerCase();
+      if (ds === "powershell.exe" || ds === "cmd.exe" || ds === "bash") {
+        btn.style.display = "none";
+      } else if (ds === "") {
+        btn.textContent = "Terminal (zsh)";
+      }
     });
   }
   btnAdd.addEventListener("click", () => openModal());
@@ -2061,6 +2085,12 @@ let cancelFocusReturnRetries = () => {};
 function startFocusKeeper() {
   if (focusKeeperStarted) return;
   focusKeeperStarted = true;
+  // macOS WKWebView fires proper focus events and drives IME composition in the
+  // xterm helper textarea normally. The focus-restore loop below is a Windows/
+  // WebView2 workaround that blurs+refocuses that textarea every 250ms — on a
+  // Mac that cancels Hangul/CJK composition mid-syllable (jamo commit one by
+  // one). Skip the whole keeper on macOS.
+  if (IS_MAC) return;
   // Restore terminal focus to the visible tab's active pane. The WebView drops
   // the terminal's focus while backgrounded (idle, or when a background app like
   // WIZVERA Veraport briefly steals OS focus), and on Alt-Tab return it fires no
@@ -2901,6 +2931,9 @@ function closeShortcutsHelp() {
 // backend. Unset preference defaults to PowerShell ("powershell" → pwsh, or
 // built-in powershell.exe when pwsh is absent); "bash" → undefined → Git Bash.
 function getDefaultShellId() {
+  // macOS: always use the system login shell (zsh); the Windows shell prefs
+  // (PowerShell/CMD/Git Bash) don't exist here. undefined → Rust new_default_prog.
+  if (IS_MAC) return undefined;
   let pref = "powershell";
   try { pref = localStorage.getItem("mymux.defaultShell") || "powershell"; } catch {}
   if (pref === "powershell") return "powershell";
@@ -4555,7 +4588,12 @@ function createXterm() {
     // Ctrl +/- zoom. Default ≈0.1 (~20% of a monospace cell) because Korean/CJK
     // glyphs look cramped at 0; adjustable from the toolbar (자−/자+).
     letterSpacing: terminalFontSize * letterSpacingRatio,
-    fontFamily: '"D2Coding", "Cascadia Code", "Consolas", "Noto Sans KR", monospace',
+    // macOS: prefer the native terminal monospace (SF Mono/Menlo) so spacing
+    // matches the system Terminal. D2Coding's wider glyphs made the letters
+    // look too spaced out on Mac. Windows keeps its original chain.
+    fontFamily: IS_MAC
+      ? '"SF Mono", "SFMono-Regular", "Menlo", "Monaco", "D2Coding", monospace'
+      : '"D2Coding", "Cascadia Code", "Consolas", "Noto Sans KR", monospace',
     fontWeight: 300,
     fontWeightBold: 500,
     theme: terminalTheme(),

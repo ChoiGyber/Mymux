@@ -111,19 +111,34 @@ pub fn explorer_list_local(path: String) -> Result<Vec<FileEntry>, String> {
     let mut result: Vec<FileEntry> = Vec::new();
 
     for entry in entries.flatten() {
-        let metadata = match entry.metadata() {
-            Ok(m) => m,
+        // Use the entry's file_type (readdir d_type) instead of a full stat.
+        // On macOS, stat-ing the protected folders that live in the home dir
+        // (Desktop / Documents / Downloads / Pictures / Music) triggers a TCC
+        // privacy prompt for each one; with an ad-hoc code signature TCC cannot
+        // persist the grant, so simply listing ~ spawns an endless run of
+        // prompts. file_type avoids the stat for directories; size (needed only
+        // for files) is fetched lazily and skipped for dirs/symlinks so we never
+        // stat a protected directory just to list its parent.
+        let file_type = match entry.file_type() {
+            Ok(ft) => ft,
             Err(_) => continue,
         };
+        let is_dir = file_type.is_dir();
+        let is_symlink = file_type.is_symlink();
         let name = entry.file_name().to_string_lossy().to_string();
         let full_path = entry.path().to_string_lossy().to_string();
+        let size = if is_dir || is_symlink {
+            0
+        } else {
+            entry.metadata().map(|m| m.len()).unwrap_or(0)
+        };
 
         result.push(FileEntry {
             name,
             path: full_path,
-            is_dir: metadata.is_dir(),
-            size: metadata.len(),
-            is_symlink: metadata.is_symlink(),
+            is_dir,
+            size,
+            is_symlink,
         });
     }
 
