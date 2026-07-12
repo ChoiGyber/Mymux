@@ -1669,7 +1669,10 @@ async function createPane(parentEl, shell, args, cwd) {
   const sessionLabel = shell === "ssh"
     ? "SSH"
     : (cwd ? baseName(cwd) : (shell || "Terminal"));
-  terminals.set(id, { term, fitAddon, search: searchAddon, paneEl, type: shell === "ssh" ? "ssh" : "local", shell: shell || null, label: sessionLabel, cwd: cwd || null, unseen: false, marks: [], inputMark: null });
+  // lastInputAt baseline = pane birth, so the long-task check (10+ min since
+  // last input) has a sane anchor even in a pane the user never typed in
+  // (e.g. a restored session auto-replaying its command).
+  terminals.set(id, { term, fitAddon, search: searchAddon, paneEl, type: shell === "ssh" ? "ssh" : "local", shell: shell || null, label: sessionLabel, cwd: cwd || null, unseen: false, marks: [], inputMark: null, lastInputAt: performance.now() });
 
   // A brand-new pane's final size isn't settled at spawn (flex sizing, font
   // load, a split ratio applied just after). The container-level observer only
@@ -2272,9 +2275,13 @@ function flashPaneNotify(id) {
     el._notifyTimeout = setTimeout(() => el.classList.remove("notify-flash"), 10200);
   };
   const t = terminals.get(id);
+  // 10+ minutes since the user's last input → the buddy trades its plain cheer
+  // for a dialect-flavored "작업 다 끝났어, 다음 작업 하자!" line. lastInputAt is
+  // stamped by armNotifyCycle (real input) and at pane creation as a baseline.
+  const longTask = t && performance.now() - (t.lastInputAt || 0) >= BUDDY_LONG_TASK_MS;
   if (notifyFlashPrefs.pane && t) pulse(t.paneEl);
   if (notifyFlashPrefs.list) pulse(document.querySelector(`.session-item[data-pty-id="${id}"]`));
-  if (notifyFlashPrefs.character && notifyFlashPrefs.character !== "none" && t) showFoxAt(t.paneEl, id);
+  if (notifyFlashPrefs.character && notifyFlashPrefs.character !== "none" && t) showFoxAt(t.paneEl, id, longTask);
   // The pulse is invisible when the pane is off-screen or the whole window is
   // in the background — leave a persistent "unseen" badge for the former and
   // flash the taskbar icon (no focus steal) for the latter.
@@ -2322,10 +2329,21 @@ const BUDDY_PHRASES = {
   gangwon:     ["잘했드래요!", "욕봤드래요~", "참 잘했잖소!", "대단하드래!", "고생 많았드래요!", "멋지드래요!", "잘하잖소~"],
   chungcheong: ["잘혔슈~", "욕봤슈~", "잘했구먼유~", "대단허유~", "수고혔슈~", "멋지구먼유~", "그려유, 잘혔슈~"],
 };
+// A task that ran 10+ minutes since the user's last input deserves more than a
+// plain cheer: the buddy says "all done — on to the next task!" instead, in the
+// same dialect the user picked for encouragement lines.
+const BUDDY_LONG_TASK_MS = 10 * 60 * 1000;
+const BUDDY_LONG_PHRASES = {
+  standard:    ["작업 다 끝났어요! 다음 작업 하러 가요! 🚀", "긴 작업 끝~ 이제 다음 거 해볼까요?", "다 끝났어요! 다음 작업 시작해요!"],
+  gyeongsang:  ["작업 다 끝났다 아이가! 다음 꺼 하러 가자!", "인자 다 됐데이~ 다음 작업 해뿌자!", "끝났다 마! 다음 거 하러 가재이!"],
+  jeolla:      ["작업 다 끝났어야! 다음 것 하러 가잔께!", "인자 다 됐구마잉~ 다음 작업 해불자잉!", "다 끝났응께 다음 거 하러 가야제~"],
+  gangwon:     ["작업 다 끝났드래요! 다음 거 하러 가요~", "다 됐잖소! 다음 작업 해봅시다!", "인제 끝났드래~ 다음 거 하드래요!"],
+  chungcheong: ["작업 다 끝났슈~ 다음 거 하러 가유~", "인저 다 됐구먼유~ 다음 작업 해유~", "다 끝났으니께 다음 거 해봐유~"],
+};
 // Show the encouragement bubble above (or below) the buddy, clamped to the
 // viewport so it's never clipped off an edge. `left/top/FW/FH` are the buddy's
 // target fixed-position rect.
-function showFoxBubble(fox, left, top, FW, FH) {
+function showFoxBubble(fox, left, top, FW, FH, longTask) {
   const bubble = fox.querySelector(".fox-bubble");
   if (!bubble) return;
   if (!notifyFlashPrefs.bubble) { fox.classList.remove("bubble-on", "bubble-below"); return; }
@@ -2335,7 +2353,7 @@ function showFoxBubble(fox, left, top, FW, FH) {
     try { localStorage.setItem(FOX_INTRO_KEY, "1"); } catch {}
   } else {
     const dialect = BUDDY_PHRASES[notifyFlashPrefs.dialect] ? notifyFlashPrefs.dialect : "standard";
-    const list = BUDDY_PHRASES[dialect];
+    const list = longTask ? BUDDY_LONG_PHRASES[dialect] : BUDDY_PHRASES[dialect];
     // Vary by pane id + timer handle so repeats differ without Math.random.
     const idx = (Math.abs(Number(fox._paneId) || 0) + (bubble._spin = (bubble._spin || 0) + 1)) % list.length;
     bubble.textContent = list[idx];
@@ -2358,7 +2376,7 @@ function showFoxBubble(fox, left, top, FW, FH) {
   if (top - 9 - bh < M) fox.classList.add("bubble-below"); // no room above → drop below
 }
 
-function showFoxAt(paneEl, paneId) {
+function showFoxAt(paneEl, paneId, longTask) {
   const fox = document.getElementById("fox-buddy");
   if (!fox || !paneEl) return;
   // Cancel any in-flight fade-out so a re-appearance shows a solid fox.
@@ -2403,7 +2421,7 @@ function showFoxAt(paneEl, paneId) {
     fox.style.top = top + "px";
     fox.classList.remove("fox-pop"); void fox.offsetWidth; fox.classList.add("fox-pop");
   }
-  showFoxBubble(fox, left, top, FW, FH); // encouragement bubble (clamped to viewport)
+  showFoxBubble(fox, left, top, FW, FH, longTask); // encouragement bubble (clamped to viewport)
   if (foxHideTimer) clearTimeout(foxHideTimer);
   foxHideTimer = setTimeout(hideFox, 10200); // matches the border-pulse lifetime
 }
