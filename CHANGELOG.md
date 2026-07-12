@@ -8,6 +8,29 @@ For installers, see the [GitHub Releases](https://github.com/ChoiGyber/Mymux/rel
 
 ---
 
+## v0.1.30 — 2026-07-12
+
+### Fixed / 버그 수정
+- **Idle sessions no longer re-notify — the task-done flash fires once until you act / 유휴 세션 알림 반복 완전 수정.**
+  A pane sitting completely idle could keep flashing its task-done notification
+  over and over. v0.1.26 already limited the flash to once per interaction, but
+  the "you interacted" signal wrongly included data the terminal generates by
+  itself — focus reports (some TUIs such as Claude Code enable them), color and
+  status query replies, and mouse hover/scroll reports — so every window-focus
+  change kept re-arming the notification. Re-arming now requires real input:
+  typing, pasting, clicking inside the running app, or launching a command from
+  the UI (cd buttons, command combos).
+
+  아무 작업도 하지 않는 유휴 세션에서 완료 알림이 계속 반복해서 울리던 문제를
+  고쳤습니다. v0.1.26에서 알림을 "상호작용당 1회"로 제한했지만, "사용자가
+  입력했다"는 판정에 터미널이 스스로 만들어내는 데이터(일부 TUI가 켜는 포커스
+  리포트, 색상·상태 질의 응답, 마우스 호버/스크롤 리포트)까지 포함돼 있어 창
+  포커스가 바뀔 때마다 알림이 다시 장전되던 것이 원인입니다. 이제 실제
+  입력(타이핑, 붙여넣기, 실행 중인 앱 안에서의 클릭, cd 버튼·명령 콤보 등 UI로
+  명령 실행)만 알림을 다시 장전합니다.
+
+---
+
 ## v0.1.29 — 2026-07-10
 
 ### Added / 새 기능
