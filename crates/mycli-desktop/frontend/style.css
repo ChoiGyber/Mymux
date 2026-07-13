@@ -1434,6 +1434,34 @@ html[data-theme="light"] #toolbar-actions #btn-update:hover {
   border-color: var(--accent);
 }
 
+/* Session usage (ctx) badge — pinned top-right inside the pane. Shows
+   "model | effort | NN%" parsed from the Claude Code statusline; text color
+   ramps green → 다홍 → red with usage (set inline by updateCtxUi).
+   pointer-events off so it never steals clicks/selection from the terminal. */
+.pane-ctx {
+  position: absolute;
+  top: 4px;
+  right: 10px;
+  z-index: 5;
+  max-width: 60%;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-size: 10px;
+  line-height: 16px;
+  padding: 0 8px;
+  border-radius: 9px;
+  border: 1px solid;
+  background: var(--surface);
+  opacity: 0.92;
+  pointer-events: none;
+  user-select: none;
+  letter-spacing: 0.2px;
+  transition: color 0.6s, border-color 0.6s, opacity 0.4s;
+}
+.pane-ctx:empty { display: none; }
+.pane-ctx.stale { opacity: 0.38; }
+
 /* Task-completion notification: pulse the pane/session border (terminal bell). */
 @keyframes notifyPulse {
   0%   { box-shadow: inset 0 0 0 2px var(--notify-color, #e34234); }
@@ -1855,6 +1883,19 @@ html[data-theme="light"] #toolbar-actions #btn-update:hover {
   color: var(--text-dim);
   flex-shrink: 0;
 }
+/* ctx usage pill next to the session name (full "model | effort | %" in the
+   tooltip). Color is set inline per usage; dims when the statusline goes stale. */
+.session-ctx {
+  flex-shrink: 0;
+  font-size: 10px;
+  line-height: 14px;
+  padding: 0 5px;
+  border-radius: 8px;
+  border: 1px solid;
+  opacity: 0.95;
+  transition: color 0.6s, border-color 0.6s, opacity 0.4s;
+}
+.session-ctx.stale { opacity: 0.4; }
 .session-empty {
   padding: 16px 10px;
   text-align: center;

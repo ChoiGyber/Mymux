@@ -185,6 +185,10 @@ window.addEventListener("DOMContentLoaded", async () => {
   try { await document.fonts.load('1em "D2Coding"'); } catch {}
   document.fonts.ready.then(() => remeasureFontCells());
 
+  // Before the (possibly modal-gated) session restore below so the effort
+  // poller starts even while the re-run dialog waits for the user.
+  initCtxUsage();
+
   // Restore the previous session if one was saved; otherwise open a default terminal.
   try {
     const restored = await restoreSession();
@@ -229,6 +233,8 @@ async function setupListeners() {
   const notifyCharRadios = document.querySelectorAll('input[name="notify-char"]');
   const notifyChkBubble = document.getElementById("notify-chk-bubble");
   const notifyDialect = document.getElementById("notify-dialect");
+  const notifyChkCtxBadge = document.getElementById("notify-chk-ctxbadge");
+  const notifyChkCtxVoice = document.getElementById("notify-chk-ctxvoice");
   initFoxDrag();
   if (btnNotifySettings && notifyModal) {
     const closeNotifyModal = () => {
@@ -242,6 +248,8 @@ async function setupListeners() {
       notifyCharRadios.forEach((r) => { r.checked = r.value === notifyFlashPrefs.character; });
       if (notifyChkBubble) notifyChkBubble.checked = notifyFlashPrefs.bubble;
       if (notifyDialect) notifyDialect.value = notifyFlashPrefs.dialect;
+      if (notifyChkCtxBadge) notifyChkCtxBadge.checked = notifyFlashPrefs.ctxBadge;
+      if (notifyChkCtxVoice) notifyChkCtxVoice.checked = notifyFlashPrefs.ctxVoice;
       // The native browser overlay floats above all HTML; hide it so the modal shows.
       if (browserTabActive && browserMode === "native") invoke("browser_pane_hide").catch(() => {});
       notifyModal.classList.remove("hidden");
@@ -268,6 +276,16 @@ async function setupListeners() {
     });
     if (notifyDialect) notifyDialect.addEventListener("change", () => {
       notifyFlashPrefs.dialect = notifyDialect.value;
+      saveNotifyFlashPrefs();
+    });
+    if (notifyChkCtxBadge) notifyChkCtxBadge.addEventListener("change", () => {
+      notifyFlashPrefs.ctxBadge = notifyChkCtxBadge.checked;
+      saveNotifyFlashPrefs();
+      // Apply immediately: hide (or re-show) every existing badge.
+      for (const [pid, tt] of terminals) if (tt.ctxPct != null) updateCtxUi(pid, tt);
+    });
+    if (notifyChkCtxVoice) notifyChkCtxVoice.addEventListener("change", () => {
+      notifyFlashPrefs.ctxVoice = notifyChkCtxVoice.checked;
       saveNotifyFlashPrefs();
     });
   }
@@ -506,9 +524,11 @@ async function setupListeners() {
         try {
           const [chunks, exited] = await invoke("pty_read", { id });
           if (chunks.length) {
-            t.term.write(chunks.join("")); // one write, not per-chunk
+            const data = chunks.join("");
+            t.term.write(data); // one write, not per-chunk
             markPaneActivity(id, t); // unseen badge when this pane is hidden
             trackOutputSilence(id, t); // flash when sustained output goes quiet
+            scanCtxUsage(id, t, data); // Claude Code statusline → ctx/model badge
             if (t.pendingReplay) armReplaySettle(id, t); // SSH: replay once the prompt settles
           } else if (exited) closeTerminal(id);
         } catch {}
@@ -1651,6 +1671,11 @@ async function createPane(parentEl, shell, args, cwd) {
   paneEl.style.flexDirection = "column";
   paneEl.appendChild(termWrap);
   paneEl.appendChild(statusBar);
+  // Top-right usage badge (model | effort | ctx%) — filled by scanCtxUsage when
+  // a Claude Code statusline shows up in this pane; hidden while empty (CSS).
+  const ctxBadgeEl = document.createElement("div");
+  ctxBadgeEl.className = "pane-ctx";
+  paneEl.appendChild(ctxBadgeEl);
   parentEl.appendChild(paneEl);
 
   const term = createXterm();
@@ -2272,7 +2297,7 @@ function trackOutputSilence(id, t) {
 // session-list row. Both off = no visual flash (unseen badge / taskbar
 // attention still apply).
 const notifyFlashPrefs = (() => {
-  const base = { pane: true, list: true, fox: true, character: null, bubble: true, dialect: "chungcheong" };
+  const base = { pane: true, list: true, fox: true, character: null, bubble: true, dialect: "chungcheong", ctxBadge: true, ctxVoice: true };
   let p;
   try { p = { ...base, ...JSON.parse(localStorage.getItem("notifyFlashPrefs") || "{}") }; }
   catch { p = { ...base }; }
@@ -2373,11 +2398,15 @@ const BUDDY_LONG_PHRASES = {
 // Show the encouragement bubble above (or below) the buddy, clamped to the
 // viewport so it's never clipped off an edge. `left/top/FW/FH` are the buddy's
 // target fixed-position rect.
-function showFoxBubble(fox, left, top, FW, FH, longTask) {
+function showFoxBubble(fox, left, top, FW, FH, longTask, overrideText) {
   const bubble = fox.querySelector(".fox-bubble");
   if (!bubble) return;
-  if (!notifyFlashPrefs.bubble) { fox.classList.remove("bubble-on", "bubble-below"); return; }
-  if (foxIntroPending) {
+  // overrideText (ctx usage announcements) IS the message — it shows even when
+  // the encouragement bubble is toggled off; it has its own 🔔 toggle instead.
+  if (!notifyFlashPrefs.bubble && !overrideText) { fox.classList.remove("bubble-on", "bubble-below"); return; }
+  if (overrideText) {
+    bubble.textContent = overrideText;
+  } else if (foxIntroPending) {
     bubble.textContent = FOX_INTRO_MESSAGE;
     foxIntroPending = false;
     try { localStorage.setItem(FOX_INTRO_KEY, "1"); } catch {}
@@ -2406,7 +2435,7 @@ function showFoxBubble(fox, left, top, FW, FH, longTask) {
   if (top - 9 - bh < M) fox.classList.add("bubble-below"); // no room above → drop below
 }
 
-function showFoxAt(paneEl, paneId, longTask) {
+function showFoxAt(paneEl, paneId, longTask, overrideText) {
   const fox = document.getElementById("fox-buddy");
   if (!fox || !paneEl) return;
   // Cancel any in-flight fade-out so a re-appearance shows a solid fox.
@@ -2451,7 +2480,7 @@ function showFoxAt(paneEl, paneId, longTask) {
     fox.style.top = top + "px";
     fox.classList.remove("fox-pop"); void fox.offsetWidth; fox.classList.add("fox-pop");
   }
-  showFoxBubble(fox, left, top, FW, FH, longTask); // encouragement bubble (clamped to viewport)
+  showFoxBubble(fox, left, top, FW, FH, longTask, overrideText); // encouragement bubble (clamped to viewport)
   if (foxHideTimer) clearTimeout(foxHideTimer);
   foxHideTimer = setTimeout(hideFox, 10200); // matches the border-pulse lifetime
 }
@@ -2496,6 +2525,143 @@ function initFoxDrag() {
     document.addEventListener("mousemove", onMove);
     document.addEventListener("mouseup", onUp);
   });
+}
+
+// ── Session usage (ctx) badge ────────────────────────────────────────────────
+// Claude Code(+OMC HUD statusline)가 패인에 그리는 `ctx:[██░░]NN%` / `Model: X`
+// 텍스트를 PTY 출력에서 파싱해, 세션 목록과 패인 우상단에 "model | effort | NN%"
+// 배지로 고정 표시한다. effort는 statusline에 없어 ~/.claude/settings.json의
+// effortLevel을 주기적으로 읽는다(전역값 — /model로 바꾸면 그 파일에 저장됨).
+// The bar body never contains "]" and the percent sits right after optional
+// ANSI color codes, so one regex covers both `ctx:67%` and `ctx:[██░░]67%`.
+const CTX_RE = /ctx:(?:\[[^\]]*\])?(?:\x1b\[[0-9;]*m)*(\d{1,3})%/;
+// `Model: Fable 5` is wrapped in cyan — capture stops at the trailing ESC.
+const CTX_MODEL_RE = /Model:\s*(?:\x1b\[[0-9;]*m)*([^\x1b\r\n]{1,24})/;
+const CTX_STALE_MS = 5 * 60 * 1000; // no statusline redraw for 5 min → dim badge
+const CTX_LEVELS = [50, 70, 85];    // buddy announces when first crossing these
+const CTX_REARM_DROP = 10;          // re-arm once usage falls 10%p under a level
+// Per-dialect announcement lines, indexed by level (50% / 70% / 85%).
+const CTX_PHRASES = {
+  standard:    ["컨텍스트를 반쯤 썼어요! (50%)", "컨텍스트 70%를 넘었어요~ 슬슬 정리를 생각해봐요!", "컨텍스트가 거의 다 찼어요(85%)! /compact 어때요?"],
+  gyeongsang:  ["컨텍스트 반이나 썼다 아이가! (50%)", "70% 넘었데이~ 슬슬 정리해라 마!", "거의 다 찼다 아이가(85%)! /compact 해뿌라!"],
+  jeolla:      ["컨텍스트 반이나 썼어야~ (50%)", "70% 넘었구마잉~ 슬슬 정리허소!", "거의 다 찼당께(85%)! /compact 해불드라고잉!"],
+  gangwon:     ["컨텍스트 반이나 썼드래요~ (50%)", "70% 넘었잖소~ 슬슬 정리하드래요!", "거의 다 찼드래요(85%)! /compact 해봅시다!"],
+  chungcheong: ["컨텍스트 반이나 썼슈~ (50%)", "70% 넘었구먼유~ 슬슬 정리해유~", "거의 다 찼슈(85%)! /compact 해야 혀유~"],
+};
+let claudeEffort = null; // e.g. "xhigh" — from ~/.claude/settings.json
+
+// Scan one pump-tick's worth of PTY output for the statusline patterns. Keeps a
+// short tail so a pattern split across ticks still matches on the next one.
+function scanCtxUsage(id, t, data) {
+  const text = (t._ctxTail || "") + data;
+  t._ctxTail = text.slice(-160);
+  let changed = false;
+  // Only the LAST occurrence matters — the statusline redraws constantly and
+  // older matches in the same burst are already outdated.
+  const ci = text.lastIndexOf("ctx:");
+  if (ci >= 0) {
+    const m = CTX_RE.exec(text.slice(ci, ci + 90));
+    if (m) {
+      const pct = Math.min(100, parseInt(m[1], 10));
+      t.ctxAt = performance.now(); // fresh sighting even when the value is equal
+      if (pct !== t.ctxPct) { t.ctxPct = pct; changed = true; }
+      maybeAnnounceCtx(id, t);
+    }
+  }
+  const mi = text.lastIndexOf("Model:");
+  if (mi >= 0) {
+    const m = CTX_MODEL_RE.exec(text.slice(mi, mi + 60));
+    if (m) {
+      const name = m[1].trim();
+      if (name && name !== t.ctxModel) { t.ctxModel = name; changed = true; }
+    }
+  }
+  if (changed) updateCtxUi(id, t);
+}
+
+// 초록(0%) → 다홍(~85%) → 빨강(100%) continuous hue ramp.
+function ctxColor(pct) {
+  const hue = Math.max(0, 130 - (pct / 100) * 145);
+  return `hsl(${Math.round(hue)}, 85%, 55%)`;
+}
+function ctxBadgeText(t) {
+  const parts = [];
+  if (t.ctxModel) parts.push(t.ctxModel);
+  if (claudeEffort) parts.push(claudeEffort);
+  parts.push(t.ctxPct + "%");
+  return parts.join(" | ");
+}
+
+// Refresh both badges (pane overlay + session-list pill) for one session.
+function updateCtxUi(id, t) {
+  if (t.ctxPct == null) return;
+  const show = notifyFlashPrefs.ctxBadge;
+  const color = ctxColor(t.ctxPct);
+  const stale = performance.now() - (t.ctxAt || 0) > CTX_STALE_MS;
+  const pe = t.paneEl && t.paneEl.querySelector(".pane-ctx");
+  if (pe) {
+    pe.textContent = show ? ctxBadgeText(t) : "";
+    pe.style.color = color;
+    pe.style.borderColor = color;
+    pe.classList.toggle("stale", stale);
+  }
+  const li = document.querySelector(`.session-item[data-pty-id="${id}"]`);
+  if (li) {
+    let se = li.querySelector(".session-ctx");
+    if (!show) { if (se) se.remove(); return; }
+    if (!se) {
+      se = document.createElement("span");
+      se.className = "session-ctx";
+      const nameEl = li.querySelector(".session-name");
+      if (nameEl) nameEl.after(se); else li.appendChild(se);
+    }
+    se.textContent = t.ctxPct + "%";
+    se.title = ctxBadgeText(t); // full "model | effort | ctx" on hover
+    se.style.color = color;
+    se.style.borderColor = color;
+    se.classList.toggle("stale", stale);
+  }
+}
+
+// Buddy speaks when usage first crosses 50/70/85% — once per crossing. A real
+// drop (compact/clear) re-arms the level so the next climb announces again.
+function maybeAnnounceCtx(id, t) {
+  const pct = t.ctxPct;
+  const lvl = CTX_LEVELS.reduce((n, th) => n + (pct >= th ? 1 : 0), 0);
+  const cur = t.ctxLvl || 0;
+  if (lvl > cur) {
+    t.ctxLvl = lvl;
+    if (notifyFlashPrefs.ctxVoice && notifyFlashPrefs.character && notifyFlashPrefs.character !== "none") {
+      const dialect = CTX_PHRASES[notifyFlashPrefs.dialect] ? notifyFlashPrefs.dialect : "standard";
+      showFoxAt(t.paneEl, id, false, CTX_PHRASES[dialect][lvl - 1]);
+    }
+  } else if (lvl < cur && pct <= CTX_LEVELS[cur - 1] - CTX_REARM_DROP) {
+    t.ctxLvl = lvl;
+  }
+}
+
+// effort(예: xhigh)는 statusline에 안 나오므로 설정 파일에서 읽는다. /model로
+// 바꾸면 settings.json이 갱신되니 1분 폴링이면 충분히 따라간다.
+async function loadClaudeEffort() {
+  try {
+    const home = await invoke("explorer_home_dir");
+    const txt = await invoke("read_text_file", { path: home + "/.claude/settings.json" });
+    const next = JSON.parse(txt).effortLevel || null;
+    if (next !== claudeEffort) {
+      claudeEffort = next;
+      for (const [pid, tt] of terminals) if (tt.ctxPct != null) updateCtxUi(pid, tt);
+    }
+  } catch { /* no Claude settings — badge simply omits effort */ }
+}
+
+function initCtxUsage() {
+  loadClaudeEffort();
+  setInterval(loadClaudeEffort, 60_000);
+  // Staleness sweep: dim badges whose statusline stopped redrawing (Claude
+  // Code exited or the pane went back to a plain shell).
+  setInterval(() => {
+    for (const [pid, tt] of terminals) if (tt.ctxPct != null) updateCtxUi(pid, tt);
+  }, 30_000);
 }
 document.addEventListener("mouseover", (e) => {
   const el = e.target.closest?.(".notify-flash");
@@ -4961,6 +5127,9 @@ function refreshSessionList() {
       sessionListEl.appendChild(li);
     });
   }
+
+  // Rebuilding dropped the ctx pills — re-attach them for sessions that have one.
+  for (const [pid, tt] of terminals) if (tt.ctxPct != null) updateCtxUi(pid, tt);
 }
 
 // Lightweight: just move the active highlight without rebuilding.
