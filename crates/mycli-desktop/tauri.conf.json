@@ -1,7 +1,7 @@
 {
   "$schema": "https://raw.githubusercontent.com/nicedayzhu/tauri-schema/refs/heads/v2/tauri.schema.json",
   "productName": "Mymux",
-  "version": "0.1.30",
+  "version": "0.1.31",
   "mainBinaryName": "Mymux",
   "identifier": "com.mycli.desktop",
   "build": {

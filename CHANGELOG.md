@@ -8,6 +8,47 @@ For installers, see the [GitHub Releases](https://github.com/ChoiGyber/Mymux/rel
 
 ---
 
+## v0.1.31 — 2026-07-13
+
+### Added / 새 기능
+- **Per-session context usage badge (Claude Code & Codex) with mascot callouts / 세션별 컨텍스트 사용량(ctx) 배지 + 마스코트 안내.**
+  Every pane running Claude Code (or Codex CLI) now shows a pinned badge in its
+  top-right corner — `model | effort | 67%` — plus a small percentage pill next
+  to the session name in the session list (hover for the full text). The value
+  is read straight from the tool's own statusline, so it works for local and
+  SSH sessions alike; Codex's "context left" is converted to used%. The badge
+  color slides continuously from green through scarlet to red as usage grows,
+  and dims when the reading goes stale. On first crossing 50%/70%/85% the buddy
+  mascot pops up and says so in your chosen dialect (e.g. "70% 넘었구먼유~ 슬슬
+  정리해유~"); compacting re-arms the callout. Two new 🔔 toggles control the
+  badge and the callouts (both default on).
+
+  Claude Code(또는 Codex CLI)가 실행 중인 모든 패인 우상단에 `모델 | effort | 67%`
+  형태의 고정 배지가, 세션 목록의 이름 옆에는 % 알약 배지가 표시됩니다(마우스를
+  올리면 전체 내용). 값은 도구가 직접 그리는 상태줄에서 읽어오므로 로컬·SSH
+  세션 모두 동작하고, Codex의 "context left"(잔량)는 사용량으로 변환해 보여줍니다.
+  배지 색은 사용량에 따라 초록→다홍→빨강으로 서서히 변하고, 갱신이 끊기면
+  흐려집니다. 사용량이 50%/70%/85%를 처음 넘는 순간 마스코트가 나타나 선택한
+  사투리로 알려주며(예: "70% 넘었구먼유~ 슬슬 정리해유~"), /compact로 내려가면
+  다시 알려줄 수 있게 재장전됩니다. 🔔 설정에 배지·알림 토글 2개가 추가됐습니다
+  (기본 켬).
+
+- **Account-wide Claude/Codex usage in the toolbar / 상단 툴바에 계정 전체 사용량 표시.**
+  The title bar now shows your overall subscription usage at a glance:
+  `CL 5h:34% wk:12% │ CX 30d:5%`. Claude's 5-hour/weekly rate-limit percentages
+  are read from any pane's statusline; Codex usage is mined from its newest
+  session log on disk, so it stays current even for Codex sessions running
+  outside Mymux. Values use the same green→scarlet→red ramp, and the tooltip
+  shows time-until-reset and your Codex plan.
+
+  상단 타이틀 옆에 구독 전체 사용량이 `CL 5h:34% wk:12% │ CX 30d:5%` 형태로
+  표시됩니다. Claude의 5시간/주간 한도 사용률은 아무 패인의 상태줄에서 읽고,
+  Codex 사용량은 디스크의 최신 세션 기록에서 가져오므로 Mymux 밖에서 실행한
+  Codex 세션도 반영됩니다. 색상은 동일한 초록→다홍→빨강 그라데이션이고,
+  툴팁에서 리셋까지 남은 시간과 Codex 플랜을 확인할 수 있습니다.
+
+---
+
 ## v0.1.30 — 2026-07-12
 
 ### Fixed / 버그 수정
