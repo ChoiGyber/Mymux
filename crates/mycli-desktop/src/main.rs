@@ -31,6 +31,7 @@ fn main() {
             commands::set_favorite,
             commands::read_text_file,
             commands::write_text_file,
+            commands::codex_rollout_tail,
             commands::open_external,
             commands::window_attention,
             commands::pick_key_file,

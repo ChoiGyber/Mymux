@@ -167,6 +167,63 @@ pub fn write_text_file(path: String, content: String) -> Result<(), String> {
     std::fs::write(&path, content).map_err(|e| e.to_string())
 }
 
+/// Tail of the newest Codex CLI session rollout (~/.codex/sessions/Y/M/D/*.jsonl).
+/// The frontend mines it for the last `rate_limits` snapshot so the toolbar can
+/// show account-wide Codex usage. Rollouts easily exceed the read_text_file cap,
+/// hence a dedicated tail reader. Directory names are zero-padded dates, so the
+/// lexicographically largest entry is the newest — only the newest day dir that
+/// actually contains a rollout is scanned (by mtime) instead of walking them all.
+#[tauri::command]
+pub fn codex_rollout_tail(max_bytes: Option<u64>) -> Result<String, String> {
+    use std::io::{Read, Seek, SeekFrom};
+    let max_bytes = max_bytes.unwrap_or(65536).min(1_000_000);
+    let sessions = dirs::home_dir()
+        .ok_or("Home directory not found")?
+        .join(".codex")
+        .join("sessions");
+
+    fn sorted_dirs_desc(dir: &std::path::Path) -> Vec<std::path::PathBuf> {
+        let mut v: Vec<_> = std::fs::read_dir(dir)
+            .map(|rd| rd.flatten().map(|e| e.path()).filter(|p| p.is_dir()).collect())
+            .unwrap_or_default();
+        v.sort();
+        v.reverse();
+        v
+    }
+
+    let mut newest: Option<(std::time::SystemTime, std::path::PathBuf)> = None;
+    'search: for year in sorted_dirs_desc(&sessions) {
+        for month in sorted_dirs_desc(&year) {
+            for day in sorted_dirs_desc(&month) {
+                if let Ok(rd) = std::fs::read_dir(&day) {
+                    for e in rd.flatten() {
+                        let p = e.path();
+                        if p.extension().is_some_and(|x| x == "jsonl") {
+                            if let Ok(m) = e.metadata().and_then(|m| m.modified()) {
+                                if newest.as_ref().map_or(true, |(t, _)| m > *t) {
+                                    newest = Some((m, p));
+                                }
+                            }
+                        }
+                    }
+                }
+                if newest.is_some() {
+                    break 'search; // newest day with any rollout is enough
+                }
+            }
+        }
+    }
+
+    let (_, path) = newest.ok_or("No codex rollout found")?;
+    let mut f = std::fs::File::open(&path).map_err(|e| e.to_string())?;
+    let len = f.metadata().map_err(|e| e.to_string())?.len();
+    let start = len.saturating_sub(max_bytes);
+    f.seek(SeekFrom::Start(start)).map_err(|e| e.to_string())?;
+    let mut buf = Vec::new();
+    f.read_to_end(&mut buf).map_err(|e| e.to_string())?;
+    Ok(String::from_utf8_lossy(&buf).to_string())
+}
+
 /// Open a path with the OS default application (used for binary/exe files).
 /// The path is always passed as a single structured argument — never through a
 /// shell — so metacharacters in file names can't inject commands.

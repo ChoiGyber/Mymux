@@ -283,6 +283,7 @@ async function setupListeners() {
       saveNotifyFlashPrefs();
       // Apply immediately: hide (or re-show) every existing badge.
       for (const [pid, tt] of terminals) if (tt.ctxPct != null) updateCtxUi(pid, tt);
+      updateGlobalUsageUi();
     });
     if (notifyChkCtxVoice) notifyChkCtxVoice.addEventListener("change", () => {
       notifyFlashPrefs.ctxVoice = notifyChkCtxVoice.checked;
@@ -2546,6 +2547,18 @@ const CODEX_CTX_KEY = "% context left";
 const CODEX_CTX_RE = /(\d{1,3})(?:\x1b\[[0-9;]*m)*%(?:\x1b\[[0-9;]*m|[ \t])*context left$/;
 // Codex banner/status line: `model: gpt-5.5-codex` — ids never contain spaces.
 const CODEX_MODEL_RE = /model:\s*(?:\x1b\[[0-9;]*m)*([A-Za-z0-9][A-Za-z0-9._-]{0,31})/;
+// Account-wide Claude rate limits ride the same HUD statusline:
+// `5h:45%(3h42m) wk:12%(2d5h) mo:8%(15d3h)` — value colored, reset time dimmed,
+// stale readings get a `*` after the % and a `~` before the reset time.
+const CL_LIMIT_KEYS = [
+  ["5h:", /5h:(?:\x1b\[[0-9;]*m)*(\d{1,3})%(?:\x1b\[[0-9;]*m|\*)*(?:\((~?[0-9dhm]+)\))?/, "fiveH", "fiveHReset"],
+  ["wk:", /wk:(?:\x1b\[[0-9;]*m)*(\d{1,3})%(?:\x1b\[[0-9;]*m|\*)*(?:\((~?[0-9dhm]+)\))?/, "wk", "wkReset"],
+  ["mo:", /mo:(?:\x1b\[[0-9;]*m)*(\d{1,3})%(?:\x1b\[[0-9;]*m|\*)*(?:\((~?[0-9dhm]+)\))?/, "mo", "moReset"],
+];
+// Account-wide usage shown in the top toolbar. Claude comes from any pane's
+// statusline; Codex from the newest rollout's rate_limits snapshot (poll).
+let claudeLimits = null; // { fiveH, fiveHReset, wk, wkReset, mo, moReset, at }
+let codexLimits = null;  // { pct, label, secondary, resetsAt, plan, at }
 const CTX_STALE_MS = 5 * 60 * 1000; // no statusline redraw for 5 min → dim badge
 const CTX_LEVELS = [50, 70, 85];    // buddy announces when first crossing these
 const CTX_REARM_DROP = 10;          // re-arm once usage falls 10%p under a level
@@ -2603,6 +2616,21 @@ function scanCtxUsage(id, t, data) {
     const m = CODEX_MODEL_RE.exec(text.slice(xmi, xmi + 60));
     if (m && m[1] !== t.codexModel) { t.codexModel = m[1]; changed = true; }
   }
+  // Account-wide Claude rate limits (5h:34% wk:12% …) — global, not per-pane.
+  let limitsChanged = false;
+  for (const [key, re, field, rfield] of CL_LIMIT_KEYS) {
+    const ki = text.lastIndexOf(key);
+    if (ki < 0) continue;
+    const m = re.exec(text.slice(ki, ki + 44));
+    if (!m) continue;
+    const v = Math.min(100, parseInt(m[1], 10));
+    claudeLimits = claudeLimits || {};
+    if (claudeLimits[field] !== v || (m[2] && claudeLimits[rfield] !== m[2])) limitsChanged = true;
+    claudeLimits[field] = v;
+    if (m[2]) claudeLimits[rfield] = m[2];
+    claudeLimits.at = performance.now();
+  }
+  if (limitsChanged) updateGlobalUsageUi();
   if (changed) updateCtxUi(id, t);
 }
 
@@ -2673,6 +2701,111 @@ function maybeAnnounceCtx(id, t) {
   }
 }
 
+// ── Account-wide usage (top toolbar) ────────────────────────────────────────
+// `CL 5h:34% wk:12% │ CX 30d:5%` — Claude comes from any pane's statusline,
+// Codex from the newest ~/.codex rollout's rate_limits snapshot (60s poll).
+function usageSeg(label, pct, stale) {
+  const s = document.createElement("span");
+  s.className = "usage-seg" + (stale ? " stale" : "");
+  s.append(label + ":");
+  const b = document.createElement("b");
+  b.textContent = pct + "%";
+  b.style.color = ctxColor(pct);
+  s.appendChild(b);
+  return s;
+}
+function updateGlobalUsageUi() {
+  const el = document.getElementById("usage-global");
+  if (!el) return;
+  el.textContent = "";
+  el.title = "";
+  if (!notifyFlashPrefs.ctxBadge) return;
+  const now = performance.now();
+  const tips = [];
+  if (claudeLimits && (claudeLimits.fiveH != null || claudeLimits.wk != null || claudeLimits.mo != null)) {
+    const stale = now - (claudeLimits.at || 0) > 10 * 60 * 1000;
+    const tool = document.createElement("span");
+    tool.className = "usage-tool";
+    tool.textContent = "CL";
+    el.appendChild(tool);
+    if (claudeLimits.fiveH != null) el.appendChild(usageSeg("5h", claudeLimits.fiveH, stale));
+    if (claudeLimits.wk != null) el.appendChild(usageSeg("wk", claudeLimits.wk, stale));
+    if (claudeLimits.mo != null) el.appendChild(usageSeg("mo", claudeLimits.mo, stale));
+    tips.push("Claude 전체 사용량"
+      + (claudeLimits.fiveHReset ? ` · 5h 리셋까지 ${claudeLimits.fiveHReset}` : "")
+      + (claudeLimits.wkReset ? ` · 주간 리셋까지 ${claudeLimits.wkReset}` : ""));
+  }
+  if (codexLimits && codexLimits.pct != null) {
+    if (el.childElementCount) {
+      const div = document.createElement("span");
+      div.className = "usage-div";
+      div.textContent = "│";
+      el.appendChild(div);
+    }
+    const tool = document.createElement("span");
+    tool.className = "usage-tool";
+    tool.textContent = "CX";
+    el.appendChild(tool);
+    el.appendChild(usageSeg(codexLimits.label || "usage", codexLimits.pct, false));
+    if (codexLimits.secondary) el.appendChild(usageSeg(codexLimits.secondary.label || "wk", codexLimits.secondary.pct, false));
+    tips.push(`Codex 전체 사용량 (plan: ${codexLimits.plan || "?"})`
+      + (codexLimits.resetsAt ? ` · 리셋까지 ${fmtEpochRemain(codexLimits.resetsAt)}` : ""));
+  }
+  el.title = tips.join("\n");
+}
+function fmtEpochRemain(epochSec) {
+  const ms = epochSec * 1000 - Date.now();
+  if (ms <= 0) return "곧";
+  const m = Math.floor(ms / 60000), h = Math.floor(m / 60), d = Math.floor(h / 24);
+  if (d > 0) return `${d}d${h % 24}h`;
+  if (h > 0) return `${h}h${m % 60}m`;
+  return `${m}m`;
+}
+// Codex writes a rate_limits snapshot into its session rollout on every reply;
+// mine the newest rollout's tail for the last one. Works no matter where the
+// codex session runs (a Mymux pane, VS Code, a plain terminal).
+function findKeyDeep(obj, key) {
+  if (!obj || typeof obj !== "object") return null;
+  if (obj[key]) return obj[key];
+  for (const v of Object.values(obj)) {
+    const r = findKeyDeep(v, key);
+    if (r) return r;
+  }
+  return null;
+}
+function codexWindowLabel(min) {
+  if (min == null) return "";
+  if (min % 1440 === 0 && min >= 1440) return (min / 1440) + "d";
+  if (min % 60 === 0 && min >= 60) return (min / 60) + "h";
+  return min + "m";
+}
+async function loadCodexLimits() {
+  try {
+    const tail = await invoke("codex_rollout_tail", { maxBytes: 65536 });
+    const lines = tail.split("\n");
+    for (let i = lines.length - 1; i >= 0; i--) {
+      if (lines[i].indexOf('"rate_limits"') < 0) continue;
+      try {
+        const rl = findKeyDeep(JSON.parse(lines[i]), "rate_limits");
+        const p = rl && rl.primary;
+        if (!p || p.used_percent == null) continue;
+        codexLimits = {
+          pct: Math.min(100, Math.round(p.used_percent)),
+          label: codexWindowLabel(p.window_minutes),
+          secondary: rl.secondary && rl.secondary.used_percent != null
+            ? { pct: Math.min(100, Math.round(rl.secondary.used_percent)), label: codexWindowLabel(rl.secondary.window_minutes) }
+            : null,
+          resetsAt: p.resets_at || null,
+          plan: rl.plan_type || null,
+          at: performance.now(),
+        };
+        updateGlobalUsageUi();
+        return;
+      } catch { /* line cut at the tail boundary — try the previous one */ }
+    }
+  } catch { /* codex not installed / no rollouts — segment stays hidden */ }
+}
+
 // effort(예: xhigh)는 statusline에 안 나오므로 설정 파일에서 읽는다. /model로
 // 바꾸면 settings.json이 갱신되니 1분 폴링이면 충분히 따라간다.
 async function loadClaudeEffort() {
@@ -2690,10 +2823,13 @@ async function loadClaudeEffort() {
 function initCtxUsage() {
   loadClaudeEffort();
   setInterval(loadClaudeEffort, 60_000);
+  loadCodexLimits();
+  setInterval(loadCodexLimits, 60_000);
   // Staleness sweep: dim badges whose statusline stopped redrawing (Claude
   // Code exited or the pane went back to a plain shell).
   setInterval(() => {
     for (const [pid, tt] of terminals) if (tt.ctxPct != null) updateCtxUi(pid, tt);
+    updateGlobalUsageUi();
   }, 30_000);
 }
 document.addEventListener("mouseover", (e) => {
