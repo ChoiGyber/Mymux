@@ -2151,9 +2151,23 @@ function startFocusKeeper() {
     // intermittent "위아래로 튕김" bounce. Save scrollTop and put it back.
     const vp = el.querySelector(".xterm-viewport");
     const savedTop = vp ? vp.scrollTop : null;
-    try { if (ta) ta.blur(); } catch {}
-    try { t.term.focus(); } catch {}
-    try { if (ta && document.activeElement !== ta) ta.focus({ preventScroll: true }); } catch {}
+    if (ta && document.activeElement === ta) {
+      // Common post-Alt-Tab case with this WebView2 build: DOM focus never
+      // actually left the textarea (activeElement is already correct) — only
+      // xterm's internal "focus" class is stale, because that class is only
+      // (re)applied by xterm's own listener on a genuine textarea "focus" DOM
+      // event, and .focus() on an already-focused element fires no such event.
+      // We used to force one via blur()+focus(), but that's a REAL OS-level
+      // blur/refocus on a field with live Hangul IME association, and it
+      // desyncs Windows' IME — a detached candidate window opens and every
+      // keystroke gets typed twice — even though no composition was in
+      // flight at that instant. Dispatch a synthetic focus event instead:
+      // same effect on xterm's internal state, zero OS-level focus churn.
+      try { ta.dispatchEvent(new FocusEvent("focus")); } catch {}
+    } else {
+      try { t.term.focus(); } catch {}
+      try { if (ta && document.activeElement !== ta) ta.focus({ preventScroll: true }); } catch {}
+    }
     if (vp && savedTop != null && vp.scrollTop !== savedTop) vp.scrollTop = savedTop;
     if (focusedPaneId !== pid) { try { setFocusedPane(pid); } catch {} }
   };
