@@ -293,7 +293,7 @@ async function setupListeners() {
       notifyFlashPrefs.ctxBadge = notifyChkCtxBadge.checked;
       saveNotifyFlashPrefs();
       // Apply immediately: hide (or re-show) every existing badge.
-      for (const [pid, tt] of terminals) if (tt.ctxPct != null) updateCtxUi(pid, tt);
+      for (const [pid, tt] of terminals) if (ctxRenderable(tt)) updateCtxUi(pid, tt);
       updateGlobalUsageUi();
     });
     if (notifyChkCtxVoice) notifyChkCtxVoice.addEventListener("change", () => {
@@ -1896,8 +1896,16 @@ async function createPane(parentEl, shell, args, cwd) {
         if (data.includes("\r") || data.includes("\n")) {
           const r = getInputRegion(ti);
           let cmd = r && r.text ? r.text.trim() : "";
+          // Only an OSC 133-verified prompt line may claim the ctx badge. The
+          // typedBuf fallback below also captures chat typed INTO a running
+          // claude/codex TUI (both live on the normal buffer), and a message
+          // starting with the other tool's name must not steal the badge.
+          const fromPrompt = !!cmd;
           if (!cmd && ti.term.buffer.active.type === "normal") cmd = (ti.typedBuf || "").trim();
-          if (cmd) { ti.lastCmd = cmd; if (ti.session) ti.session.lastCmd = cmd; }
+          if (cmd) {
+            ti.lastCmd = cmd; if (ti.session) ti.session.lastCmd = cmd;
+            if (fromPrompt) presetCtxSourceFromCmd(id, ti, cmd); // codex/claude launch → claim the badge now
+          }
           ti.typedBuf = "";
         }
       } catch {}
@@ -2293,23 +2301,52 @@ function armNotifyCycle(id) {
   t.outStart = null;
   t.notifiedQuiet = false;
 }
+// Agent-working marker. Claude Code and the Codex TUI both keep a literal
+// "esc to interrupt" hint on the live screen for the whole time their agent
+// loop is running — and Codex's screen can FREEZE for many seconds mid-turn
+// (approval waits, long thinking with nothing streaming; ConPTY-verified: its
+// elapsed-timer/shimmer stops repainting), which the silence watcher would
+// misread as "task finished". Before flashing, peek at the bottom of the live
+// screen: hint still visible → the agent is still on the job, so hold the
+// notification and keep checking. The hint area is repainted the moment the
+// turn really ends, and that repaint is output — the normal silence cycle
+// takes it from there. Scanned only when a flash is imminent (≤ once per
+// NOTIFY_SILENCE_MS per quiet pane), a dozen rows at most.
+const AGENT_WORKING_MARKER = "esc to interrupt";
+function paneShowsWorkingMarker(t) {
+  try {
+    const buf = t.term.buffer.active;
+    const end = buf.baseY + t.term.rows; // bottom of the live screen, scroll-independent
+    for (let y = Math.max(0, end - 12); y < end; y++) {
+      const line = buf.getLine(y);
+      if (line && line.translateToString(true).includes(AGENT_WORKING_MARKER)) return true;
+    }
+  } catch {}
+  return false;
+}
 function trackOutputSilence(id, t) {
   const now = performance.now();
   if (t.outStart == null) t.outStart = now;
   t.lastOutAt = now;
   if (t.silenceTimer) clearTimeout(t.silenceTimer);
-  t.silenceTimer = setTimeout(() => {
+  const onQuiet = () => {
     t.silenceTimer = null;
     if (!terminals.has(id)) return;
     if (t.outStart == null) return; // window reset by a keystroke or OSC 133;D
     const workedMs = (t.lastOutAt || 0) - t.outStart;
     if (workedMs >= NOTIFY_MIN_WORK_MS && !t.notifiedQuiet) {
+      if (paneShowsWorkingMarker(t)) {
+        // Screen is quiet but the agent hint is still up — still working.
+        t.silenceTimer = setTimeout(onQuiet, NOTIFY_SILENCE_MS);
+        return;
+      }
       t.notifiedQuiet = true; // once per input cycle
       t.outStart = null;
       flashPaneNotify(id);
     }
     // Below the threshold: keep the window open so later bursts accumulate.
-  }, NOTIFY_SILENCE_MS);
+  };
+  t.silenceTimer = setTimeout(onQuiet, NOTIFY_SILENCE_MS);
 }
 
 // Where the task-done pulse shows (🔔 toolbar modal): pane border and/or the
@@ -2563,8 +2600,9 @@ const CTX_MODEL_RE = /Model:\s*(?:\x1b\[[0-9;]*m)*([^\x1b\r\n]{1,24})/;
 // right after the key so an older occurrence inside the window can't win.
 const CODEX_CTX_KEY = "% context left";
 const CODEX_CTX_RE = /(\d{1,3})(?:\x1b\[[0-9;]*m)*%(?:\x1b\[[0-9;]*m|[ \t])*context left$/;
-// Codex banner/status line: `model: gpt-5.5-codex` — ids never contain spaces.
-const CODEX_MODEL_RE = /model:\s*(?:\x1b\[[0-9;]*m)*([A-Za-z0-9][A-Za-z0-9._-]{0,31})/;
+// Codex banner/status line: `model:     gpt-5.6-terra low` — ids never contain
+// spaces; the trailing word is the reasoning effort when present.
+const CODEX_MODEL_RE = /model:\s*(?:\x1b\[[0-9;]*m)*([A-Za-z0-9][A-Za-z0-9._-]{0,31})(?: +(minimal|low|medium|high|xhigh))?/;
 // Account-wide Claude rate limits ride the same HUD statusline:
 // `5h:45%(3h42m) wk:12%(2d5h) mo:8%(15d3h)` — value colored, reset time dimmed,
 // stale readings get a `*` after the % and a `~` before the reset time.
@@ -2612,27 +2650,61 @@ function scanCtxUsage(id, t, data) {
     const m = CODEX_CTX_RE.exec(text.slice(Math.max(0, xi - 24), xi + CODEX_CTX_KEY.length));
     if (m) { codexPct = 100 - Math.min(100, parseInt(m[1], 10)); codexAt = xi; }
   }
-  // Both tools can show up in one pane over time — the later sighting wins.
-  const pct = codexAt > claudeAt ? codexPct : claudePct;
-  if (pct != null) {
-    const source = codexAt > claudeAt ? "codex" : "claude";
-    t.ctxAt = performance.now(); // fresh sighting even when the value is equal
-    if (pct !== t.ctxPct || source !== t.ctxSource) { t.ctxPct = pct; t.ctxSource = source; changed = true; }
-    maybeAnnounceCtx(id, t);
+  // The Codex 0.144.x TUI stopped rendering "% context left" in its idle
+  // footer (ConPTY-verified: zero occurrences across startup, a full turn and
+  // /status), so a pct sighting can no longer be the only thing that flips the
+  // badge to codex — a pane that ran Claude first would keep claude's stale
+  // model/effort/% forever. Its lowercase `model:` status line IS still
+  // painted, so treat that as codex source evidence too, and mark evidence
+  // per-source with a timestamp: the fresher tool owns the badge.
+  const now = performance.now();
+  // Evidence stamps carry a tiny position-derived fraction so that a tool
+  // handover landing inside ONE pump tick (both tools' lines in the same
+  // chunk, one performance.now()) still resolves to the later-positioned
+  // sighting — same later-wins rule the pct comparison used. ≤160+chunk chars
+  // per tick, so the fraction stays far below any real inter-tick delta.
+  const stamp = (pos) => now + Math.max(0, pos) / 1e7;
+  if (claudePct != null) { t.claudePct = claudePct; t.claudeSeenAt = stamp(claudeAt); }
+  if (codexPct != null) { t.codexPct = codexPct; t.codexSeenAt = stamp(codexAt); }
+  // lastIndexOf is case-sensitive — `model:` never re-reads the `Model:` line.
+  // Skip the TUI's transient boot value ("model: loading").
+  const xmi = text.lastIndexOf("model:");
+  if (xmi >= 0) {
+    const m = CODEX_MODEL_RE.exec(text.slice(xmi, xmi + 60));
+    if (m && m[1] !== "loading") {
+      if (m[1] !== t.codexModel) { t.codexModel = m[1]; changed = true; }
+      if (m[2] && m[2] !== t.codexEffort) { t.codexEffort = m[2]; changed = true; }
+      // A model: line refreshes codex ownership or claims an unowned pane, but
+      // may NOT steal a claude-owned one — the string is generic enough to
+      // appear in ordinary shell output (config dumps, YAML). Real handovers
+      // are covered by the launch preset and the codex-unique "% context left".
+      if ((t.codexSeenAt || 0) >= (t.claudeSeenAt || 0)) {
+        t.codexSeenAt = Math.max(t.codexSeenAt || 0, stamp(xmi));
+      }
+    }
   }
+  // `Model:` (capital) is claude's OMC-HUD statusline — but Codex's /status
+  // panel prints one too ("│  Model:  gpt-5.6-terra (reasoning low…)"), which
+  // used to clobber the claude model name. Route it by whichever tool owns
+  // the pane right now.
   const mi = text.lastIndexOf("Model:");
   if (mi >= 0) {
     const m = CTX_MODEL_RE.exec(text.slice(mi, mi + 60));
     if (m) {
       const name = m[1].trim();
-      if (name && name !== t.ctxModel) { t.ctxModel = name; changed = true; }
+      if (name && (t.codexSeenAt || 0) > (t.claudeSeenAt || 0)) {
+        const short = name.split(" ")[0]; // "gpt-5.6-terra (reasoning" → id only
+        if (short && short !== t.codexModel) { t.codexModel = short; changed = true; }
+      } else if (name && name !== t.ctxModel) { t.ctxModel = name; changed = true; }
     }
   }
-  // lastIndexOf is case-sensitive, so this never re-reads the `Model:` line.
-  const xmi = text.lastIndexOf("model:");
-  if (xmi >= 0) {
-    const m = CODEX_MODEL_RE.exec(text.slice(xmi, xmi + 60));
-    if (m && m[1] !== t.codexModel) { t.codexModel = m[1]; changed = true; }
+  // Derive the badge owner + displayed pct from the freshest evidence.
+  if (t.claudeSeenAt || t.codexSeenAt) {
+    const source = (t.codexSeenAt || 0) > (t.claudeSeenAt || 0) ? "codex" : "claude";
+    const pct = source === "codex" ? (t.codexPct ?? null) : (t.claudePct ?? null);
+    if (claudePct != null || codexPct != null) t.ctxAt = now; // fresh pct sighting
+    if (pct !== t.ctxPct || source !== t.ctxSource) { t.ctxPct = pct; t.ctxSource = source; changed = true; }
+    if (t.ctxPct != null) maybeAnnounceCtx(id, t);
   }
   // Account-wide Claude rate limits (5h:34% wk:12% …) — global, not per-pane.
   let limitsChanged = false;
@@ -2652,6 +2724,32 @@ function scanCtxUsage(id, t, data) {
   if (changed) updateCtxUi(id, t);
 }
 
+// A `codex` / `claude` launch from the shell prompt claims the ctx badge for
+// that tool immediately — before its TUI has painted anything parseable — so
+// the previous tool's stale model/effort/% never lingers over the newcomer
+// (the ConPTY-verified failure mode: Codex 0.144.x paints no "% context left",
+// so nothing else would ever flip a claude-owned badge).
+function presetCtxSourceFromCmd(id, t, cmd) {
+  const first = (cmd || "").trim().split(/\s+/)[0] || "";
+  const bin = first.toLowerCase().replace(/\.exe$/, "").split(/[\\/]/).pop();
+  if (bin !== "codex" && bin !== "claude") return;
+  // Already owned by this tool — leave the badge be. (getInputRegion returns
+  // the stale LAUNCH line for Enters pressed inside a running 133-integrated
+  // TUI, so this also keeps mid-session chat from wiping the live pct.)
+  if (t.ctxSource === bin) return;
+  const now = performance.now();
+  if (bin === "codex") { t.codexSeenAt = now; t.codexPct = null; }
+  else { t.claudeSeenAt = now; t.claudePct = null; }
+  t.ctxSource = bin;
+  t.ctxPct = null; // fresh boot — no usage sighting yet
+  t.ctxAt = now;
+  // Launch is a hard boundary: the departing tool's final statusline can still
+  // sit in the scan tail and would re-stamp it as FRESH evidence on the very
+  // next output tick, stealing the badge right back. Drop the tail.
+  t._ctxTail = "";
+  updateCtxUi(id, t);
+}
+
 // 초록(0%) → 다홍(~85%) → 빨강(100%) continuous hue ramp.
 function ctxColor(pct) {
   const hue = Math.max(0, 130 - (pct / 100) * 145);
@@ -2660,22 +2758,34 @@ function ctxColor(pct) {
 function ctxBadgeText(t) {
   const parts = [];
   if (t.ctxSource === "codex") {
-    // Codex has no effort in its status output (and none set in config.toml);
-    // its badge is "model | used%". ctxPct is already converted from "left".
+    // Codex badge: "model | effort | used%" — effort comes from its status
+    // line when present; ctxPct is already converted from "left" (and may be
+    // absent entirely on 0.144.x, which paints no context%).
     parts.push(t.codexModel || "Codex");
+    if (t.codexEffort) parts.push(t.codexEffort);
   } else {
     if (t.ctxModel) parts.push(t.ctxModel);
     if (claudeEffort) parts.push(claudeEffort);
   }
-  parts.push(t.ctxPct + "%");
+  // Codex 0.144.x no longer paints a context% at all — model-only badge then.
+  if (t.ctxPct != null) parts.push(t.ctxPct + "%");
   return parts.join(" | ");
+}
+
+// Renderable with a pct, or with a codex model alone (its TUI may never emit
+// a usable context% — the badge still must say WHICH tool owns the pane).
+// Shared with the bulk refresh loops so a codex model-only badge is refreshed
+// and cleared just like a pct one.
+function ctxRenderable(t) {
+  return t.ctxPct != null || (t.ctxSource === "codex" && !!t.codexModel);
 }
 
 // Refresh both badges (pane overlay + session-list pill) for one session.
 function updateCtxUi(id, t) {
-  if (t.ctxPct == null) return;
-  const show = notifyFlashPrefs.ctxBadge;
-  const color = ctxColor(t.ctxPct);
+  // Not renderable → fall through with show=false so a stale badge left by the
+  // previous tool is CLEARED, not preserved.
+  const show = notifyFlashPrefs.ctxBadge && ctxRenderable(t);
+  const color = t.ctxPct != null ? ctxColor(t.ctxPct) : "";
   const stale = performance.now() - (t.ctxAt || 0) > CTX_STALE_MS;
   const pe = t.paneEl && t.paneEl.querySelector(".pane-ctx");
   if (pe) {
@@ -2687,7 +2797,8 @@ function updateCtxUi(id, t) {
   const li = document.querySelector(`.session-item[data-pty-id="${id}"]`);
   if (li) {
     let se = li.querySelector(".session-ctx");
-    if (!show) { if (se) se.remove(); return; }
+    // The pill is a percent readout — nothing to show without one.
+    if (!show || t.ctxPct == null) { if (se) se.remove(); return; }
     if (!se) {
       se = document.createElement("span");
       se.className = "session-ctx";
@@ -2833,7 +2944,7 @@ async function loadClaudeEffort() {
     const next = JSON.parse(txt).effortLevel || null;
     if (next !== claudeEffort) {
       claudeEffort = next;
-      for (const [pid, tt] of terminals) if (tt.ctxPct != null) updateCtxUi(pid, tt);
+      for (const [pid, tt] of terminals) if (ctxRenderable(tt)) updateCtxUi(pid, tt);
     }
   } catch { /* no Claude settings — badge simply omits effort */ }
 }
@@ -2846,7 +2957,7 @@ function initCtxUsage() {
   // Staleness sweep: dim badges whose statusline stopped redrawing (Claude
   // Code exited or the pane went back to a plain shell).
   setInterval(() => {
-    for (const [pid, tt] of terminals) if (tt.ctxPct != null) updateCtxUi(pid, tt);
+    for (const [pid, tt] of terminals) if (ctxRenderable(tt)) updateCtxUi(pid, tt);
     updateGlobalUsageUi();
   }, 30_000);
 }
@@ -4767,6 +4878,7 @@ function firePendingReplay(id) {
   t.pendingReplay = null;
   if (t._replayFallback) { clearTimeout(t._replayFallback); t._replayFallback = null; }
   if (t._replaySettle) { clearTimeout(t._replaySettle); t._replaySettle = null; }
+  presetCtxSourceFromCmd(id, t, cmd); // replayed codex/claude relaunch claims the badge too
   invoke("pty_write", { id, data: cmd + "\r" });
 }
 // Batch confirm modal: one list, checkboxes (default on), run selected.
@@ -5316,7 +5428,7 @@ function refreshSessionList() {
   }
 
   // Rebuilding dropped the ctx pills — re-attach them for sessions that have one.
-  for (const [pid, tt] of terminals) if (tt.ctxPct != null) updateCtxUi(pid, tt);
+  for (const [pid, tt] of terminals) if (ctxRenderable(tt)) updateCtxUi(pid, tt);
 }
 
 // Lightweight: just move the active highlight without rebuilding.
