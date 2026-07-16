@@ -616,7 +616,7 @@ html[data-theme="light"] #toolbar-actions #btn-update:hover {
   z-index: 1000;
 }
 
-#default-shell {
+#default-shell, #term-font {
   padding: 4px 8px;
   border: 1px solid var(--border);
   border-radius: var(--radius);
@@ -625,7 +625,7 @@ html[data-theme="light"] #toolbar-actions #btn-update:hover {
   font-size: 12px;
   cursor: pointer;
 }
-#default-shell:hover { color: var(--text); }
+#default-shell:hover, #term-font:hover { color: var(--text); }
 
 /* Prominent Send button at the top-right of each saved-command box */
 .cmd-item { position: relative; }
