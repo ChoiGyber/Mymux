@@ -8,6 +8,49 @@ For installers, see the [GitHub Releases](https://github.com/ChoiGyber/Mymux/rel
 
 ---
 
+## v0.1.32 — 2026-07-18
+
+### Fixed / 버그 수정
+- **Codex model & usage readouts / Codex 모델·사용량 표시 복구.**
+  The per-pane ctx badge and the toolbar `CX` readout stopped recognizing newer
+  Codex CLI builds — Codex changed its footer wording (`Context left: 97%` vs
+  `97% context left`) and repaints it with cursor motions instead of newlines.
+  Parsing now accepts both phrasings anchored to the footer tail, model
+  detection is limited to gpt/o/codex model ids so Claude's own `Model:`
+  statusline can never bleed into the Codex slot, and the active model is also
+  read from Codex's session settings and `~/.codex/config.toml` as fallbacks.
+  The toolbar `CL` readout can now also fetch account-wide Claude usage straight
+  from Anthropic's usage endpoint using the login Claude Code already stored
+  (strictly read-only — the token is never refreshed or rewritten), so it works
+  without an active Claude pane or the OMC HUD statusline.
+
+  패인 우상단 ctx 배지와 툴바의 `CX` 사용량이 최신 Codex CLI에서 표시되지
+  않던 문제를 고쳤습니다. Codex가 문구를 바꾸고(`97% context left` →
+  `Context left: 97%`) 푸터를 줄바꿈 없이 커서 이동으로 다시 그리면서 인식이
+  깨졌는데, 이제 두 표현 모두 푸터 끝 기준으로 인식합니다. 모델 감지는
+  gpt/o/codex 계열 id로 제한해 Claude 상태줄의 `Model:`이 Codex 칸을 덮어쓰지
+  못하게 했고, 세션 설정 이벤트와 `~/.codex/config.toml`의 모델도 참조합니다.
+  또한 툴바 `CL` 표시는 Claude Code가 저장해 둔 로그인으로 Anthropic 사용량
+  API를 직접 조회하므로(엄격한 읽기 전용 — 토큰을 갱신하거나 다시 쓰지 않음)
+  Claude 패인이나 OMC HUD 상태줄 없이도 동작합니다.
+
+- **macOS terminal input drift / macOS 터미널 입력 밀림.**
+  On macOS (WKWebView) xterm.js applies CSS letter-spacing as trailing space
+  that is not folded into its cell-width math, so every glyph drifted slightly
+  right and the cursor column desynced from zsh — typed characters landed in
+  the wrong column and Backspace looked like it typed a space. Letter-spacing
+  is now forced to 0 on macOS (SF Mono/Menlo don't need the CJK-tuned spacing)
+  and the now-inert 자−/자+ buttons are hidden there. Windows is unchanged.
+
+  macOS(WKWebView)에서 xterm.js가 CSS 자간을 셀 폭 계산에 반영하지 않고 뒤에
+  여백으로만 붙여, 글자가 조금씩 오른쪽으로 밀리고 커서 열이 zsh와 어긋나던
+  문제를 고쳤습니다(입력이 엉뚱한 칸에 찍히고 Backspace가 공백을 입력하는
+  것처럼 보이던 증상). macOS에서는 자간을 0으로 고정하고(SF Mono/Menlo는 자간
+  보정이 필요 없음) 의미가 없어진 자−/자+ 버튼을 숨겼습니다. Windows 동작은
+  그대로입니다.
+
+---
+
 ## v0.1.31 — 2026-07-13
 
 ### Added / 새 기능
