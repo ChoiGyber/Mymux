@@ -2559,12 +2559,21 @@ function initFoxDrag() {
 const CTX_RE = /ctx:(?:\[[^\]]*\])?(?:\x1b\[[0-9;]*m)*(\d{1,3})%/;
 // `Model: Fable 5` is wrapped in cyan — capture stops at the trailing ESC.
 const CTX_MODEL_RE = /Model:\s*(?:\x1b\[[0-9;]*m)*([^\x1b\r\n]{1,24})/;
-// Codex footer: `97% context left`. Anchored at the end of a window that stops
-// right after the key so an older occurrence inside the window can't win.
-const CODEX_CTX_KEY = "% context left";
-const CODEX_CTX_RE = /(\d{1,3})(?:\x1b\[[0-9;]*m)*%(?:\x1b\[[0-9;]*m|[ \t])*context left$/;
-// Codex banner/status line: `model: gpt-5.5-codex` — ids never contain spaces.
-const CODEX_MODEL_RE = /model:\s*(?:\x1b\[[0-9;]*m)*([A-Za-z0-9][A-Za-z0-9._-]{0,31})/;
+// Codex has used both `97% context left` and `Context left: 97%` in its TUI.
+// Match either order (and the newer "remaining" wording) after terminal escape
+// sequences have been removed. Keeping this independent from a line ending is
+// important: Codex repaints its footer with cursor-motion controls, not newlines.
+const CODEX_CTX_RE = /(?:\bcontext(?:\s+window)?\s+(?:left|remaining)\s*:?\s*(\d{1,3})\s*%|\b(\d{1,3})\s*%\s*(?:context(?:\s+window)?\s*)?(?:left|remaining))(?!\w)/i;
+// Codex banner/status line. Limit accepted ids to Codex/OpenAI model families
+// so Claude's own `Model: …` statusline can never populate this field.
+const CODEX_MODEL_RE = /\bmodel\s*:\s*((?:gpt|o|codex)[A-Za-z0-9._-]{0,58})/i;
+// CSI covers styles, cursor movement and erase controls. OSC is included because
+// some terminals emit title updates in the same PTY chunk as the status footer.
+const TERMINAL_ESCAPE_RE = /\x1b(?:\][^\x07\x1b]*(?:\x07|\x1b\\)|\[[0-?]*[ -\/]*[@-~])/g;
+
+function terminalPlainText(text) {
+  return text.replace(TERMINAL_ESCAPE_RE, "");
+}
 // Account-wide Claude rate limits ride the same HUD statusline:
 // `5h:45%(3h42m) wk:12%(2d5h) mo:8%(15d3h)` — value colored, reset time dimmed,
 // stale readings get a `*` after the % and a `~` before the reset time.
@@ -2575,8 +2584,24 @@ const CL_LIMIT_KEYS = [
 ];
 // Account-wide usage shown in the top toolbar. Claude comes from any pane's
 // statusline; Codex from the newest rollout's rate_limits snapshot (poll).
-let claudeLimits = null; // { fiveH, fiveHReset, wk, wkReset, mo, moReset, at }
-let codexLimits = null;  // { pct, label, secondary, resetsAt, plan, at }
+let claudeLimits = null;    // { fiveH, fiveHReset, wk, wkReset, mo, moReset, at } — from a pane's HUD statusline
+let claudeLimitsApi = null; // same shape (5h+wk only) — from the OAuth usage API; works without OMC/statusline
+let codexLimits = null;     // { pct, label, secondary, resetsAt, plan, at }
+// Two independent sources feed the CL readout: the live pane statusline
+// (claudeLimits) and the direct OAuth usage API (claudeLimitsApi). Whichever was
+// refreshed most recently wins — a rendering Claude pane redraws its statusline
+// constantly so it dominates in-app, while the 60s API poll takes over the
+// moment that statusline goes quiet (Claude closed, or running outside Mymux).
+function activeClaudeLimits() {
+  const aAt = (claudeLimits && claudeLimits.at) || -1;
+  const bAt = (claudeLimitsApi && claudeLimitsApi.at) || -1;
+  if (aAt < 0 && bAt < 0) return null;
+  return bAt > aAt ? claudeLimitsApi : claudeLimits;
+}
+function parseCodexConfigModel(text) {
+  const m = text.match(/^\s*model\s*=\s*["']([^"']+)["']\s*$/im);
+  return m ? m[1].trim() : null;
+}
 const CTX_STALE_MS = 5 * 60 * 1000; // no statusline redraw for 5 min → dim badge
 const CTX_LEVELS = [50, 70, 85];    // buddy announces when first crossing these
 const CTX_REARM_DROP = 10;          // re-arm once usage falls 10%p under a level
@@ -2589,12 +2614,15 @@ const CTX_PHRASES = {
   chungcheong: ["컨텍스트 반이나 썼슈~ (50%)", "70% 넘었구먼유~ 슬슬 정리해유~", "거의 다 찼슈(85%)! /compact 해야 혀유~"],
 };
 let claudeEffort = null; // e.g. "xhigh" — from ~/.claude/settings.json
+let codexConfiguredModel = null; // from ~/.codex/config.toml
+let codexSessionModel = null; // active session model from Codex settings events
 
 // Scan one pump-tick's worth of PTY output for the statusline patterns. Keeps a
 // short tail so a pattern split across ticks still matches on the next one.
 function scanCtxUsage(id, t, data) {
-  const text = (t._ctxTail || "") + data;
-  t._ctxTail = text.slice(-160);
+  const rawText = (t._ctxTail || "") + data;
+  t._ctxTail = rawText.slice(-240);
+  const text = terminalPlainText(rawText);
   let changed = false;
   // Only the LAST occurrence matters — the statuslines redraw constantly and
   // older matches in the same burst are already outdated.
@@ -2606,11 +2634,18 @@ function scanCtxUsage(id, t, data) {
     if (m) { claudePct = Math.min(100, parseInt(m[1], 10)); claudeAt = ci; }
   }
   // Codex: `NN% context left` where NN is percent REMAINING → invert.
+  // A status footer is the final visible text in a repaint. Restrict parsing to
+  // that tail so a model reply containing the same words cannot overwrite a
+  // session badge. `trimEnd` retains all meaningful status text.
+  const codexFooter = text.slice(-160).trimEnd();
   let codexPct = null, codexAt = -1;
-  const xi = text.lastIndexOf(CODEX_CTX_KEY);
-  if (xi >= 0) {
-    const m = CODEX_CTX_RE.exec(text.slice(Math.max(0, xi - 24), xi + CODEX_CTX_KEY.length));
-    if (m) { codexPct = 100 - Math.min(100, parseInt(m[1], 10)); codexAt = xi; }
+  for (const m of codexFooter.matchAll(new RegExp(CODEX_CTX_RE.source, "gi"))) {
+    if (m.index + m[0].length !== codexFooter.length) continue;
+    const left = parseInt(m[1] || m[2], 10);
+    if (!Number.isNaN(left)) {
+      codexPct = 100 - Math.min(100, left);
+      codexAt = text.length - codexFooter.length + m.index;
+    }
   }
   // Both tools can show up in one pane over time — the later sighting wins.
   const pct = codexAt > claudeAt ? codexPct : claudePct;
@@ -2628,12 +2663,9 @@ function scanCtxUsage(id, t, data) {
       if (name && name !== t.ctxModel) { t.ctxModel = name; changed = true; }
     }
   }
-  // lastIndexOf is case-sensitive, so this never re-reads the `Model:` line.
-  const xmi = text.lastIndexOf("model:");
-  if (xmi >= 0) {
-    const m = CODEX_MODEL_RE.exec(text.slice(xmi, xmi + 60));
-    if (m && m[1] !== t.codexModel) { t.codexModel = m[1]; changed = true; }
-  }
+  let codexModel = null;
+  for (const m of text.matchAll(new RegExp(CODEX_MODEL_RE.source, "gi"))) codexModel = m[1];
+  if (codexModel && codexModel !== t.codexModel) { t.codexModel = codexModel; changed = true; }
   // Account-wide Claude rate limits (5h:34% wk:12% …) — global, not per-pane.
   let limitsChanged = false;
   for (const [key, re, field, rfield] of CL_LIMIT_KEYS) {
@@ -2662,7 +2694,7 @@ function ctxBadgeText(t) {
   if (t.ctxSource === "codex") {
     // Codex has no effort in its status output (and none set in config.toml);
     // its badge is "model | used%". ctxPct is already converted from "left".
-    parts.push(t.codexModel || "Codex");
+    parts.push(codexSessionModel || t.codexModel || codexConfiguredModel || "Codex");
   } else {
     if (t.ctxModel) parts.push(t.ctxModel);
     if (claudeEffort) parts.push(claudeEffort);
@@ -2740,18 +2772,19 @@ function updateGlobalUsageUi() {
   if (!notifyFlashPrefs.ctxBadge) return;
   const now = performance.now();
   const tips = [];
-  if (claudeLimits && (claudeLimits.fiveH != null || claudeLimits.wk != null || claudeLimits.mo != null)) {
-    const stale = now - (claudeLimits.at || 0) > 10 * 60 * 1000;
+  const cl = activeClaudeLimits();
+  if (cl && (cl.fiveH != null || cl.wk != null || cl.mo != null)) {
+    const stale = now - (cl.at || 0) > 10 * 60 * 1000;
     const tool = document.createElement("span");
     tool.className = "usage-tool";
     tool.textContent = "CL";
     el.appendChild(tool);
-    if (claudeLimits.fiveH != null) el.appendChild(usageSeg("5h", claudeLimits.fiveH, stale));
-    if (claudeLimits.wk != null) el.appendChild(usageSeg("wk", claudeLimits.wk, stale));
-    if (claudeLimits.mo != null) el.appendChild(usageSeg("mo", claudeLimits.mo, stale));
+    if (cl.fiveH != null) el.appendChild(usageSeg("5h", cl.fiveH, stale));
+    if (cl.wk != null) el.appendChild(usageSeg("wk", cl.wk, stale));
+    if (cl.mo != null) el.appendChild(usageSeg("mo", cl.mo, stale));
     tips.push("Claude 전체 사용량"
-      + (claudeLimits.fiveHReset ? ` · 5h 리셋까지 ${claudeLimits.fiveHReset}` : "")
-      + (claudeLimits.wkReset ? ` · 주간 리셋까지 ${claudeLimits.wkReset}` : ""));
+      + (cl.fiveHReset ? ` · 5h 리셋까지 ${cl.fiveHReset}` : "")
+      + (cl.wkReset ? ` · 주간 리셋까지 ${cl.wkReset}` : ""));
   }
   if (codexLimits && codexLimits.pct != null) {
     if (el.childElementCount) {
@@ -2802,6 +2835,19 @@ async function loadCodexLimits() {
     const tail = await invoke("codex_rollout_tail", { maxBytes: 65536 });
     const lines = tail.split("\n");
     for (let i = lines.length - 1; i >= 0; i--) {
+      if (lines[i].indexOf('"turn_context"') >= 0 || lines[i].indexOf('"thread_settings_applied"') >= 0) {
+        try {
+          const ev = JSON.parse(lines[i]);
+          const tc = ev.payload || {};
+          const ts = tc.thread_settings || ev.thread_settings || {};
+          const nextModel = (tc.model || tc.settings?.model || tc.collaboration_mode?.settings?.model
+            || ts.model || ts.collaboration_mode?.settings?.model || null);
+          if (nextModel && nextModel !== codexSessionModel) {
+            codexSessionModel = nextModel;
+            for (const [pid, tt] of terminals) if (tt.ctxPct != null && tt.ctxSource === "codex") updateCtxUi(pid, tt);
+          }
+        } catch {}
+      }
       if (lines[i].indexOf('"rate_limits"') < 0) continue;
       try {
         const rl = findKeyDeep(JSON.parse(lines[i]), "rate_limits");
@@ -2824,6 +2870,36 @@ async function loadCodexLimits() {
   } catch { /* codex not installed / no rollouts — segment stays hidden */ }
 }
 
+// Fetch account-wide Claude usage straight from Anthropic's OAuth endpoint so
+// the CL readout works without OMC's HUD and without a Claude pane in Mymux.
+// Read-only/safe: the Rust side never refreshes or rewrites the login file, so
+// an expired/absent token just errors and this source silently stays empty.
+async function loadClaudeUsageApi() {
+  try {
+    const u = await invoke("claude_account_usage");
+    if (!u || (u.fiveH == null && u.wk == null)) return;
+    claudeLimitsApi = {
+      fiveH: u.fiveH,
+      fiveHReset: fmtIsoRemain(u.fiveHResetsAt),
+      wk: u.wk,
+      wkReset: fmtIsoRemain(u.wkResetsAt),
+      at: performance.now(),
+    };
+    updateGlobalUsageUi();
+  } catch { /* no creds / expired / offline — the CL API source stays absent */ }
+}
+// ISO-8601 instant → compact "3h42m" / "2d5h" remaining, matching the HUD's
+// reset-time format so both CL sources render identically in the tooltip.
+function fmtIsoRemain(iso) {
+  if (!iso) return null;
+  const ms = new Date(iso).getTime() - Date.now();
+  if (!isFinite(ms) || ms <= 0) return null;
+  const m = Math.floor(ms / 60000), h = Math.floor(m / 60), d = Math.floor(h / 24);
+  if (d > 0) return `${d}d${h % 24}h`;
+  if (h > 0) return `${h}h${m % 60}m`;
+  return `${m}m`;
+}
+
 // effort(예: xhigh)는 statusline에 안 나오므로 설정 파일에서 읽는다. /model로
 // 바꾸면 settings.json이 갱신되니 1분 폴링이면 충분히 따라간다.
 async function loadClaudeEffort() {
@@ -2838,11 +2914,27 @@ async function loadClaudeEffort() {
   } catch { /* no Claude settings — badge simply omits effort */ }
 }
 
+async function loadCodexModelSetting() {
+  try {
+    const home = await invoke("explorer_home_dir");
+    const txt = await invoke("read_text_file", { path: home + "/.codex/config.toml" });
+    const next = parseCodexConfigModel(txt);
+    if (next !== codexConfiguredModel) {
+      codexConfiguredModel = next;
+      for (const [pid, tt] of terminals) if (tt.ctxPct != null && tt.ctxSource === "codex") updateCtxUi(pid, tt);
+    }
+  } catch { /* no Codex config — badge simply omits the fallback model */ }
+}
+
 function initCtxUsage() {
   loadClaudeEffort();
   setInterval(loadClaudeEffort, 60_000);
+  loadCodexModelSetting();
+  setInterval(loadCodexModelSetting, 60_000);
   loadCodexLimits();
-  setInterval(loadCodexLimits, 60_000);
+  setInterval(loadCodexLimits, 5_000);
+  loadClaudeUsageApi();
+  setInterval(loadClaudeUsageApi, 60_000);
   // Staleness sweep: dim badges whose statusline stopped redrawing (Claude
   // Code exited or the pane went back to a plain shell).
   setInterval(() => {

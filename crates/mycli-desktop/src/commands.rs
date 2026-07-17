@@ -224,6 +224,89 @@ pub fn codex_rollout_tail(max_bytes: Option<u64>) -> Result<String, String> {
     Ok(String::from_utf8_lossy(&buf).to_string())
 }
 
+/// Account-wide Claude usage (5-hour + weekly rate-limit utilization) fetched
+/// straight from Anthropic's OAuth usage endpoint, using the token Claude Code
+/// already stored in `~/.claude/.credentials.json`. This lets the toolbar's CL
+/// readout work WITHOUT oh-my-claudecode's HUD statusline and WITHOUT a Claude
+/// session running inside a Mymux pane — a valid stored login is all it needs.
+///
+/// SAFE MODE — strictly read-only: if the stored token is missing or expired we
+/// return an error and the CL segment simply hides. We NEVER refresh the token
+/// or rewrite the credentials file, so there is zero chance of racing Claude
+/// Code's own token rotation and logging the user out.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ClaudeUsage {
+    five_h: Option<u8>,
+    five_h_resets_at: Option<String>,
+    wk: Option<u8>,
+    wk_resets_at: Option<String>,
+}
+
+#[tauri::command]
+pub async fn claude_account_usage() -> Result<ClaudeUsage, String> {
+    // Honor CLAUDE_CONFIG_DIR (custom profiles) the same way Claude Code / OMC do.
+    let config_dir = std::env::var_os("CLAUDE_CONFIG_DIR")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| dirs::home_dir().unwrap_or_default().join(".claude"));
+    let raw = std::fs::read_to_string(config_dir.join(".credentials.json"))
+        .map_err(|_| "no credentials".to_string())?;
+    let v: serde_json::Value = serde_json::from_str(&raw).map_err(|e| e.to_string())?;
+    // The token lives under `claudeAiOauth` (nested), with a flat-root fallback.
+    let oauth = v.get("claudeAiOauth").unwrap_or(&v);
+    let token = oauth
+        .get("accessToken")
+        .and_then(|x| x.as_str())
+        .ok_or("no accessToken")?;
+    // Expiry gate — no refresh in safe mode. `expiresAt` is epoch milliseconds.
+    if let Some(exp) = oauth.get("expiresAt").and_then(|x| x.as_i64()) {
+        let now_ms = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis() as i64)
+            .unwrap_or(0);
+        if exp <= now_ms {
+            return Err("token expired".into());
+        }
+    }
+    // builder().build() surfaces a TLS/backend init failure as an Err instead of
+    // panicking the way Client::new() would inside this async command.
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(10))
+        .build()
+        .map_err(|e| e.to_string())?;
+    let resp = client
+        .get("https://api.anthropic.com/api/oauth/usage")
+        .header("Authorization", format!("Bearer {token}"))
+        .header("anthropic-beta", "oauth-2025-04-20")
+        .header("Content-Type", "application/json")
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+    if !resp.status().is_success() {
+        return Err(format!("usage api http {}", resp.status().as_u16()));
+    }
+    let j: serde_json::Value = resp.json().await.map_err(|e| e.to_string())?;
+    // `five_hour.utilization` / `seven_day.utilization` are 0-100 percentages.
+    let pct = |bucket: &str| {
+        j.get(bucket)
+            .and_then(|b| b.get("utilization"))
+            .and_then(|u| u.as_f64())
+            .map(|f| f.clamp(0.0, 100.0).round() as u8)
+    };
+    let reset = |bucket: &str| {
+        j.get(bucket)
+            .and_then(|b| b.get("resets_at"))
+            .and_then(|r| r.as_str())
+            .map(|s| s.to_string())
+    };
+    Ok(ClaudeUsage {
+        five_h: pct("five_hour"),
+        five_h_resets_at: reset("five_hour"),
+        wk: pct("seven_day"),
+        wk_resets_at: reset("seven_day"),
+    })
+}
+
 /// Open a path with the OS default application (used for binary/exe files).
 /// The path is always passed as a single structured argument — never through a
 /// shell — so metacharacters in file names can't inject commands.

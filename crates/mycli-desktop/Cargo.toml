@@ -26,6 +26,10 @@ tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync"] }
 async-trait = "0.1"
 # Encode a clipboard image to PNG for the terminal image-paste path.
 image = { version = "0.25", default-features = false, features = ["png"] }
+# Direct call to Anthropic's OAuth usage endpoint for the account-wide CL badge.
+# reqwest is already in the tree (via tauri-plugin-updater) with json + rustls
+# enabled, so this adds no new build-toolchain requirement.
+reqwest = { version = "0.13", default-features = false, features = ["json", "rustls"] }
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_UI_WindowsAndMessaging"] }
