@@ -1906,8 +1906,8 @@ html[data-theme="light"] #toolbar-actions #btn-update:hover {
   color: var(--text-dim);
   flex-shrink: 0;
 }
-/* ctx usage pill next to the session name (full "model | effort | %" in the
-   tooltip). Color is set inline per usage; dims when the statusline goes stale. */
+/* ctx usage pill next to the session name ("model | reasoning | %").
+   Color is set inline per usage; dims when the statusline goes stale. */
 .session-ctx {
   flex-shrink: 0;
   font-size: 10px;

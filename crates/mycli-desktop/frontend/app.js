@@ -293,7 +293,7 @@ async function setupListeners() {
       notifyFlashPrefs.ctxBadge = notifyChkCtxBadge.checked;
       saveNotifyFlashPrefs();
       // Apply immediately: hide (or re-show) every existing badge.
-      for (const [pid, tt] of terminals) if (tt.ctxPct != null) updateCtxUi(pid, tt);
+      for (const [pid, tt] of terminals) if (tt.ctxPct != null || tt.codexDetected) updateCtxUi(pid, tt);
       updateGlobalUsageUi();
     });
     if (notifyChkCtxVoice) notifyChkCtxVoice.addEventListener("change", () => {
@@ -2567,6 +2567,10 @@ const CODEX_CTX_RE = /(?:\bcontext(?:\s+window)?\s+(?:left|remaining)\s*:?\s*(\d
 // Codex banner/status line. Limit accepted ids to Codex/OpenAI model families
 // so Claude's own `Model: …` statusline can never populate this field.
 const CODEX_MODEL_RE = /\bmodel\s*:\s*((?:gpt|o|codex)[A-Za-z0-9._-]{0,58})/i;
+// Codex prints its product banner before it has rendered a context footer.
+// Detect that banner so the per-pane indicators can appear immediately with
+// a placeholder instead of waiting for the first completed turn.
+const CODEX_START_RE = /\b(?:openai\s+)?codex(?:\s+cli)?\b/i;
 // CSI covers styles, cursor movement and erase controls. OSC is included because
 // some terminals emit title updates in the same PTY chunk as the status footer.
 const TERMINAL_ESCAPE_RE = /\x1b(?:\][^\x07\x1b]*(?:\x07|\x1b\\)|\[[0-?]*[ -\/]*[@-~])/g;
@@ -2598,9 +2602,15 @@ function activeClaudeLimits() {
   if (aAt < 0 && bAt < 0) return null;
   return bAt > aAt ? claudeLimitsApi : claudeLimits;
 }
-function parseCodexConfigModel(text) {
-  const m = text.match(/^\s*model\s*=\s*["']([^"']+)["']\s*$/im);
-  return m ? m[1].trim() : null;
+function parseCodexConfig(text) {
+  const get = (key) => {
+    const m = text.match(new RegExp(`^\\s*${key}\\s*=\\s*["']([^"']+)["']\\s*$`, "im"));
+    return m ? m[1].trim() : null;
+  };
+  return {
+    model: get("model"),
+    reasoningEffort: get("model_reasoning_effort"),
+  };
 }
 const CTX_STALE_MS = 5 * 60 * 1000; // no statusline redraw for 5 min → dim badge
 const CTX_LEVELS = [50, 70, 85];    // buddy announces when first crossing these
@@ -2616,6 +2626,8 @@ const CTX_PHRASES = {
 let claudeEffort = null; // e.g. "xhigh" — from ~/.claude/settings.json
 let codexConfiguredModel = null; // from ~/.codex/config.toml
 let codexSessionModel = null; // active session model from Codex settings events
+let codexConfiguredReasoningEffort = null; // from ~/.codex/config.toml
+let codexSessionReasoningEffort = null; // active session reasoning setting from rollout events
 
 // Scan one pump-tick's worth of PTY output for the statusline patterns. Keeps a
 // short tail so a pattern split across ticks still matches on the next one.
@@ -2624,6 +2636,13 @@ function scanCtxUsage(id, t, data) {
   t._ctxTail = rawText.slice(-240);
   const text = terminalPlainText(rawText);
   let changed = false;
+  if (!t.codexDetected && CODEX_START_RE.test(text)) {
+    t.codexDetected = true;
+    if (t.ctxSource !== "codex") {
+      t.ctxSource = "codex";
+      changed = true;
+    }
+  }
   // Only the LAST occurrence matters — the statuslines redraw constantly and
   // older matches in the same burst are already outdated.
   // Claude (OMC HUD): `ctx:NN%` where NN is percent USED.
@@ -2692,23 +2711,25 @@ function ctxColor(pct) {
 function ctxBadgeText(t) {
   const parts = [];
   if (t.ctxSource === "codex") {
-    // Codex has no effort in its status output (and none set in config.toml);
-    // its badge is "model | used%". ctxPct is already converted from "left".
+    // Codex's status footer has no reasoning setting, so prefer the active
+    // rollout value and fall back to config.toml. ctxPct is converted from "left".
     parts.push(codexSessionModel || t.codexModel || codexConfiguredModel || "Codex");
+    const effort = codexSessionReasoningEffort || codexConfiguredReasoningEffort;
+    if (effort) parts.push(effort);
   } else {
     if (t.ctxModel) parts.push(t.ctxModel);
     if (claudeEffort) parts.push(claudeEffort);
   }
-  parts.push(t.ctxPct + "%");
+  parts.push(t.ctxPct == null ? "—" : t.ctxPct + "%");
   return parts.join(" | ");
 }
 
 // Refresh both badges (pane overlay + session-list pill) for one session.
 function updateCtxUi(id, t) {
-  if (t.ctxPct == null) return;
+  if (t.ctxPct == null && !t.codexDetected) return;
   const show = notifyFlashPrefs.ctxBadge;
-  const color = ctxColor(t.ctxPct);
-  const stale = performance.now() - (t.ctxAt || 0) > CTX_STALE_MS;
+  const color = t.ctxPct == null ? "var(--text-muted, #8b93a7)" : ctxColor(t.ctxPct);
+  const stale = t.ctxPct != null && performance.now() - (t.ctxAt || 0) > CTX_STALE_MS;
   const pe = t.paneEl && t.paneEl.querySelector(".pane-ctx");
   if (pe) {
     pe.textContent = show ? ctxBadgeText(t) : "";
@@ -2726,8 +2747,8 @@ function updateCtxUi(id, t) {
       const nameEl = li.querySelector(".session-name");
       if (nameEl) nameEl.after(se); else li.appendChild(se);
     }
-    se.textContent = t.ctxPct + "%";
-    se.title = ctxBadgeText(t); // full "model | effort | ctx" on hover
+    se.textContent = ctxBadgeText(t);
+    se.title = ctxBadgeText(t);
     se.style.color = color;
     se.style.borderColor = color;
     se.classList.toggle("stale", stale);
@@ -2842,9 +2863,16 @@ async function loadCodexLimits() {
           const ts = tc.thread_settings || ev.thread_settings || {};
           const nextModel = (tc.model || tc.settings?.model || tc.collaboration_mode?.settings?.model
             || ts.model || ts.collaboration_mode?.settings?.model || null);
-          if (nextModel && nextModel !== codexSessionModel) {
-            codexSessionModel = nextModel;
-            for (const [pid, tt] of terminals) if (tt.ctxPct != null && tt.ctxSource === "codex") updateCtxUi(pid, tt);
+          const nextReasoningEffort = (tc.model_reasoning_effort || tc.reasoning_effort
+            || tc.settings?.model_reasoning_effort || tc.settings?.reasoning_effort
+            || tc.collaboration_mode?.settings?.model_reasoning_effort || tc.collaboration_mode?.settings?.reasoning_effort
+            || ts.model_reasoning_effort || ts.reasoning_effort
+            || ts.collaboration_mode?.settings?.model_reasoning_effort || ts.collaboration_mode?.settings?.reasoning_effort || null);
+          if ((nextModel && nextModel !== codexSessionModel)
+            || (nextReasoningEffort && nextReasoningEffort !== codexSessionReasoningEffort)) {
+            if (nextModel) codexSessionModel = nextModel;
+            if (nextReasoningEffort) codexSessionReasoningEffort = nextReasoningEffort;
+            for (const [pid, tt] of terminals) if ((tt.ctxPct != null || tt.codexDetected) && tt.ctxSource === "codex") updateCtxUi(pid, tt);
           }
         } catch {}
       }
@@ -2909,7 +2937,7 @@ async function loadClaudeEffort() {
     const next = JSON.parse(txt).effortLevel || null;
     if (next !== claudeEffort) {
       claudeEffort = next;
-      for (const [pid, tt] of terminals) if (tt.ctxPct != null) updateCtxUi(pid, tt);
+      for (const [pid, tt] of terminals) if (tt.ctxPct != null || tt.codexDetected) updateCtxUi(pid, tt);
     }
   } catch { /* no Claude settings — badge simply omits effort */ }
 }
@@ -2918,10 +2946,11 @@ async function loadCodexModelSetting() {
   try {
     const home = await invoke("explorer_home_dir");
     const txt = await invoke("read_text_file", { path: home + "/.codex/config.toml" });
-    const next = parseCodexConfigModel(txt);
-    if (next !== codexConfiguredModel) {
-      codexConfiguredModel = next;
-      for (const [pid, tt] of terminals) if (tt.ctxPct != null && tt.ctxSource === "codex") updateCtxUi(pid, tt);
+    const next = parseCodexConfig(txt);
+    if (next.model !== codexConfiguredModel || next.reasoningEffort !== codexConfiguredReasoningEffort) {
+      codexConfiguredModel = next.model;
+      codexConfiguredReasoningEffort = next.reasoningEffort;
+      for (const [pid, tt] of terminals) if ((tt.ctxPct != null || tt.codexDetected) && tt.ctxSource === "codex") updateCtxUi(pid, tt);
     }
   } catch { /* no Codex config — badge simply omits the fallback model */ }
 }
@@ -2938,7 +2967,7 @@ function initCtxUsage() {
   // Staleness sweep: dim badges whose statusline stopped redrawing (Claude
   // Code exited or the pane went back to a plain shell).
   setInterval(() => {
-    for (const [pid, tt] of terminals) if (tt.ctxPct != null) updateCtxUi(pid, tt);
+    for (const [pid, tt] of terminals) if (tt.ctxPct != null || tt.codexDetected) updateCtxUi(pid, tt);
     updateGlobalUsageUi();
   }, 30_000);
 }
@@ -5408,7 +5437,7 @@ function refreshSessionList() {
   }
 
   // Rebuilding dropped the ctx pills — re-attach them for sessions that have one.
-  for (const [pid, tt] of terminals) if (tt.ctxPct != null) updateCtxUi(pid, tt);
+  for (const [pid, tt] of terminals) if (tt.ctxPct != null || tt.codexDetected) updateCtxUi(pid, tt);
 }
 
 // Lightweight: just move the active highlight without rebuilding.
