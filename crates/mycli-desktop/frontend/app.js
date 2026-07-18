@@ -2018,6 +2018,36 @@ async function createPane(parentEl, shell, args, cwd) {
     term.textarea.addEventListener("compositionend", () => {
       const ti = terminals.get(id); if (ti) ti.imeComposing = false;
     });
+
+    // ── macOS WKWebView IME shim ──────────────────────────────────────────────
+    // On macOS WebKit the Korean/CJK IME fires NO composition events and instead
+    // delivers every refinement as an `input` event with inputType
+    // `insertReplacementText` (isComposing:false, keyCode 229) — xterm.js never
+    // sees a composition, forwards only the raw first jamo and drops the
+    // replacements, so syllables split (xtermjs/xterm.js#5887, #5894; WKWebView
+    // only, Chrome/Electron unaffected). Hijack that flow at `beforeinput`: erase
+    // the partial we already sent (Backspace ×liveLen) and send the refined
+    // syllable, bypassing xterm entirely. ASCII/normal keys fall through to xterm.
+    if (IS_MAC) {
+      const ta = term.textarea;
+      let liveLen = 0; // display chars of the in-progress syllable already sent to the PTY
+      const commit = () => { liveLen = 0; };
+      ta.addEventListener("beforeinput", (e) => {
+        const it = e.inputType;
+        const d = e.data || "";
+        const isReplace = it === "insertReplacementText";
+        const isImeInsert = it === "insertText" && !!d && /[^\x00-\x7F]/.test(d) && !e.isComposing;
+        if (!isReplace && !isImeInsert) { commit(); return; } // ASCII/other → let xterm handle
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        const erase = isReplace ? "\x7f".repeat(liveLen) : "";
+        invoke("pty_write", { id, data: erase + d });
+        liveLen = [...d].length;
+        try { ta.value = ""; } catch {}
+      }, true);
+      ta.addEventListener("compositionend", commit);
+      ta.addEventListener("blur", commit);
+    }
   }
   paneEl.addEventListener("mousedown", () => { if (focusedPaneId !== id) setFocusedPane(id); }, true);
   paneEl.addEventListener("click", () => setFocusedPane(id));
