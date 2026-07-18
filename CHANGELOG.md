@@ -8,6 +8,44 @@ For installers, see the [GitHub Releases](https://github.com/ChoiGyber/Mymux/rel
 
 ---
 
+## v0.1.34 — 2026-07-18
+
+### Fixed / 버그 수정
+- **Session-list usage badge shows % only / 세션 목록 사용량 배지 % 단독 표시.**
+  v0.1.33 made the session-list pill show the full `model | reasoning | usage`
+  text, crowding the sidebar. The pill now shows just the usage percentage
+  again; the full readout is still available as a hover tooltip, and the
+  pane's top-right badge keeps showing the complete text.
+
+  v0.1.33에서 세션 목록 pill에 `모델 | 리즈닝 | 사용량` 전체 텍스트가 들어가
+  목록이 복잡해졌습니다. 다시 사용량 %만 표시하고, 전체 정보는 마우스를
+  올리면 툴팁으로 확인할 수 있습니다. 패인 우상단 배지는 기존대로 전체
+  정보를 유지합니다.
+
+- **macOS Korean input in TUIs / macOS TUI 한글 입력 수정.**
+  On macOS WebKit the Korean IME fires no composition events and delivers each
+  refinement as an `insertReplacementText` input event, so TUIs (Claude Code,
+  Codex) received split jamo instead of composed syllables. A macOS-only
+  `beforeinput` shim now erases the partial already sent and forwards the
+  composed syllable straight to the PTY.
+
+  macOS WebKit에서 한글 IME가 composition 이벤트 없이 `insertReplacementText`
+  input 이벤트로만 조합 결과를 전달해, TUI(Claude Code·Codex)에서 음절이
+  자모로 분리 입력되던 문제를 수정했습니다. macOS 전용 `beforeinput` shim이
+  이미 전송된 조각을 지우고 완성된 음절을 PTY로 직접 보냅니다.
+
+- **macOS toolbar CL usage readout / macOS 툴바 CL 사용량 표시.**
+  On macOS Claude Code keeps its OAuth credentials in the login Keychain and
+  writes no `.credentials.json`, so the account-wide CL (5h/wk) readout stayed
+  blank. Credentials are now also read from the Keychain (read-only fallback);
+  Windows/Linux behavior is unchanged.
+
+  macOS에서는 Claude Code가 자격증명을 로그인 Keychain에 저장해 툴바의
+  CL(5h/wk) 사용량이 표시되지 않던 문제를 수정했습니다. Keychain에서 읽기
+  전용으로 자격증명을 읽어오며, Windows·Linux 동작은 그대로입니다.
+
+---
+
 ## v0.1.33 — 2026-07-18
 
 ### Added / 새 기능
