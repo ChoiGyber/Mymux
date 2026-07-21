@@ -8,6 +8,19 @@ For installers, see the [GitHub Releases](https://github.com/ChoiGyber/Mymux/rel
 
 ---
 
+## v0.1.36 — 2026-07-22
+
+### Added / New features
+- **Mode-aware favorite command shortcuts.** A favorite selected while a shell
+  is active appears only in shell shortcuts; a favorite selected while an AI
+  session is active appears only in that session's draggable AI command dock.
+  Moving a favorite to the other active mode updates its target directly.
+- **Built-in work-record prompt.** `작업기록 남기고 마무리해줘` is seeded once as
+  the `LOG` favorite in the AI command dock. Its position stays clear of the
+  input area and can be moved vertically along the pane edge.
+
+---
+
 ## v0.1.35 — 2026-07-22
 
 ### Added / New features

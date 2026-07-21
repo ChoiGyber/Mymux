@@ -401,7 +401,7 @@ impl App {
 
         let was_edit = self.mode == Mode::Edit;
         let result = if let Some(id) = self.editing_id.take() {
-            // Preserve fields the TUI edit form doesn't carry (favorite, cwd, alias).
+            // Preserve fields the TUI edit form doesn't carry (favorite target, cwd, alias).
             let prev = self.commands.iter().find(|c| c.id == id);
             let cmd = SavedCommand {
                 id: id.clone(),
@@ -409,6 +409,9 @@ impl App {
                 command: self.input_command.trim().to_string(),
                 description: self.input_description.trim().to_string(),
                 favorite: prev.map(|c| c.favorite).unwrap_or(false),
+                favorite_target: prev
+                    .map(|c| c.favorite_target.clone())
+                    .unwrap_or_else(|| "shell".to_string()),
                 cwd: prev.map(|c| c.cwd.clone()).unwrap_or_default(),
                 alias: prev.map(|c| c.alias.clone()).unwrap_or_default(),
             };

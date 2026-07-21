@@ -1486,13 +1486,14 @@ html[data-theme="light"] #toolbar-actions #btn-update:hover {
 .pane-ctx:empty { display: none; }
 .pane-ctx.stale { opacity: 0.38; }
 
-/* Saved-command tabs extend from the right pane edge and stay out of the way
-   while a full-screen AI CLI is active. */
+/* Favorite-command dock: available only while an AI CLI owns the pane. It is
+   anchored to the right edge, starts above the terminal input, and can be
+   dragged vertically by its small grip. */
 .pane-command-shortcuts {
   position: absolute;
-  top: 26px;
+  bottom: 54px;
   right: 1px;
-  z-index: 4;
+  z-index: 6;
   display: flex;
   flex-direction: column;
   align-items: flex-end;
@@ -1504,11 +1505,40 @@ html[data-theme="light"] #toolbar-actions #btn-update:hover {
 }
 .pane-command-shortcuts.ai-hidden {
   opacity: 0;
-  transform: translateX(10px);
+  transform: translateX(12px);
   visibility: hidden;
   pointer-events: none;
   transition: opacity 0.18s ease, transform 0.18s ease, visibility 0s linear 0.18s;
 }
+.pane-command-shortcuts.shell-mode {
+  top: 26px;
+  bottom: auto;
+}
+.pane-command-shortcuts.shell-mode .pane-command-shortcut {
+  background: var(--surface);
+  color: var(--text-dim);
+}
+.pane-command-shortcuts.shell-mode .pane-command-shortcut:hover,
+.pane-command-shortcuts.shell-mode .pane-command-shortcut:focus-visible {
+  background: var(--accent);
+  color: #fff;
+}
+.pane-command-dock-grip {
+  width: 24px;
+  height: 14px;
+  padding: 0 0 2px;
+  border: 1px solid rgba(15, 158, 240, 0.38);
+  border-right: 0;
+  border-radius: 5px 0 0 5px;
+  background: var(--surface);
+  color: var(--text-dim);
+  font: 700 10px/11px "D2Coding", monospace;
+  letter-spacing: 1px;
+  text-align: center;
+  cursor: grab;
+  user-select: none;
+}
+.pane-command-dock-grip:active { cursor: grabbing; }
 .pane-command-shortcut {
   min-width: 31px;
   height: 22px;

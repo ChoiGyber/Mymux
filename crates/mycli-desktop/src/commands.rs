@@ -8,6 +8,8 @@ pub struct CommandDto {
     pub command: String,
     pub description: String,
     pub favorite: bool,
+    #[serde(rename = "favoriteTarget")]
+    pub favorite_target: String,
     pub cwd: String,
     pub alias: String,
 }
@@ -20,6 +22,7 @@ impl From<SavedCommand> for CommandDto {
             command: c.command,
             description: c.description,
             favorite: c.favorite,
+            favorite_target: c.favorite_target,
             cwd: c.cwd,
             alias: c.alias,
         }
@@ -45,26 +48,56 @@ const DEFAULT_COMMANDS: &[(&str, &str, &str)] = &[
     ("c&p", "git add -A && git commit -m \"update\" && git push", "Commit and push"),
 ];
 
+const DEFAULT_WORKLOG_COMMAND: (&str, &str, &str, &str) = (
+    "작업기록 남기고 마무리",
+    "작업기록 남기고 마무리해줘",
+    "AI session: record completed work and finish the task.",
+    "LOG",
+);
+
 /// Seed built-in shortcuts once (tracked by a marker file so deletions stick).
 fn seed_default_commands(s: &CommandStore) {
     let marker = match dirs::home_dir() {
         Some(h) => h.join(".mycli").join(".defaults_seeded"),
         None => return,
     };
-    if marker.exists() {
+    if !marker.exists() {
+        let existing = s.list().unwrap_or_default();
+        for (name, command, desc) in DEFAULT_COMMANDS {
+            if !existing.iter().any(|c| c.name == *name) {
+                let _ = s.add(SavedCommand::new(
+                    name.to_string(),
+                    command.to_string(),
+                    desc.to_string(),
+                ));
+            }
+        }
+        let _ = std::fs::write(&marker, b"1");
+    }
+
+    // This was added after the original defaults marker existed. Seed it with
+    // its own one-time marker so existing installs receive it without making a
+    // command the user deliberately deleted reappear on every launch.
+    let worklog_marker = marker.with_file_name(".worklog_command_seeded_v1");
+    if worklog_marker.exists() {
         return;
     }
     let existing = s.list().unwrap_or_default();
-    for (name, command, desc) in DEFAULT_COMMANDS {
-        if !existing.iter().any(|c| c.name == *name) {
-            let _ = s.add(SavedCommand::new(
-                name.to_string(),
-                command.to_string(),
-                desc.to_string(),
-            ));
-        }
+    if !existing
+        .iter()
+        .any(|c| c.command == DEFAULT_WORKLOG_COMMAND.1)
+    {
+        let mut cmd = SavedCommand::new(
+            DEFAULT_WORKLOG_COMMAND.0.to_string(),
+            DEFAULT_WORKLOG_COMMAND.1.to_string(),
+            DEFAULT_WORKLOG_COMMAND.2.to_string(),
+        );
+        cmd.alias = DEFAULT_WORKLOG_COMMAND.3.to_string();
+        cmd.favorite = true;
+        cmd.favorite_target = "ai".to_string();
+        let _ = s.add(cmd);
     }
-    let _ = std::fs::write(&marker, b"1");
+    let _ = std::fs::write(&worklog_marker, b"1");
 }
 
 #[tauri::command]
@@ -102,20 +135,25 @@ pub fn update_command(
     alias: Option<String>,
 ) -> Result<(), String> {
     let s = store()?;
-    // Preserve the existing favorite flag (the edit form doesn't carry it).
-    let favorite = s
+    // Preserve shortcut settings; the edit form does not carry either field.
+    let existing = s
         .list()
         .map_err(|e| e.to_string())?
         .iter()
         .find(|c| c.id == id)
-        .map(|c| c.favorite)
-        .unwrap_or(false);
+        .cloned();
+    let favorite = existing.as_ref().map(|c| c.favorite).unwrap_or(false);
+    let favorite_target = existing
+        .as_ref()
+        .map(|c| c.favorite_target.clone())
+        .unwrap_or_else(|| "shell".to_string());
     let cmd = SavedCommand {
         id,
         name,
         command,
         description,
         favorite,
+        favorite_target,
         cwd: cwd.unwrap_or_default(),
         alias: alias.unwrap_or_default(),
     };
@@ -123,11 +161,22 @@ pub fn update_command(
 }
 
 #[tauri::command]
-pub fn set_favorite(id: String, favorite: bool) -> Result<(), String> {
+pub fn set_favorite(
+    id: String,
+    favorite: bool,
+    favorite_target: Option<String>,
+) -> Result<(), String> {
     let s = store()?;
     let mut cmds = s.list().map_err(|e| e.to_string())?;
     if let Some(c) = cmds.iter_mut().find(|c| c.id == id) {
         c.favorite = favorite;
+        if favorite {
+            if let Some(target) = favorite_target {
+                if matches!(target.as_str(), "shell" | "ai") {
+                    c.favorite_target = target;
+                }
+            }
+        }
         s.update(c.clone()).map_err(|e| e.to_string())?;
     }
     Ok(())

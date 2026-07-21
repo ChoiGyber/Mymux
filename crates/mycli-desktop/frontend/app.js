@@ -1700,8 +1700,8 @@ async function createPane(parentEl, shell, args, cwd) {
   const ctxBadgeEl = document.createElement("div");
   ctxBadgeEl.className = "pane-ctx";
   paneEl.appendChild(ctxBadgeEl);
-  // Saved-command shortcuts sit below the usage badge and send directly to
-  // this pane. They fade away while an AI CLI owns the terminal interaction.
+  // Favorite commands become a draggable edge dock while an AI CLI owns this
+  // pane, leaving the terminal's command input unobstructed.
   const commandShortcutsEl = document.createElement("div");
   commandShortcutsEl.className = "pane-command-shortcuts";
   paneEl.appendChild(commandShortcutsEl);
@@ -1750,7 +1750,7 @@ async function createPane(parentEl, shell, args, cwd) {
   // lastInputAt baseline = pane birth, so the long-task check (10+ min since
   // last input) has a sane anchor even in a pane the user never typed in
   // (e.g. a restored session auto-replaying its command).
-  terminals.set(id, { term, fitAddon, search: searchAddon, paneEl, commandShortcutsEl, type: shell === "ssh" ? "ssh" : "local", shell: shell || null, label: sessionLabel, cwd: cwd || null, unseen: false, marks: [], inputMark: null, lastInputAt: performance.now() });
+  terminals.set(id, { id, term, fitAddon, search: searchAddon, paneEl, commandShortcutsEl, type: shell === "ssh" ? "ssh" : "local", shell: shell || null, label: sessionLabel, cwd: cwd || null, unseen: false, marks: [], inputMark: null, lastInputAt: performance.now() });
   renderPaneCommandShortcuts(id);
 
   // A brand-new pane's final size isn't settled at spawn (flex sizing, font
@@ -1766,7 +1766,11 @@ async function createPane(parentEl, shell, args, cwd) {
   new ResizeObserver(() => {
     if (roPending) return;
     roPending = true;
-    requestAnimationFrame(() => { roPending = false; refitAllPanes(); });
+    requestAnimationFrame(() => {
+      roPending = false;
+      refitAllPanes();
+      positionPaneCommandDock(terminals.get(id));
+    });
   }).observe(termWrap);
 
   // Status bar: label + split/close controls. The cwd chip tracks the pane's
@@ -5925,24 +5929,97 @@ function commandShortcutLabel(cmd) {
   return Array.from(String(cmd.name || "CMD").trim()).slice(0, 3).join("") || "CMD";
 }
 
-function paneShortcutCommands() {
+function favoriteTarget(cmd) {
+  const target = cmd.favoriteTarget || cmd.favorite_target;
+  return target === "ai" ? "ai" : "shell";
+}
+
+function paneShortcutCommands(mode) {
   return [...savedCmds]
     .filter((cmd) => cmd && cmd.command && cmd.favorite)
+    .filter((cmd) => favoriteTarget(cmd) === mode)
     .sort((a, b) => (a.name || "").localeCompare(b.name || ""))
     .slice(0, 6);
+}
+
+const AI_COMMAND_DOCK_Y_KEY = "mymux.aiCommandDockY.v1";
+
+function savedAiCommandDockY() {
+  try {
+    const value = Number(localStorage.getItem(AI_COMMAND_DOCK_Y_KEY));
+    return Number.isFinite(value) && value >= 0 && value <= 1 ? value : null;
+  } catch {
+    return null;
+  }
+}
+
+function positionPaneCommandDock(t) {
+  const host = t && t.commandShortcutsEl;
+  if (!host || t.commandDockY == null) return;
+  const paneHeight = t.paneEl.clientHeight;
+  const dockHeight = host.offsetHeight;
+  if (!paneHeight || !dockHeight) return;
+  const minTop = 28;
+  const maxTop = Math.max(minTop, paneHeight - dockHeight - 54);
+  const top = Math.max(minTop, Math.min(maxTop, Math.round(t.commandDockY * paneHeight)));
+  host.style.top = `${top}px`;
+  host.style.bottom = "auto";
+}
+
+function bindPaneCommandDockDrag(ptyId, handle) {
+  handle.addEventListener("pointerdown", (event) => {
+    if (event.button !== 0) return;
+    const t = terminals.get(ptyId);
+    if (!t || !t.commandShortcutsEl) return;
+    event.preventDefault();
+    event.stopPropagation();
+    setFocusedPane(ptyId);
+
+    const dock = t.commandShortcutsEl;
+    const paneRect = t.paneEl.getBoundingClientRect();
+    const dockRect = dock.getBoundingClientRect();
+    const grabOffset = event.clientY - dockRect.top;
+    const onMove = (moveEvent) => {
+      const minTop = 28;
+      const maxTop = Math.max(minTop, paneRect.height - dock.offsetHeight - 54);
+      const top = Math.max(minTop, Math.min(maxTop, moveEvent.clientY - paneRect.top - grabOffset));
+      t.commandDockY = top / Math.max(paneRect.height, 1);
+      dock.style.top = `${Math.round(top)}px`;
+      dock.style.bottom = "auto";
+    };
+    const onUp = () => {
+      try { localStorage.setItem(AI_COMMAND_DOCK_Y_KEY, String(t.commandDockY)); } catch {}
+      document.removeEventListener("pointermove", onMove);
+      document.removeEventListener("pointerup", onUp);
+    };
+    document.addEventListener("pointermove", onMove);
+    document.addEventListener("pointerup", onUp);
+  });
 }
 
 function renderPaneCommandShortcuts(ptyId) {
   const t = terminals.get(ptyId);
   const host = t && t.commandShortcutsEl;
   if (!host) return;
+  const mode = t.aiMode ? "ai" : "shell";
   host.replaceChildren();
-  for (const cmd of paneShortcutCommands()) {
+  host.classList.toggle("shell-mode", mode === "shell");
+  host.classList.toggle("ai-mode", mode === "ai");
+  if (mode === "ai") {
+    const handle = document.createElement("div");
+    handle.className = "pane-command-dock-grip";
+    handle.textContent = "::";
+    handle.title = "Drag shortcuts up or down";
+    handle.setAttribute("aria-label", "Drag shortcut dock");
+    bindPaneCommandDockDrag(ptyId, handle);
+    host.appendChild(handle);
+  }
+  for (const cmd of paneShortcutCommands(mode)) {
     const button = document.createElement("button");
     button.type = "button";
     button.className = "pane-command-shortcut";
     button.textContent = commandShortcutLabel(cmd);
-    button.title = cmd.command;
+    button.title = [cmd.name, cmd.description, cmd.command].filter(Boolean).join("\n");
     button.setAttribute("aria-label", `Run ${cmd.name || cmd.command}`);
     button.addEventListener("click", (event) => {
       event.stopPropagation();
@@ -5951,7 +6028,13 @@ function renderPaneCommandShortcuts(ptyId) {
     });
     host.appendChild(button);
   }
-  host.classList.toggle("ai-hidden", !!t.aiMode || host.childElementCount === 0);
+  host.classList.toggle("ai-hidden", host.querySelectorAll(".pane-command-shortcut").length === 0);
+  if (t.commandDockY == null) t.commandDockY = savedAiCommandDockY();
+  if (mode === "ai") requestAnimationFrame(() => positionPaneCommandDock(t));
+  else {
+    host.style.top = "";
+    host.style.bottom = "";
+  }
 }
 
 function renderAllPaneCommandShortcuts() {
@@ -5961,7 +6044,7 @@ function renderAllPaneCommandShortcuts() {
 function setPaneAiMode(t, active) {
   if (!t || t.aiMode === active) return;
   t.aiMode = active;
-  if (t.commandShortcutsEl) t.commandShortcutsEl.classList.toggle("ai-hidden", active);
+  renderPaneCommandShortcuts(t.id);
 }
 
 function renderCmdList(cmds) {
@@ -6001,7 +6084,11 @@ function renderCmdList(cmds) {
     `;
     li.querySelector(".send-btn").addEventListener("click", (e) => { e.stopPropagation(); runCommandCombo(cmd); });
     const favButton = li.querySelector(".fav-btn");
-    favButton.title = "Show in pane shortcuts";
+    const activeMode = terminals.get(focusedPaneId ?? activeTermId)?.aiMode ? "ai" : "shell";
+    const currentTarget = favoriteTarget(cmd);
+    favButton.title = cmd.favorite
+      ? `Pinned to ${currentTarget === "ai" ? "AI command dock" : "shell shortcuts"}`
+      : `Pin to ${activeMode === "ai" ? "AI command dock" : "shell shortcuts"}`;
     favButton.addEventListener("click", (e) => { e.stopPropagation(); toggleFavorite(cmd); });
     li.querySelector(".copy-btn").addEventListener("click", (e) => { e.stopPropagation(); copyCmd(cmd); });
     li.querySelector(".edit-btn").addEventListener("click", (e) => { e.stopPropagation(); openModal(cmd); });
@@ -6013,7 +6100,9 @@ function renderCmdList(cmds) {
 
 async function toggleFavorite(cmd) {
   try {
-    await invoke("set_favorite", { id: cmd.id, favorite: !cmd.favorite });
+    const target = terminals.get(focusedPaneId ?? activeTermId)?.aiMode ? "ai" : "shell";
+    const favorite = !cmd.favorite || favoriteTarget(cmd) !== target;
+    await invoke("set_favorite", { id: cmd.id, favorite, favoriteTarget: target });
     await loadCommands();
   } catch (e) {
     toast("Error: " + e, true);
