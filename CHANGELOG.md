@@ -8,6 +8,23 @@ For installers, see the [GitHub Releases](https://github.com/ChoiGyber/Mymux/rel
 
 ---
 
+## v0.1.35 — 2026-07-22
+
+### Added / New features
+- **Shell command shortcuts.** Star a saved command beside `Send` to pin it as
+  a compact shortcut on each shell pane. The shortcut uses the command alias
+  when present, otherwise an automatically derived abbreviation, and runs with
+  the same directory-aware behavior as `Send`.
+- **Command history autocomplete.** Commands entered at a shell prompt are
+  remembered locally and suggested alongside saved commands, ranked by use.
+
+### Fixed / Bug fixes
+- **Codex context usage refresh.** The usage badge now reads real
+  `token_count` session events instead of matching unrelated output that merely
+  contains the same text, so the context percentage updates with the model.
+
+---
+
 ## v0.1.34 — 2026-07-18
 
 ### Fixed / 버그 수정

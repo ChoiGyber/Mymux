@@ -107,6 +107,9 @@ function effectiveLetterSpacing() {
 }
 let savedCmds = [];
 let currentInput = "";
+const COMMAND_HISTORY_KEY = "mymux.commandHistory.v1";
+const COMMAND_HISTORY_LIMIT = 200;
+let commandHistory = loadCommandHistory();
 let acSelectedIdx = -1;
 let currentExplorerPath = "";
 let currentSftpId = null;
@@ -537,10 +540,12 @@ async function setupListeners() {
           const [chunks, exited] = await invoke("pty_read", { id });
           if (chunks.length) {
             const data = chunks.join("");
-            t.term.write(data); // one write, not per-chunk
+            t.term.write(data, () => {
+              const tt = terminals.get(id);
+              if (tt) scanCtxUsage(id, tt, data); // Claude/Codex statusline -> ctx/model badge
+            }); // one write, not per-chunk
             markPaneActivity(id, t); // unseen badge when this pane is hidden
             trackOutputSilence(id, t); // flash when sustained output goes quiet
-            scanCtxUsage(id, t, data); // Claude Code statusline → ctx/model badge
             if (t.pendingReplay) armReplaySettle(id, t); // SSH: replay once the prompt settles
           } else if (exited) closeTerminal(id);
         } catch {}
@@ -1695,6 +1700,11 @@ async function createPane(parentEl, shell, args, cwd) {
   const ctxBadgeEl = document.createElement("div");
   ctxBadgeEl.className = "pane-ctx";
   paneEl.appendChild(ctxBadgeEl);
+  // Saved-command shortcuts sit below the usage badge and send directly to
+  // this pane. They fade away while an AI CLI owns the terminal interaction.
+  const commandShortcutsEl = document.createElement("div");
+  commandShortcutsEl.className = "pane-command-shortcuts";
+  paneEl.appendChild(commandShortcutsEl);
   parentEl.appendChild(paneEl);
 
   const term = createXterm();
@@ -1740,7 +1750,8 @@ async function createPane(parentEl, shell, args, cwd) {
   // lastInputAt baseline = pane birth, so the long-task check (10+ min since
   // last input) has a sane anchor even in a pane the user never typed in
   // (e.g. a restored session auto-replaying its command).
-  terminals.set(id, { term, fitAddon, search: searchAddon, paneEl, type: shell === "ssh" ? "ssh" : "local", shell: shell || null, label: sessionLabel, cwd: cwd || null, unseen: false, marks: [], inputMark: null, lastInputAt: performance.now() });
+  terminals.set(id, { term, fitAddon, search: searchAddon, paneEl, commandShortcutsEl, type: shell === "ssh" ? "ssh" : "local", shell: shell || null, label: sessionLabel, cwd: cwd || null, unseen: false, marks: [], inputMark: null, lastInputAt: performance.now() });
+  renderPaneCommandShortcuts(id);
 
   // A brand-new pane's final size isn't settled at spawn (flex sizing, font
   // load, a split ratio applied just after). The container-level observer only
@@ -1989,6 +2000,7 @@ async function createPane(parentEl, shell, args, cwd) {
           flashPaneNotify(id);
         }
         t.outStart = null; // the shell prompt is back — don't double-fire the silence watcher
+        setPaneAiMode(t, false);
       }
       return true;
     });
@@ -2597,6 +2609,7 @@ const CODEX_CTX_RE = /(?:\bcontext(?:\s+window)?\s+(?:left|remaining)\s*:?\s*(\d
 // Codex banner/status line. Limit accepted ids to Codex/OpenAI model families
 // so Claude's own `Model: …` statusline can never populate this field.
 const CODEX_MODEL_RE = /\bmodel\s*:\s*((?:gpt|o|codex)[A-Za-z0-9._-]{0,58})/i;
+const CODEX_MODEL_ID_RE = /\b((?:gpt|o|codex)[A-Za-z0-9._-]{1,58})\b/i;
 // Codex prints its product banner before it has rendered a context footer.
 // Detect that banner so the per-pane indicators can appear immediately with
 // a placeholder instead of waiting for the first completed turn.
@@ -2607,6 +2620,47 @@ const TERMINAL_ESCAPE_RE = /\x1b(?:\][^\x07\x1b]*(?:\x07|\x1b\\)|\[[0-?]*[ -\/]*
 
 function terminalPlainText(text) {
   return text.replace(TERMINAL_ESCAPE_RE, "");
+}
+function terminalVisibleTail(term, maxLines = 6) {
+  try {
+    const buf = term && term.buffer && term.buffer.active;
+    if (!buf || !buf.getLine) return "";
+    const lines = [];
+    const start = Math.max(0, buf.baseY + buf.cursorY - maxLines + 1);
+    const end = Math.min(buf.length - 1, buf.baseY + buf.cursorY);
+    for (let i = start; i <= end; i++) {
+      const line = buf.getLine(i);
+      if (line) lines.push(line.translateToString(true));
+    }
+    return lines.join("\n");
+  } catch {
+    return "";
+  }
+}
+function tailAfterLastLineBreak(text) {
+  const i = Math.max(text.lastIndexOf("\n"), text.lastIndexOf("\r"));
+  return i >= 0 ? text.slice(i + 1) : text;
+}
+function parseCodexFooter(text) {
+  const tail = text.slice(-360).trimEnd();
+  let found = null;
+  for (const m of tail.matchAll(new RegExp(CODEX_CTX_RE.source, "gi"))) {
+    const left = parseInt(m[1] || m[2], 10);
+    if (Number.isNaN(left)) continue;
+    found = {
+      pct: 100 - Math.min(100, left),
+      index: text.length - tail.length + m.index,
+      end: text.length - tail.length + m.index + m[0].length,
+    };
+  }
+  if (!found) return null;
+  const relEnd = found.end - (text.length - tail.length);
+  const sameStatusLineSuffix = tailAfterLastLineBreak(tail.slice(relEnd));
+  if (sameStatusLineSuffix.length > 96) return null;
+  const relIndex = found.index - (text.length - tail.length);
+  const lineStart = Math.max(tail.lastIndexOf("\n", relIndex), tail.lastIndexOf("\r", relIndex));
+  found.line = tail.slice(lineStart + 1, relEnd + sameStatusLineSuffix.length);
+  return found;
 }
 // Account-wide Claude rate limits ride the same HUD statusline:
 // `5h:45%(3h42m) wk:12%(2d5h) mo:8%(15d3h)` — value colored, reset time dimmed,
@@ -2658,20 +2712,26 @@ let codexConfiguredModel = null; // from ~/.codex/config.toml
 let codexSessionModel = null; // active session model from Codex settings events
 let codexConfiguredReasoningEffort = null; // from ~/.codex/config.toml
 let codexSessionReasoningEffort = null; // active session reasoning setting from rollout events
+let codexSessionCtxPct = null; // active session context usage from rollout token_count events
+let codexSessionCtxAt = 0;
 
 // Scan one pump-tick's worth of PTY output for the statusline patterns. Keeps a
 // short tail so a pattern split across ticks still matches on the next one.
 function scanCtxUsage(id, t, data) {
   const rawText = (t._ctxTail || "") + data;
-  t._ctxTail = rawText.slice(-240);
-  const text = terminalPlainText(rawText);
+  t._ctxTail = rawText.slice(-360);
+  const visibleText = terminalVisibleTail(t.term);
+  const text = terminalPlainText(rawText + (visibleText ? "\n" + visibleText : ""));
   let changed = false;
   if (!t.codexDetected && CODEX_START_RE.test(text)) {
     t.codexDetected = true;
+    setPaneAiMode(t, true);
     if (t.ctxSource !== "codex") {
       t.ctxSource = "codex";
       changed = true;
     }
+    applyCodexSessionSnapshot();
+    loadCodexLimits();
   }
   // Only the LAST occurrence matters — the statuslines redraw constantly and
   // older matches in the same burst are already outdated.
@@ -2686,20 +2746,24 @@ function scanCtxUsage(id, t, data) {
   // A status footer is the final visible text in a repaint. Restrict parsing to
   // that tail so a model reply containing the same words cannot overwrite a
   // session badge. `trimEnd` retains all meaningful status text.
-  const codexFooter = text.slice(-160).trimEnd();
+  const codexFooter = parseCodexFooter(text);
   let codexPct = null, codexAt = -1;
-  for (const m of codexFooter.matchAll(new RegExp(CODEX_CTX_RE.source, "gi"))) {
-    if (m.index + m[0].length !== codexFooter.length) continue;
-    const left = parseInt(m[1] || m[2], 10);
-    if (!Number.isNaN(left)) {
-      codexPct = 100 - Math.min(100, left);
-      codexAt = text.length - codexFooter.length + m.index;
+  if (codexFooter) {
+    codexPct = codexFooter.pct;
+    codexAt = codexFooter.index;
+    if (!t.codexDetected) {
+      t.codexDetected = true;
+      changed = true;
+      applyCodexSessionSnapshot();
+      loadCodexLimits();
     }
+    setPaneAiMode(t, true);
   }
   // Both tools can show up in one pane over time — the later sighting wins.
   const pct = codexAt > claudeAt ? codexPct : claudePct;
   if (pct != null) {
     const source = codexAt > claudeAt ? "codex" : "claude";
+    setPaneAiMode(t, true);
     t.ctxAt = performance.now(); // fresh sighting even when the value is equal
     if (pct !== t.ctxPct || source !== t.ctxSource) { t.ctxPct = pct; t.ctxSource = source; changed = true; }
     maybeAnnounceCtx(id, t);
@@ -2714,7 +2778,15 @@ function scanCtxUsage(id, t, data) {
   }
   let codexModel = null;
   for (const m of text.matchAll(new RegExp(CODEX_MODEL_RE.source, "gi"))) codexModel = m[1];
-  if (codexModel && codexModel !== t.codexModel) { t.codexModel = codexModel; changed = true; }
+  if (!codexModel && codexFooter && codexFooter.line) {
+    const m = CODEX_MODEL_ID_RE.exec(codexFooter.line);
+    if (m) codexModel = m[1];
+  }
+  if (codexModel && codexModel !== t.codexModel) {
+    t.codexModel = codexModel;
+    changed = true;
+    if (t.ctxSource === "codex" || t.codexDetected) loadCodexLimits();
+  }
   // Account-wide Claude rate limits (5h:34% wk:12% …) — global, not per-pane.
   let limitsChanged = false;
   for (const [key, re, field, rfield] of CL_LIMIT_KEYS) {
@@ -2750,7 +2822,7 @@ function ctxBadgeText(t) {
     if (t.ctxModel) parts.push(t.ctxModel);
     if (claudeEffort) parts.push(claudeEffort);
   }
-  parts.push(t.ctxPct == null ? "—" : t.ctxPct + "%");
+  parts.push(t.ctxPct == null ? "?" : t.ctxPct + "%");
   return parts.join(" | ");
 }
 
@@ -2777,7 +2849,7 @@ function updateCtxUi(id, t) {
       const nameEl = li.querySelector(".session-name");
       if (nameEl) nameEl.after(se); else li.appendChild(se);
     }
-    se.textContent = t.ctxPct == null ? "—" : t.ctxPct + "%";
+    se.textContent = t.ctxPct == null ? "?" : t.ctxPct + "%";
     se.title = ctxBadgeText(t); // full "model | effort | ctx" on hover
     se.style.color = color;
     se.style.borderColor = color;
@@ -2868,12 +2940,28 @@ function fmtEpochRemain(epochSec) {
 // codex session runs (a Mymux pane, VS Code, a plain terminal).
 function findKeyDeep(obj, key) {
   if (!obj || typeof obj !== "object") return null;
-  if (obj[key]) return obj[key];
+  if (Object.prototype.hasOwnProperty.call(obj, key)) return obj[key];
   for (const v of Object.values(obj)) {
     const r = findKeyDeep(v, key);
-    if (r) return r;
+    if (r != null) return r;
   }
   return null;
+}
+function firstValueDeep(obj, keys) {
+  if (!obj || typeof obj !== "object") return null;
+  for (const key of keys) {
+    if (Object.prototype.hasOwnProperty.call(obj, key) && obj[key] != null && obj[key] !== "") return obj[key];
+  }
+  for (const v of Object.values(obj)) {
+    const r = firstValueDeep(v, keys);
+    if (r != null && r !== "") return r;
+  }
+  return null;
+}
+function numberValueDeep(obj, keys) {
+  const value = firstValueDeep(obj, keys);
+  const n = Number(value);
+  return Number.isFinite(n) ? n : null;
 }
 function codexWindowLabel(min) {
   if (min == null) return "";
@@ -2881,32 +2969,79 @@ function codexWindowLabel(min) {
   if (min % 60 === 0 && min >= 60) return (min / 60) + "h";
   return min + "m";
 }
+function parseCodexTokenCountEvent(ev) {
+  const payload = ev && ev.payload ? ev.payload : {};
+  if (ev.type !== "token_count" && payload.type !== "token_count") return null;
+
+  const info = payload.info || ev.info || {};
+  const usage = info.total_token_usage || payload.total_token_usage || ev.total_token_usage || info.last_token_usage || {};
+  const inputTokens = numberValueDeep({ usage, info, payload, ev }, ["input_tokens", "inputTokens"]);
+  const totalTokens = numberValueDeep({ usage, info, payload, ev }, ["total_tokens", "totalTokens"]);
+  const windowTokens = numberValueDeep({ info, payload, ev }, ["model_context_window", "modelContextWindow", "context_window", "contextWindow"]);
+  if (!windowTokens || windowTokens <= 0) return null;
+
+  // Cached input is billed differently but still occupies the prompt context.
+  const used = inputTokens != null ? inputTokens : totalTokens;
+  if (used == null) return null;
+  return Math.max(0, Math.min(100, Math.round((used / windowTokens) * 100)));
+}
+function applyCodexSessionSnapshot() {
+  for (const [pid, tt] of terminals) {
+    if (!tt.codexDetected && tt.ctxSource !== "codex") continue;
+    let changed = false;
+    const stalePanePct = tt.ctxPct == null || performance.now() - (tt.ctxAt || 0) > 10_000;
+    if (codexSessionCtxPct != null && stalePanePct) {
+      tt.ctxPct = codexSessionCtxPct;
+      tt.ctxAt = codexSessionCtxAt || performance.now();
+      tt.ctxSource = "codex";
+      maybeAnnounceCtx(pid, tt);
+      changed = true;
+    }
+    if (changed || tt.ctxSource === "codex") updateCtxUi(pid, tt);
+  }
+}
 async function loadCodexLimits() {
   try {
     const tail = await invoke("codex_rollout_tail", { maxBytes: 65536 });
     const lines = tail.split("\n");
+    let foundSessionSettings = false;
+    let foundSessionCtx = false;
+    let foundRateLimits = false;
     for (let i = lines.length - 1; i >= 0; i--) {
-      if (lines[i].indexOf('"turn_context"') >= 0 || lines[i].indexOf('"thread_settings_applied"') >= 0) {
+      if (!foundSessionSettings && (lines[i].indexOf('"turn_context"') >= 0 || lines[i].indexOf('"thread_settings_applied"') >= 0 || lines[i].indexOf('"session_meta"') >= 0)) {
         try {
           const ev = JSON.parse(lines[i]);
           const tc = ev.payload || {};
           const ts = tc.thread_settings || ev.thread_settings || {};
-          const nextModel = (tc.model || tc.settings?.model || tc.collaboration_mode?.settings?.model
-            || ts.model || ts.collaboration_mode?.settings?.model || null);
-          const nextReasoningEffort = (tc.model_reasoning_effort || tc.reasoning_effort
-            || tc.settings?.model_reasoning_effort || tc.settings?.reasoning_effort
-            || tc.collaboration_mode?.settings?.model_reasoning_effort || tc.collaboration_mode?.settings?.reasoning_effort
-            || ts.model_reasoning_effort || ts.reasoning_effort
-            || ts.collaboration_mode?.settings?.model_reasoning_effort || ts.collaboration_mode?.settings?.reasoning_effort || null);
+          const nextModel = firstValueDeep({ tc, ts }, ["model", "model_id"]);
+          const nextReasoningEffort = firstValueDeep({ tc, ts }, ["effort", "model_reasoning_effort", "reasoning_effort", "reasoningEffort"]);
           if ((nextModel && nextModel !== codexSessionModel)
             || (nextReasoningEffort && nextReasoningEffort !== codexSessionReasoningEffort)) {
             if (nextModel) codexSessionModel = nextModel;
             if (nextReasoningEffort) codexSessionReasoningEffort = nextReasoningEffort;
-            for (const [pid, tt] of terminals) if ((tt.ctxPct != null || tt.codexDetected) && tt.ctxSource === "codex") updateCtxUi(pid, tt);
+            applyCodexSessionSnapshot();
+          }
+          foundSessionSettings = Boolean(nextModel || nextReasoningEffort);
+        } catch {}
+      }
+      if (!foundSessionCtx && lines[i].indexOf('"type":"token_count"') >= 0) {
+        try {
+          const ev = JSON.parse(lines[i]);
+          const nextPct = parseCodexTokenCountEvent(ev);
+          if (nextPct != null) {
+            if (nextPct !== codexSessionCtxPct) {
+              codexSessionCtxPct = nextPct;
+              codexSessionCtxAt = performance.now();
+            }
+            applyCodexSessionSnapshot();
+            foundSessionCtx = true;
           }
         } catch {}
       }
-      if (lines[i].indexOf('"rate_limits"') < 0) continue;
+      if (foundRateLimits || lines[i].indexOf('"rate_limits"') < 0) {
+        if (foundSessionSettings && foundSessionCtx && foundRateLimits) break;
+        continue;
+      }
       try {
         const rl = findKeyDeep(JSON.parse(lines[i]), "rate_limits");
         const p = rl && rl.primary;
@@ -2922,8 +3057,9 @@ async function loadCodexLimits() {
           at: performance.now(),
         };
         updateGlobalUsageUi();
-        return;
+        foundRateLimits = true;
       } catch { /* line cut at the tail boundary — try the previous one */ }
+      if (foundSessionSettings && foundSessionCtx && foundRateLimits) break;
     }
   } catch { /* codex not installed / no rollouts — segment stays hidden */ }
 }
@@ -5227,12 +5363,15 @@ function commandComboLine(cmd, kind) {
   return `cd '${dir.replace(/'/g, "'\\''")}' && ${cmd.command}`;
 }
 
+const AI_CLI_COMMAND_RE = /(?:^|[;&|]\s*)(?:claude|codex)(?:\s|$)/i;
+
 function runCommandCombo(cmd, ptyId = activeTermId) {
   if (ptyId == null || !terminals.has(ptyId)) {
     toast("No active terminal.", true);
     return;
   }
   const line = commandComboLine(cmd, paneShellKind(terminals.get(ptyId)));
+  if (AI_CLI_COMMAND_RE.test(cmd.command || "")) setPaneAiMode(terminals.get(ptyId), true);
   armNotifyCycle(ptyId); // user-launched command — its completion should notify
   invoke("pty_write", { id: ptyId, data: line + "\r" });
   terminals.get(ptyId)?.term.focus();
@@ -5771,9 +5910,58 @@ async function loadCommands() {
     const cmds = await invoke("list_commands");
     savedCmds = cmds;
     renderCmdList(cmds);
+    renderAllPaneCommandShortcuts();
   } catch (err) {
     toast("Error: " + err, true);
   }
+}
+
+function commandShortcutLabel(cmd) {
+  const alias = String(cmd.alias || "").replace(/\s+/g, "").trim();
+  if (alias) return alias.slice(0, 4).toUpperCase();
+  const words = String(cmd.command || "").match(/[A-Za-z0-9]+/g) || [];
+  const initials = words.slice(0, 3).map((word) => word[0]).join("");
+  if (initials) return initials.toUpperCase();
+  return Array.from(String(cmd.name || "CMD").trim()).slice(0, 3).join("") || "CMD";
+}
+
+function paneShortcutCommands() {
+  return [...savedCmds]
+    .filter((cmd) => cmd && cmd.command && cmd.favorite)
+    .sort((a, b) => (a.name || "").localeCompare(b.name || ""))
+    .slice(0, 6);
+}
+
+function renderPaneCommandShortcuts(ptyId) {
+  const t = terminals.get(ptyId);
+  const host = t && t.commandShortcutsEl;
+  if (!host) return;
+  host.replaceChildren();
+  for (const cmd of paneShortcutCommands()) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "pane-command-shortcut";
+    button.textContent = commandShortcutLabel(cmd);
+    button.title = cmd.command;
+    button.setAttribute("aria-label", `Run ${cmd.name || cmd.command}`);
+    button.addEventListener("click", (event) => {
+      event.stopPropagation();
+      setFocusedPane(ptyId);
+      runCommandCombo(cmd, ptyId);
+    });
+    host.appendChild(button);
+  }
+  host.classList.toggle("ai-hidden", !!t.aiMode || host.childElementCount === 0);
+}
+
+function renderAllPaneCommandShortcuts() {
+  for (const ptyId of terminals.keys()) renderPaneCommandShortcuts(ptyId);
+}
+
+function setPaneAiMode(t, active) {
+  if (!t || t.aiMode === active) return;
+  t.aiMode = active;
+  if (t.commandShortcutsEl) t.commandShortcutsEl.classList.toggle("ai-hidden", active);
 }
 
 function renderCmdList(cmds) {
@@ -5812,7 +6000,9 @@ function renderCmdList(cmds) {
       ${cmd.description ? `<div class="cmd-desc">${esc(cmd.description)}</div>` : ""}
     `;
     li.querySelector(".send-btn").addEventListener("click", (e) => { e.stopPropagation(); runCommandCombo(cmd); });
-    li.querySelector(".fav-btn").addEventListener("click", (e) => { e.stopPropagation(); toggleFavorite(cmd); });
+    const favButton = li.querySelector(".fav-btn");
+    favButton.title = "Show in pane shortcuts";
+    favButton.addEventListener("click", (e) => { e.stopPropagation(); toggleFavorite(cmd); });
     li.querySelector(".copy-btn").addEventListener("click", (e) => { e.stopPropagation(); copyCmd(cmd); });
     li.querySelector(".edit-btn").addEventListener("click", (e) => { e.stopPropagation(); openModal(cmd); });
     li.querySelector(".cmd-x").addEventListener("click", (e) => { e.stopPropagation(); quickDeleteCmd(cmd); });
@@ -5942,14 +6132,63 @@ function baseName(p) {
 // AUTOCOMPLETE
 // ═══════════════════════════════════════════════
 
+function loadCommandHistory() {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(COMMAND_HISTORY_KEY) || "[]");
+    if (!Array.isArray(parsed)) return [];
+    return parsed
+      .filter((entry) => entry && typeof entry.command === "string" && entry.command.trim())
+      .map((entry) => ({
+        command: entry.command.trim(),
+        count: Math.max(1, Number(entry.count) || 1),
+        lastUsed: Number(entry.lastUsed) || 0,
+      }))
+      .slice(0, COMMAND_HISTORY_LIMIT);
+  } catch {
+    return [];
+  }
+}
+
+function saveCommandHistory() {
+  try {
+    localStorage.setItem(COMMAND_HISTORY_KEY, JSON.stringify(commandHistory.slice(0, COMMAND_HISTORY_LIMIT)));
+  } catch {}
+}
+
+function rememberCommand(command) {
+  const normalized = String(command || "").trim();
+  if (!normalized || normalized.length < 2) return;
+  if (/^(cls|clear|exit)$/i.test(normalized)) return;
+  if (normalized.startsWith("\x1b")) return;
+
+  const now = Date.now();
+  const existing = commandHistory.find((entry) => entry.command === normalized);
+  if (existing) {
+    existing.count = (existing.count || 1) + 1;
+    existing.lastUsed = now;
+  } else {
+    commandHistory.push({ command: normalized, count: 1, lastUsed: now });
+  }
+  commandHistory.sort((a, b) => (b.count || 1) - (a.count || 1) || (b.lastUsed || 0) - (a.lastUsed || 0));
+  commandHistory = commandHistory.slice(0, COMMAND_HISTORY_LIMIT);
+  saveCommandHistory();
+}
+
 function handleTerminalInput(data, ptyId) {
+  const tInfo = terminals.get(ptyId);
+  if (tInfo && typeof tInfo.acInput !== "string") tInfo.acInput = "";
+  const getInput = () => (tInfo ? tInfo.acInput : currentInput);
+  const setInput = (value) => {
+    currentInput = value;
+    if (tInfo) tInfo.acInput = value;
+  };
   // Track what user types to build current input line
   if (data === "\r" || data === "\n") {
     // Enter pressed — detect cd command and sync explorer
-    const typedRaw = currentInput;
-    const typed = currentInput.trim();
+    const typedRaw = getInput();
+    const typed = typedRaw.trim();
     syncExplorerOnCd(typed, ptyId);
-    currentInput = "";
+    setInput("");
     hideAutocomplete();
     // Alias typed at the prompt: erase it and run the full combo instead
     // (cd into the saved directory, then the command — one Enter).
@@ -5959,6 +6198,7 @@ function handleTerminalInput(data, ptyId) {
       runCommandCombo(aliasCmd, ptyId);
       return "consumed";
     }
+    rememberCommand(typed);
     return;
   }
 
@@ -5973,16 +6213,17 @@ function handleTerminalInput(data, ptyId) {
     if (!acPopup.classList.contains("hidden") && acSelectedIdx >= 0) {
       const items = acList.querySelectorAll(".ac-item");
       if (items[acSelectedIdx]) {
-        const saved = savedCmds.find((c) => c.id === items[acSelectedIdx].dataset.cmdId);
+        const item = items[acSelectedIdx];
+        const saved = savedCmds.find((c) => c.id === item.dataset.cmdId);
         // cwd-bound commands expand to the full "cd … then run" line.
         const cmd = saved
           ? commandComboLine(saved, paneShellKind(terminals.get(ptyId)))
-          : items[acSelectedIdx].dataset.command;
+          : item.dataset.command;
         // Clear current input and type the command
-        const backspaces = "\x7f".repeat(currentInput.length);
+        const backspaces = "\x7f".repeat(getInput().length);
         invoke("pty_write", { id: ptyId, data: backspaces });
         invoke("pty_write", { id: ptyId, data: cmd });
-        currentInput = cmd;
+        setInput(cmd);
         hideAutocomplete();
         // Prevent default tab from being sent
         return "consumed";
@@ -6007,18 +6248,19 @@ function handleTerminalInput(data, ptyId) {
 
   if (data === "\x7f" || data === "\b") {
     // Backspace
-    currentInput = currentInput.slice(0, -1);
+    setInput(getInput().slice(0, -1));
   } else if (data.length === 1 && data.charCodeAt(0) >= 32) {
     // Printable character
-    currentInput += data;
+    setInput(getInput() + data);
   } else {
     // Control sequences — ignore for autocomplete tracking
     return;
   }
 
   // Show/update autocomplete
-  if (currentInput.length >= 2) {
-    showAutocomplete(currentInput, ptyId);
+  const input = getInput();
+  if (input.length >= 1) {
+    showAutocomplete(input, ptyId);
   } else {
     hideAutocomplete();
   }
@@ -6026,7 +6268,7 @@ function handleTerminalInput(data, ptyId) {
 
 function showAutocomplete(input, ptyId) {
   const lower = input.toLowerCase();
-  const matches = savedCmds.filter(
+  let matches = savedCmds.filter(
     (c) =>
       (c.alias && c.alias.toLowerCase().startsWith(lower)) ||
       c.name.toLowerCase().includes(lower) ||
@@ -6036,6 +6278,27 @@ function showAutocomplete(input, ptyId) {
   matches.sort((a, b) =>
     ((b.alias && b.alias.toLowerCase().startsWith(lower)) ? 1 : 0) -
     ((a.alias && a.alias.toLowerCase().startsWith(lower)) ? 1 : 0));
+  const existingCommands = new Set(matches.map((c) => commandComboLine(c, paneShellKind(terminals.get(ptyId)))));
+  const historyMatches = commandHistory
+    .filter((h) => h.command.toLowerCase().includes(lower) && !existingCommands.has(h.command))
+    .sort((a, b) => {
+      const aPrefix = a.command.toLowerCase().startsWith(lower) ? 1 : 0;
+      const bPrefix = b.command.toLowerCase().startsWith(lower) ? 1 : 0;
+      if (aPrefix !== bPrefix) return bPrefix - aPrefix;
+      if ((a.count || 1) !== (b.count || 1)) return (b.count || 1) - (a.count || 1);
+      return (b.lastUsed || 0) - (a.lastUsed || 0);
+    })
+    .map((h) => ({
+      id: `history:${h.command}`,
+      name: "History",
+      command: h.command,
+      description: `${h.count || 1}x`,
+      alias: "",
+      cwd: "",
+      isHistory: true,
+      historyCount: h.count || 1,
+    }));
+  matches = [...matches, ...historyMatches];
 
   if (matches.length === 0) {
     hideAutocomplete();
@@ -6054,15 +6317,19 @@ function showAutocomplete(input, ptyId) {
     // Show what will ACTUALLY run — for cwd-bound commands that's the full
     // "cd <dir> then command" line, not just the bare command.
     const preview = commandComboLine(cmd, shellKind);
+    const meta = cmd.isHistory ? ` <span class="ac-meta">${cmd.historyCount}x</span>` : "";
     li.innerHTML = `
-      <span class="ac-name">${cmd.alias ? `<span class="cmd-alias">${esc(cmd.alias)}</span>` : ""}${esc(cmd.name)}</span>
+      <span class="ac-name">${cmd.alias ? `<span class="cmd-alias">${esc(cmd.alias)}</span>` : ""}${esc(cmd.name)}${meta}</span>
       <span class="ac-cmd" title="${esc(preview)}">${esc(preview)}</span>
     `;
     li.addEventListener("click", () => {
       const line = commandComboLine(cmd, paneShellKind(terminals.get(ptyId)));
-      const backspaces = "\x7f".repeat(currentInput.length);
+      const current = terminals.get(ptyId)?.acInput ?? currentInput;
+      const backspaces = "\x7f".repeat(current.length);
       invoke("pty_write", { id: ptyId, data: backspaces + line });
       currentInput = line;
+      const pane = terminals.get(ptyId);
+      if (pane) pane.acInput = line;
       hideAutocomplete();
       terminals.get(ptyId)?.term.focus();
     });

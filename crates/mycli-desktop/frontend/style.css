@@ -742,13 +742,14 @@ html[data-theme="light"] #toolbar-actions #btn-update:hover {
 .cmd-actions button:hover { color: var(--text); background: var(--border); }
 .cmd-actions .send-btn { background: var(--accent); color: #fff; border-color: var(--accent); }
 .cmd-actions .send-btn:hover { background: var(--accent-hover); border-color: var(--accent-hover); }
-.cmd-actions .fav-btn { font-size: 13px; padding: 1px 5px; }
+.cmd-actions .copy-btn { order: 1; }
+.cmd-actions .edit-btn { order: 2; }
+.cmd-actions .send-btn { order: 3; }
+.cmd-actions .fav-btn { order: 4; font-size: 13px; padding: 1px 5px; }
 .cmd-actions .fav-btn.on { color: var(--accent); }
-/* Hover-reveal: ★/Copy/Edit appear on hover; Send stays visible. */
-.cmd-actions .fav-btn,
+/* Copy/Edit appear on hover; the star remains next to Send as the shortcut toggle. */
 .cmd-actions .copy-btn,
 .cmd-actions .edit-btn { opacity: 0; transition: opacity 0.1s; }
-.cmd-item:hover .cmd-actions .fav-btn,
 .cmd-item:hover .cmd-actions .copy-btn,
 .cmd-item:hover .cmd-actions .edit-btn { opacity: 1; }
 /* Delete (×) at the top-right corner, hover-reveal. */
@@ -1485,6 +1486,56 @@ html[data-theme="light"] #toolbar-actions #btn-update:hover {
 .pane-ctx:empty { display: none; }
 .pane-ctx.stale { opacity: 0.38; }
 
+/* Saved-command tabs extend from the right pane edge and stay out of the way
+   while a full-screen AI CLI is active. */
+.pane-command-shortcuts {
+  position: absolute;
+  top: 26px;
+  right: 1px;
+  z-index: 4;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 4px;
+  opacity: 1;
+  transform: translateX(0);
+  visibility: visible;
+  transition: opacity 0.18s ease, transform 0.18s ease, visibility 0s linear;
+}
+.pane-command-shortcuts.ai-hidden {
+  opacity: 0;
+  transform: translateX(10px);
+  visibility: hidden;
+  pointer-events: none;
+  transition: opacity 0.18s ease, transform 0.18s ease, visibility 0s linear 0.18s;
+}
+.pane-command-shortcut {
+  min-width: 31px;
+  height: 22px;
+  padding: 0 7px 1px 8px;
+  border: 1px solid rgba(15, 158, 240, 0.44);
+  border-right: 0;
+  border-radius: 7px 0 0 7px;
+  background: #eaf5ff;
+  color: #175a86;
+  font: 600 11px/20px "Noto Sans KR", "Malgun Gothic", sans-serif;
+  letter-spacing: 0;
+  cursor: pointer;
+  box-shadow: -1px 1px 5px rgba(0, 0, 0, 0.12);
+  transition: background 0.12s ease, color 0.12s ease, transform 0.12s ease;
+}
+.pane-command-shortcut:hover,
+.pane-command-shortcut:focus-visible {
+  outline: none;
+  background: var(--accent);
+  color: #fff;
+  transform: translateX(-2px);
+}
+html[data-theme="dark"] .pane-command-shortcut {
+  background: #d8edff;
+  color: #164b70;
+}
+
 /* Task-completion notification: pulse the pane/session border (terminal bell). */
 @keyframes notifyPulse {
   0%   { box-shadow: inset 0 0 0 2px var(--notify-color, #e34234); }
@@ -2185,6 +2236,15 @@ html[data-theme="light"] #toolbar-actions #btn-update:hover {
 .ac-item .ac-name {
   font-size: 13px;
   font-weight: 500;
+}
+.ac-item .ac-meta {
+  margin-left: 5px;
+  font-size: 10px;
+  font-weight: 500;
+  color: var(--text-dim);
+}
+.ac-item:hover .ac-meta, .ac-item.selected .ac-meta {
+  color: rgba(255, 255, 255, 0.75);
 }
 .ac-item .ac-cmd {
   font-family: "D2Coding", "Cascadia Code", "Consolas", "Noto Sans KR", monospace;
