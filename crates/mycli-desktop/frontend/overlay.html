@@ -1,0 +1,165 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Mymux Buddy</title>
+<style>
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; width: 100%; background: transparent; overflow: hidden; }
+  body {
+    -webkit-user-select: none; user-select: none; cursor: pointer;
+    font-family: -apple-system, "Segoe UI", system-ui, "Malgun Gothic", sans-serif;
+  }
+
+  /* The whole buddy fades + pops in/out as one unit. */
+  #buddy {
+    position: absolute; right: 16px; bottom: 12px;
+    display: flex; flex-direction: column; align-items: center; gap: 8px;
+    opacity: 0; transform: translateY(10px) scale(0.85);
+    transition: opacity 0.4s ease, transform 0.4s cubic-bezier(0.2, 1.4, 0.4, 1);
+  }
+  #buddy.show { opacity: 1; transform: translateY(0) scale(1); }
+  #buddy.leaving { opacity: 0; transform: translateY(6px) scale(0.7); }
+
+  /* Speech bubble (mirrors the in-app buddy bubble) */
+  .bubble {
+    position: relative; max-width: 260px; width: max-content;
+    padding: 8px 12px; background: #fff; color: #2b1c12;
+    border-radius: 12px; font-size: 12.5px; line-height: 1.35;
+    font-weight: 600; text-align: center;
+    box-shadow: 0 3px 14px rgba(0, 0, 0, 0.32);
+  }
+  .bubble::after {
+    content: ""; position: absolute; top: 100%; left: 50%;
+    transform: translateX(-50%);
+    border: 7px solid transparent; border-top-color: #fff;
+  }
+
+  .char { filter: drop-shadow(0 4px 6px rgba(0, 0, 0, 0.35)); }
+  #buddy[data-char="classic"] .fox-mascot { display: none; }
+  #buddy[data-char="mascot"]  .fox-classic { display: none; }
+
+  /* classic fox (copied from the in-app buddy) */
+  .fox-classic { display: block; width: 64px; height: 55px; animation: fox-sway 2.4s ease-in-out infinite; transform-origin: 50% 88%; }
+  @keyframes fox-sway { 0%, 100% { transform: rotate(-7deg); } 50% { transform: rotate(7deg); } }
+  .fox-eye { transform-box: fill-box; transform-origin: center; animation: fox-blink 3.6s ease-in-out infinite; }
+  @keyframes fox-blink { 0%, 90%, 100% { transform: scaleY(1); } 93%, 96% { transform: scaleY(0.08); } }
+
+  /* mascot fox (copied from the in-app buddy) */
+  .fox-mascot { width: 62px; height: 62px; }
+  .fox-mascot .mascot-svg { display: block; width: 100%; height: 100%; pointer-events: none; }
+  .fox-mascot .m-eye-l, .fox-mascot .m-eye-r,
+  .fox-mascot .m-eye-shine-l, .fox-mascot .m-eye-shine-r,
+  .fox-mascot .m-mouth { transform-box: fill-box; transform-origin: center; }
+  .fox-mascot[data-state="idle"] { animation: mascot-breathe 3s ease-in-out infinite; }
+  .fox-mascot[data-state="idle"] .m-eye-l, .fox-mascot[data-state="idle"] .m-eye-r,
+  .fox-mascot[data-state="idle"] .m-eye-shine-l, .fox-mascot[data-state="idle"] .m-eye-shine-r { animation: mascot-blink 4.2s ease-in-out infinite; }
+  .fox-mascot[data-state="cheer"] { animation: mascot-cheer-shake 1.6s ease-in-out; }
+  .fox-mascot[data-state="cheer"] .m-eye-l, .fox-mascot[data-state="cheer"] .m-eye-r { d: path("M 36 48 Q 40 44 44 48"); }
+  .fox-mascot[data-state="cheer"] .m-mouth { d: path("M 43 61 Q 50 69 57 61"); stroke-width: 2.5; }
+  @keyframes mascot-breathe { 0%, 100% { transform: scale(1) translateY(0); } 50% { transform: scale(1.02) translateY(-1px); } }
+  @keyframes mascot-blink { 0%, 91%, 100% { transform: scaleY(1); } 94% { transform: scaleY(0.08); } 97% { transform: scaleY(1); } }
+  @keyframes mascot-cheer-shake {
+    0%, 100% { transform: rotate(0) translateX(0); }
+    15% { transform: rotate(-7deg) translateX(-2px); } 30% { transform: rotate(7deg) translateX(2px); }
+    45% { transform: rotate(-6deg) translateX(-2px); } 60% { transform: rotate(6deg) translateX(2px); }
+    75% { transform: rotate(-3deg) translateX(-1px); }
+  }
+</style>
+</head>
+<body>
+  <div id="buddy" data-char="mascot" title="클릭하면 그 세션으로 이동">
+    <div class="bubble"></div>
+    <div class="char">
+      <svg class="fox-classic" viewBox="0 0 120 104" width="64" height="55" aria-hidden="true">
+        <polygon points="30,44 15,9 50,30" fill="#e8833a" stroke="#e8833a" stroke-width="7" stroke-linejoin="round"/>
+        <polygon points="90,44 105,9 70,30" fill="#e8833a" stroke="#e8833a" stroke-width="7" stroke-linejoin="round"/>
+        <polygon points="33,40 21,17 47,32" fill="#7c4a21" stroke="#7c4a21" stroke-width="4" stroke-linejoin="round"/>
+        <polygon points="87,40 99,17 73,32" fill="#7c4a21" stroke="#7c4a21" stroke-width="4" stroke-linejoin="round"/>
+        <ellipse cx="60" cy="64" rx="37" ry="40" fill="#f09144"/>
+        <ellipse cx="45" cy="76" rx="16" ry="16" fill="#fdf4e8"/>
+        <ellipse cx="75" cy="76" rx="16" ry="16" fill="#fdf4e8"/>
+        <ellipse cx="60" cy="84" rx="16" ry="13" fill="#fdf4e8"/>
+        <ellipse cx="34" cy="72" rx="6.5" ry="4.5" fill="#f7938c" opacity="0.55"/>
+        <ellipse cx="86" cy="72" rx="6.5" ry="4.5" fill="#f7938c" opacity="0.55"/>
+        <ellipse class="fox-eye" cx="43" cy="60" rx="6.5" ry="8.5" fill="#2b1c12"/>
+        <ellipse class="fox-eye" cx="77" cy="60" rx="6.5" ry="8.5" fill="#2b1c12"/>
+        <circle cx="45.5" cy="56.5" r="2.6" fill="#fff" opacity="0.95"/>
+        <circle cx="79.5" cy="56.5" r="2.6" fill="#fff" opacity="0.95"/>
+        <circle cx="41" cy="62" r="1.1" fill="#fff" opacity="0.7"/>
+        <circle cx="75" cy="62" r="1.1" fill="#fff" opacity="0.7"/>
+        <ellipse cx="60" cy="72" rx="4" ry="3.2" fill="#3a2417"/>
+        <path d="M60 74 Q60 79 55 81 M60 74 Q60 79 65 81" stroke="#3a2417" stroke-width="2" fill="none" stroke-linecap="round"/>
+        <path d="M22 71 L35 73 M22 79 L35 78" stroke="#d97b2e" stroke-width="1.6" stroke-linecap="round"/>
+        <path d="M98 71 L85 73 M98 79 L85 78" stroke="#d97b2e" stroke-width="1.6" stroke-linecap="round"/>
+      </svg>
+      <div class="fox-mascot" data-state="idle">
+        <svg viewBox="0 0 100 100" class="mascot-svg" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+          <ellipse cx="50" cy="88" rx="22" ry="3" fill="rgba(0,0,0,0.25)"/>
+          <circle cx="50" cy="52" r="32" class="m-body" fill="#f97316"/>
+          <polygon points="24,33 28,13 42,27" class="m-ear m-ear-l" fill="#f97316"/>
+          <polygon points="76,33 72,13 58,27" class="m-ear m-ear-r" fill="#f97316"/>
+          <ellipse cx="50" cy="60" rx="20" ry="14" class="m-belly" fill="rgba(255,255,255,0.92)"/>
+          <g class="m-eyes">
+            <circle cx="40" cy="48" r="3.5" class="m-eye m-eye-l" fill="#1f1f1f"/>
+            <circle cx="60" cy="48" r="3.5" class="m-eye m-eye-r" fill="#1f1f1f"/>
+            <circle cx="41" cy="47" r="1.2" class="m-eye-shine m-eye-shine-l" fill="#fff"/>
+            <circle cx="61" cy="47" r="1.2" class="m-eye-shine m-eye-shine-r" fill="#fff"/>
+          </g>
+          <path d="M 44 62 Q 50 67 56 62" class="m-mouth" fill="none" stroke="#1f1f1f" stroke-width="2" stroke-linecap="round"/>
+        </svg>
+      </div>
+    </div>
+  </div>
+  <script>
+    (function () {
+      var T = window.__TAURI__ || {};
+      var listen = T.event && T.event.listen;
+      var invoke = T.core && T.core.invoke;
+      var buddy = document.getElementById("buddy");
+      var bubble = buddy.querySelector(".bubble");
+      var mascot = buddy.querySelector(".fox-mascot");
+      var curSession = null, hideTimer = null;
+      // Dialect-flavored completion lines (matches the in-app buddy's dialects).
+      var DONE = {
+        standard:    "작업 끝났어요! 🎉",
+        gyeongsang:  "작업 다 됐다 아이가! 🎉",
+        jeolla:      "작업 다 끝났어야! 🎉",
+        gangwon:     "작업 다 됐드래요! 🎉",
+        chungcheong: "작업 다 끝났슈! 🎉"
+      };
+      function fadeOut() {
+        buddy.classList.remove("show");
+        buddy.classList.add("leaving");
+        setTimeout(function () { if (invoke) invoke("buddy_overlay_hide").catch(function () {}); }, 450);
+      }
+      if (listen) listen("buddy:show", function (e) {
+        var p = (e && e.payload) || {};
+        curSession = p.sessionId;
+        buddy.dataset.char = p.character === "classic" ? "classic" : "mascot";
+        var dia = DONE[p.dialect] ? p.dialect : "standard";
+        var name = p.title || "세션";
+        bubble.textContent = "'" + name + "' " + DONE[dia];
+        // Replay the cheer animation on every appearance.
+        if (mascot) {
+          mascot.dataset.state = "idle"; void mascot.offsetWidth; mascot.dataset.state = "cheer";
+          setTimeout(function () { mascot.dataset.state = "idle"; }, 1600);
+        }
+        // Reset to the hidden state first so the fade/pop always plays, even
+        // after a Rust-side hide (app return / focus) that this JS never saw.
+        buddy.classList.remove("show", "leaving");
+        void buddy.offsetWidth;
+        requestAnimationFrame(function () { buddy.classList.add("show"); });
+        clearTimeout(hideTimer);
+        hideTimer = setTimeout(fadeOut, 15000); // visible for 15s, then fade out
+      });
+      // Click the buddy → bring the app forward and jump to that session.
+      buddy.addEventListener("click", function () {
+        clearTimeout(hideTimer);
+        if (invoke) invoke("buddy_overlay_focus_main", { sessionId: curSession }).catch(function () {});
+      });
+    })();
+  </script>
+</body>
+</html>

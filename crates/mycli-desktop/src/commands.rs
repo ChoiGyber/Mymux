@@ -435,6 +435,96 @@ pub fn window_attention(window: tauri::WebviewWindow) -> Result<(), String> {
         .map_err(|e| e.to_string())
 }
 
+/// Show the desktop buddy overlay at the active monitor's bottom-right and hand
+/// the finished session's details to its webview. Called when a task completes
+/// while the main window is in the background, so the notice is visible even
+/// with Mymux minimized or covered by another app. (macOS positions native
+/// windows freely too; the OS just tends to be watched top-right — either way
+/// the overlay owns its own coordinates.)
+#[tauri::command]
+pub fn buddy_overlay_show(
+    app: tauri::AppHandle,
+    session_id: i64,
+    title: String,
+    character: String,
+    dialect: String,
+    long_task: bool,
+) -> Result<(), String> {
+    use tauri::{Emitter, Manager};
+    let overlay = app
+        .get_webview_window("buddy-overlay")
+        .ok_or_else(|| "buddy-overlay window missing".to_string())?;
+    // Bottom-right of the current monitor (fall back to the primary monitor).
+    let monitor = overlay
+        .current_monitor()
+        .ok()
+        .flatten()
+        .or_else(|| overlay.primary_monitor().ok().flatten());
+    if let Some(m) = monitor {
+        let ms = m.size();
+        let mp = m.position();
+        if let Ok(os) = overlay.outer_size() {
+            // Reserve scales with DPI: a fixed logical margin is more physical
+            // pixels at high scale, so multiply by the monitor's scale factor.
+            let margin = (24.0 * m.scale_factor()) as i32;
+            let reserve = (56.0 * m.scale_factor()) as i32; // clear taskbar / Dock
+            let x = mp.x + ms.width as i32 - os.width as i32 - margin;
+            let y = mp.y + ms.height as i32 - os.height as i32 - reserve;
+            let _ = overlay.set_position(tauri::PhysicalPosition::new(x, y));
+        }
+    }
+    overlay.show().map_err(|e| e.to_string())?;
+    let _ = overlay.set_always_on_top(true);
+    // Target the overlay explicitly — Tauri v2 emit() broadcasts app-wide.
+    app.emit_to(
+        "buddy-overlay",
+        "buddy:show",
+        serde_json::json!({
+            "sessionId": session_id,
+            "title": title,
+            "character": character,
+            "dialect": dialect,
+            "longTask": long_task,
+        }),
+    )
+    .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// Hide the buddy overlay — its 15s fade-out timer fired, or the app regained
+/// focus and no longer needs the desktop notice.
+#[tauri::command]
+pub fn buddy_overlay_hide(app: tauri::AppHandle) -> Result<(), String> {
+    use tauri::Manager;
+    if let Some(overlay) = app.get_webview_window("buddy-overlay") {
+        overlay.hide().map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
+/// Buddy clicked: bring the main window forward (un-minimize + focus) and tell
+/// the frontend which session to jump to.
+#[tauri::command]
+pub fn buddy_overlay_focus_main(
+    app: tauri::AppHandle,
+    session_id: Option<i64>,
+) -> Result<(), String> {
+    use tauri::{Emitter, Manager};
+    if let Some(overlay) = app.get_webview_window("buddy-overlay") {
+        let _ = overlay.hide();
+    }
+    if let Some(main) = app.get_webview_window("main") {
+        let _ = main.unminimize();
+        let _ = main.show();
+        let _ = main.set_focus();
+        // Bring the app forward regardless; only the session jump needs an id.
+        if let Some(sid) = session_id {
+            let _ = app.emit_to("main", "buddy:goto", sid);
+        }
+    }
+    Ok(())
+}
+
 /// Open a native file picker and return the chosen path (e.g. an SSH key file).
 /// Returns None if the user cancels. Runs on a worker thread (sync command) so
 /// the blocking dialog dispatches to the main thread without deadlocking.

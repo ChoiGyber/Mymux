@@ -8,6 +8,27 @@ For installers, see the [GitHub Releases](https://github.com/ChoiGyber/Mymux/rel
 
 ---
 
+## v0.1.37 — 2026-07-22
+
+### Added / New features
+- **Per-session scratch memo (🗒).** Each session gets a memo button that opens a
+  popover notepad. Drag-selecting text in the terminal auto-collects it line by
+  line, and the memo can be copied, typed into the command line for review, or
+  run outright. Memos persist in the session file across restarts and are dropped
+  when the pane is closed.
+  세션마다 🗒 메모 버튼이 생깁니다. 터미널에서 드래그한 텍스트가 한 줄씩 자동으로
+  쌓이고, 복사·명령줄 입력(검토용)·바로 실행이 가능하며, 재시작 후에도 유지됩니다
+  (패인을 닫으면 삭제).
+- **Desktop completion buddy overlay.** When a task finishes while Mymux is
+  minimized or covered by another window, a character pops up at the screen
+  corner with a dialect-flavored "done" bubble for 15 seconds (fade in/out).
+  Clicking it brings the app forward and jumps straight to that session.
+  작업이 끝났을 때 창이 최소화되었거나 다른 창에 가려져 있으면, 화면 모서리에
+  캐릭터가 15초간 사투리 완료 말풍선과 함께 나타납니다(페이드 인/아웃). 클릭하면
+  앱이 앞으로 오면서 그 세션으로 바로 이동합니다.
+
+---
+
 ## v0.1.36 — 2026-07-22
 
 ### Added / New features

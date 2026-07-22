@@ -2080,7 +2080,7 @@ async function createPane(parentEl, shell, args, cwd) {
     clearTimeout(selCopyTimer);
     selCopyTimer = setTimeout(() => {
       const sel = term.getSelection();
-      if (sel) clipboardWrite(sel);
+      if (sel) { clipboardWrite(sel); appendPaneMemo(id, sel); }
     }, 120);
   });
   // Right-click: copy the selection if any, otherwise paste the clipboard (PuTTY-style).
@@ -2235,6 +2235,7 @@ function startFocusKeeper() {
     const now = performance.now();
     if (now - lastReturn < 600) return;
     lastReturn = now;
+    if (buddyOverlayShown) { invoke("buddy_overlay_hide").catch(() => {}); buddyOverlayShown = false; } // app is back — drop the desktop buddy
     cancelFocusReturnRetries();
     restore(true);
     forceRepaintVisiblePanes(); // wake xterm's rAF renderer so buffered echo paints now, not in a burst
@@ -2264,7 +2265,11 @@ function startFocusKeeper() {
   // return, so this is the reliable trigger.
   try {
     const ev = window.__TAURI__ && window.__TAURI__.event;
-    if (ev && ev.listen) ev.listen("mymux-refocus", () => onReturn());
+    if (ev && ev.listen) {
+      ev.listen("mymux-refocus", () => onReturn());
+      // Buddy overlay clicked → jump to that session in the main window.
+      ev.listen("buddy:goto", (e) => { buddyOverlayShown = false; const sid = e && e.payload; if (sid != null) focusSession(Number(sid)); });
+    }
   } catch {}
   // Backstop: Tauri's native window focus event (unreliable on Alt-Tab in this
   // WebView2 build, hence the Rust poll above — kept for cases where it fires).
@@ -2409,7 +2414,28 @@ function flashPaneNotify(id) {
     const tab = findTabForPane(id);
     if (tab && (tab.tabIdx !== activeTabIdx || browserTabActive || viewerActive)) markUnseen(id, t, tab);
   }
-  if (!document.hasFocus()) invoke("window_attention").catch(() => {});
+  if (!document.hasFocus()) {
+    invoke("window_attention").catch(() => {});
+    maybeShowBuddyOverlay(id, t, longTask);
+  }
+}
+// When a task finishes while the app is hidden/covered, pop a desktop buddy
+// overlay (a separate always-on-top window) at the screen's bottom-right so the
+// finished session is noticeable without the app in view. Respects the 🔔
+// character choice ("none" opts out). macOS positions it per the OS.
+let buddyOverlayShown = false;
+function maybeShowBuddyOverlay(id, t, longTask) {
+  const char = notifyFlashPrefs.character;
+  if (!char || char === "none") return;
+  try {
+    invoke("buddy_overlay_show", {
+      sessionId: id,
+      title: t ? sessionLabelFor(t) : "세션",
+      character: char === "mascot" ? "mascot" : "classic",
+      dialect: notifyFlashPrefs.dialect || "standard",
+      longTask: !!longTask,
+    }).then(() => { buddyOverlayShown = true; }).catch(() => {});
+  } catch {}
 }
 
 // Hovering a flashing pane (or its session-list row) acknowledges the
@@ -3745,6 +3771,7 @@ function setupDividerDrag(divider, container, direction) {
 function closePane(ptyId) {
   const tInfo = terminals.get(ptyId);
   if (!tInfo) return;
+  if (memoPopover && Number(memoPopover.dataset.ptyId) === ptyId) closeMemoPopover();
   clearPaneZoom(); // layout is about to change — drop any zoom overlay first
 
   const tab = findTabForPane(ptyId);
@@ -4408,6 +4435,7 @@ async function doSshConnect(opts) {
       keyPath: keyPath || null, auth,
       tmux: !!opts.tmux, tmuxName: (opts.tmuxName || "").trim() || null,
       lastCmd: opts.lastCmd || null, // carried through restore so re-run works over SSH
+      memo: opts.memo || null,       // scratch memo rides restore too
     };
     const ptyId = await createPane(rootContainer, "ssh", sshArgs);
     terminals.get(ptyId).sshTarget = target;
@@ -4884,7 +4912,8 @@ function collectSession() {
       // isn't updated as the user types).
       const t0 = tab.panes && terminals.get(tab.panes[0]);
       const lastCmd = (t0 && t0.session && t0.session.lastCmd) || tab.session.lastCmd || null;
-      arr.push({ ...tab.session, lastCmd, label: tab.label });
+      const memo = (t0 && t0.session && t0.session.memo) || tab.session.memo || null;
+      arr.push({ ...tab.session, lastCmd, memo, label: tab.label });
     }
   }
   return { version: 2, tabs: arr };
@@ -4901,7 +4930,7 @@ async function buildPaneNode(parentEl, node) {
     } else {
       const id = await createPane(parentEl, s.shell || getDefaultShellId(), null, s.cwd || undefined);
       const t = terminals.get(id);
-      if (t) t.session = { kind: "local", shell: s.shell || null, cwd: s.cwd || null, lastCmd: s.lastCmd || null };
+      if (t) t.session = { kind: "local", shell: s.shell || null, cwd: s.cwd || null, lastCmd: s.lastCmd || null, memo: s.memo || "" };
     }
     return;
   }
@@ -4989,6 +5018,7 @@ async function restoreSession() {
             tmux: !!s.tmux,
             tmuxName: s.tmuxName || null,
             lastCmd: s.lastCmd || null,
+            memo: s.memo || null,
           });
         } else {
           pwSessions.push(s); // password auth → prompt below
@@ -4997,6 +5027,7 @@ async function restoreSession() {
         const pid = await spawnTerminal(s.shell || undefined, s.cwd || undefined);
         const t = pid != null ? terminals.get(pid) : null;
         if (t && t.session && s.lastCmd) t.session.lastCmd = s.lastCmd;
+        if (t && t.session && s.memo) t.session.memo = s.memo;
       }
     } catch (e) {
       console.error("restore tab failed", e);
@@ -5139,6 +5170,7 @@ function promptSshPasswordRestore(s) {
         tmux: !!s.tmux,
         tmuxName: s.tmuxName || null,
         lastCmd: s.lastCmd || null,
+        memo: s.memo || null,
       });
       resolve();
     }
@@ -5495,6 +5527,136 @@ function reorderSessionWithin(tab, dragId, targetId, after) {
   refreshSessionList();
 }
 
+// ── Session scratch memo 🗒 ───────────────────────────────────────────────────
+// A per-session temporary notepad. Drag-selecting in the terminal auto-appends
+// to it (on top of the usual clipboard copy); the text is freely editable, can
+// be copied in one click, and can be sent to the pane's command line — typed for
+// review, or run outright. It lives on t.session.memo so it rides the existing
+// session_save/session_load pipeline: it survives a restart and is dropped when
+// the pane is closed.
+function paneMemo(id) {
+  const t = terminals.get(id);
+  return t && t.session && typeof t.session.memo === "string" ? t.session.memo : "";
+}
+function setPaneMemo(id, text) {
+  const t = terminals.get(id);
+  if (!t) return;
+  if (!t.session) t.session = { kind: "local", shell: null, cwd: null };
+  // Cap runaway growth (drag-collect can append large log chunks) by keeping the
+  // most recent tail; session.json is persisted and reloaded on every restart.
+  const MAX_MEMO = 64 * 1024;
+  t.session.memo = text.length > MAX_MEMO ? text.slice(text.length - MAX_MEMO) : text;
+  markMemoIndicator(id);
+  scheduleMemoSave();
+}
+// Drag-select auto-collect: append the selection as its own line, skipping an
+// exact repeat (onSelectionChange settles more than once per drag).
+function appendPaneMemo(id, sel) {
+  const add = (sel || "").replace(/\s+$/, "");
+  if (!add) return;
+  const cur = paneMemo(id);
+  if (cur === add || cur.endsWith("\n" + add)) return;
+  setPaneMemo(id, cur ? cur.replace(/\n+$/, "") + "\n" + add : add);
+  if (memoPopover && Number(memoPopover.dataset.ptyId) === id) {
+    const ta = memoPopover.querySelector(".memo-text");
+    if (ta && document.activeElement !== ta) { ta.value = paneMemo(id); ta.scrollTop = ta.scrollHeight; }
+  }
+}
+let memoSaveTimer = null;
+function scheduleMemoSave() {
+  clearTimeout(memoSaveTimer);
+  memoSaveTimer = setTimeout(saveSessionNow, 800);
+}
+function markMemoIndicator(id) {
+  const btn = document.querySelector(`.session-item[data-pty-id="${id}"] .session-memo`);
+  if (btn) btn.classList.toggle("has-memo", !!paneMemo(id));
+}
+// Type the memo into the pane's command line. run=false pastes it for review
+// (bracketed-paste safe, no Enter); run=true writes it raw and presses Enter.
+function sendMemoToPane(id, text, run) {
+  const t = terminals.get(id);
+  if (!t || !t.term) return;
+  const body = text || "";
+  if (!body) return;
+  armNotifyCycle(id);
+  focusSession(id);
+  if (run) invoke("pty_write", { id, data: body.replace(/\r?\n/g, "\r").replace(/\r+$/, "") + "\r" });
+  else t.term.paste(body);
+}
+let memoPopover = null;
+function closeMemoPopover() {
+  if (memoPopover) { memoPopover.remove(); memoPopover = null; }
+  document.removeEventListener("mousedown", onMemoOutside, true);
+  document.removeEventListener("keydown", onMemoKey, true);
+}
+function onMemoOutside(e) {
+  if (!memoPopover) return;
+  if (memoPopover.contains(e.target)) return;
+  if (e.target.closest && e.target.closest(".session-memo")) return; // its own toggle
+  closeMemoPopover();
+}
+function onMemoKey(e) { if (e.key === "Escape") closeMemoPopover(); }
+// Open (or toggle) the memo popover for a session, anchored to its 🗒 button.
+function openMemoPopover(id, anchorEl) {
+  const wasOpen = memoPopover && Number(memoPopover.dataset.ptyId) === id;
+  closeMemoPopover();
+  if (wasOpen) return; // clicking the same button again just closes it
+  const t = terminals.get(id);
+  if (!t) return;
+  const pop = document.createElement("div");
+  pop.className = "memo-popover";
+  pop.dataset.ptyId = String(id);
+  const head = document.createElement("div");
+  head.className = "memo-head";
+  const title = document.createElement("span");
+  title.className = "memo-title";
+  title.textContent = "🗒 " + sessionLabelFor(t);
+  const xBtn = document.createElement("button");
+  xBtn.className = "memo-x"; xBtn.textContent = "×"; xBtn.title = "닫기";
+  head.append(title, xBtn);
+  const ta = document.createElement("textarea");
+  ta.className = "memo-text";
+  ta.placeholder = "붙여넣기(Ctrl+V) 하거나, 터미널에서 드래그하면 자동으로 쌓입니다.";
+  ta.value = paneMemo(id);
+  const tools = document.createElement("div");
+  tools.className = "memo-tools";
+  const mk = (cls, label, tip) => {
+    const b = document.createElement("button");
+    b.className = "memo-btn " + cls; b.textContent = label; b.title = tip;
+    return b;
+  };
+  const copyBtn = mk("memo-copy", "📋 복사", "전체 복사");
+  const typeBtn = mk("memo-type", "⌨️ 입력", "명령줄에 입력 (검토 후 직접 실행)");
+  const runBtn = mk("memo-run", "▶️ 실행", "명령줄에 입력하고 바로 실행");
+  const clearBtn = mk("memo-clear", "🗑", "메모 비우기");
+  tools.append(copyBtn, typeBtn, runBtn, clearBtn);
+  pop.append(head, ta, tools);
+  document.body.appendChild(pop);
+  // Position next to the anchor button, clamped to the viewport.
+  const r = anchorEl.getBoundingClientRect();
+  const pw = 300, ph = pop.offsetHeight || 250;
+  let left = r.right + 8;
+  if (left + pw > window.innerWidth - 8) left = Math.max(8, r.left - pw - 8);
+  let top = r.top;
+  if (top + ph > window.innerHeight - 8) top = Math.max(8, window.innerHeight - ph - 8);
+  pop.style.left = left + "px";
+  pop.style.top = top + "px";
+  memoPopover = pop;
+  ta.addEventListener("input", () => setPaneMemo(id, ta.value));
+  xBtn.addEventListener("click", closeMemoPopover);
+  copyBtn.addEventListener("click", async () => {
+    await clipboardWrite(ta.value);
+    const old = copyBtn.textContent; copyBtn.textContent = "✓ 복사됨";
+    setTimeout(() => { copyBtn.textContent = old; }, 900);
+  });
+  typeBtn.addEventListener("click", () => { sendMemoToPane(id, ta.value, false); closeMemoPopover(); });
+  runBtn.addEventListener("click", () => { sendMemoToPane(id, ta.value, true); closeMemoPopover(); });
+  clearBtn.addEventListener("click", () => { ta.value = ""; setPaneMemo(id, ""); ta.focus(); });
+  setTimeout(() => ta.focus(), 0);
+  document.addEventListener("mousedown", onMemoOutside, true);
+  document.addEventListener("keydown", onMemoKey, true);
+}
+
 // Rebuild the full session list, grouped by tab.
 function refreshSessionList() {
   if (!sessionListEl) return;
@@ -5547,6 +5709,12 @@ function refreshSessionList() {
       renameBtn.textContent = "✎"; // ✎
       renameBtn.title = "Rename";
 
+      const memoBtn = document.createElement("button");
+      memoBtn.className = "session-memo" + (paneMemo(ptyId) ? " has-memo" : "");
+      memoBtn.textContent = "🗒";
+      memoBtn.title = "임시 메모 — 드래그 자동수집 · 복사 · 명령줄 입력/실행";
+      memoBtn.addEventListener("click", (e) => { e.stopPropagation(); openMemoPopover(ptyId, memoBtn); });
+
       const paneNo = document.createElement("span");
       paneNo.className = "session-pane";
       paneNo.textContent = `#${i + 1}`;
@@ -5563,9 +5731,9 @@ function refreshSessionList() {
         favBtn.textContent = "★";
         favBtn.title = "Save as SSH favorite (one-click reconnect)";
         favBtn.addEventListener("click", (e) => { e.stopPropagation(); addSshFavFromSession(t.session); });
-        li.append(dotEl, nameEl, renameBtn, favBtn, paneNo, closeBtn);
+        li.append(dotEl, nameEl, renameBtn, memoBtn, favBtn, paneNo, closeBtn);
       } else {
-        li.append(dotEl, nameEl, renameBtn, paneNo, closeBtn);
+        li.append(dotEl, nameEl, renameBtn, memoBtn, paneNo, closeBtn);
       }
 
       // Drag a session: reorder it within its own tab, or drop it onto another
