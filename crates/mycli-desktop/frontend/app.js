@@ -7,6 +7,28 @@ const IS_MAC =
   /Mac/i.test(navigator.platform || "") ||
   /Mac OS X|Macintosh/i.test(navigator.userAgent || "");
 
+// Curated terminal font choices. D2Coding is bundled and has full-width Hangul
+// glyphs metriced for a monospace grid — the only choice guaranteed not to
+// misalign Korean text. The others are real system/coding fonts users may
+// prefer for Latin text; picking one still keeps D2Coding as the fallback for
+// any character it lacks (e.g. Hangul), so mixed Korean/English lines stay
+// readable even though the fallback glyph's metrics can differ slightly.
+// The first entry in each list is the default and must match the previous
+// hardcoded chain exactly, so existing installs render unchanged until the
+// user actively picks something else.
+const FONT_CHOICES = IS_MAC
+  ? [
+      { key: "sfmono", label: "SF Mono (영문 전용, 기본값)", css: '"SF Mono", "SFMono-Regular", "Menlo", "Monaco", "D2Coding", monospace' },
+      { key: "d2coding", label: "D2Coding (한글 지원)", css: '"D2Coding", "SF Mono", "SFMono-Regular", "Menlo", "Monaco", monospace' },
+      { key: "menlo", label: "Menlo (영문 전용)", css: '"Menlo", "D2Coding", monospace' },
+      { key: "monaco", label: "Monaco (영문 전용)", css: '"Monaco", "D2Coding", monospace' },
+    ]
+  : [
+      { key: "d2coding", label: "D2Coding (한글 지원, 기본값)", css: '"D2Coding", "Cascadia Code", "Consolas", "Noto Sans KR", monospace' },
+      { key: "cascadia", label: "Cascadia Code (영문 전용)", css: '"Cascadia Code", "D2Coding", monospace' },
+      { key: "consolas", label: "Consolas (영문 전용)", css: '"Consolas", "D2Coding", monospace' },
+    ];
+
 // Monochrome inline-SVG icons (use currentColor → theme-aware: white in dark, black in light)
 const ICON = {
   globe: `<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M3 12h18"/><path d="M12 3c2.6 2.7 3.9 5.9 3.9 9s-1.3 6.3-3.9 9c-2.6-2.7-3.9-5.9-3.9-9S9.4 5.7 12 3z"/></svg>`,
@@ -93,6 +115,13 @@ let letterSpacingRatio = (function () {
     if (Number.isFinite(v) && v >= 0 && v <= 0.4) return v;
   } catch {}
   return 0.1;
+})();
+let terminalFontKey = (function () {
+  try {
+    const v = localStorage.getItem("mymux.termFontFamily");
+    if (v && FONT_CHOICES.some((f) => f.key === v)) return v;
+  } catch {}
+  return FONT_CHOICES[0].key;
 })();
 // Effective per-cell letter spacing in px. On macOS this is forced to 0: WKWebView
 // (WebKit) applies CSS `letter-spacing` as trailing space that xterm's DOM renderer
@@ -598,6 +627,14 @@ async function setupListeners() {
   initCommandPalette();
   // Keyboard shortcuts help modal (toolbar ⌨ button).
   initShortcutsHelp();
+
+  // Terminal font family picker (top bar), persisted; see FONT_CHOICES.
+  const fontSel = document.getElementById("term-font");
+  if (fontSel) {
+    fontSel.innerHTML = FONT_CHOICES.map((f) => `<option value="${esc(f.key)}">${esc(f.label)}</option>`).join("");
+    fontSel.value = terminalFontKey;
+    fontSel.addEventListener("change", () => setTerminalFontFamily(fontSel.value));
+  }
 
   // Terminal text zoom (top bar A−/A+) — same effect as Ctrl -/+.
   const btnFontDec = document.getElementById("btn-font-dec");
@@ -4037,6 +4074,19 @@ function setTerminalFontSize(size) {
   }
   refitAllPanes(true); // font change keeps pixel size but must re-grid every pane
 }
+// Terminal font family, applied to all panes and persisted. Mirrors
+// setTerminalFontSize; a different font's cell metrics can change the glyph
+// width, so re-measure + re-grid the same way a size change does.
+function setTerminalFontFamily(key) {
+  if (!FONT_CHOICES.some((f) => f.key === key)) return;
+  terminalFontKey = key;
+  try { localStorage.setItem("mymux.termFontFamily", terminalFontKey); } catch {}
+  const css = FONT_CHOICES.find((f) => f.key === terminalFontKey).css;
+  for (const [, t] of terminals) {
+    try { t.term.options.fontFamily = css; } catch {}
+  }
+  remeasureFontCells();
+}
 function adjustTerminalFontSize(delta) {
   setTerminalFontSize(terminalFontSize + delta);
 }
@@ -5328,12 +5378,8 @@ function createXterm() {
     // Ctrl +/- zoom. Default ≈0.1 (~20% of a monospace cell) because Korean/CJK
     // glyphs look cramped at 0; adjustable from the toolbar (자−/자+).
     letterSpacing: effectiveLetterSpacing(),
-    // macOS: prefer the native terminal monospace (SF Mono/Menlo) so spacing
-    // matches the system Terminal. D2Coding's wider glyphs made the letters
-    // look too spaced out on Mac. Windows keeps its original chain.
-    fontFamily: IS_MAC
-      ? '"SF Mono", "SFMono-Regular", "Menlo", "Monaco", "D2Coding", monospace'
-      : '"D2Coding", "Cascadia Code", "Consolas", "Noto Sans KR", monospace',
+    // User-selectable (toolbar font-family picker), persisted; see FONT_CHOICES.
+    fontFamily: (FONT_CHOICES.find((f) => f.key === terminalFontKey) || FONT_CHOICES[0]).css,
     fontWeight: 300,
     fontWeightBold: 500,
     theme: terminalTheme(),
