@@ -109,6 +109,11 @@ let savedCmds = [];
 let currentInput = "";
 const COMMAND_HISTORY_KEY = "mymux.commandHistory.v1";
 const COMMAND_HISTORY_LIMIT = 200;
+const SESSION_ACTIONS_SIDE_KEY = "mymux.sessionActionsSide.v1";
+let sessionActionsSide = (() => {
+  try { return localStorage.getItem(SESSION_ACTIONS_SIDE_KEY) === "left" ? "left" : "right"; }
+  catch { return "right"; }
+})();
 let commandHistory = loadCommandHistory();
 let acSelectedIdx = -1;
 let currentExplorerPath = "";
@@ -2886,7 +2891,7 @@ function updateCtxUi(id, t) {
       const nameEl = li.querySelector(".session-name");
       if (nameEl) nameEl.after(se); else li.appendChild(se);
     }
-    se.textContent = t.ctxPct == null ? "?" : t.ctxPct + "%";
+    se.textContent = ctxBadgeText(t);
     se.title = ctxBadgeText(t); // full "model | effort | ctx" on hover
     se.style.color = color;
     se.style.borderColor = color;
@@ -5783,6 +5788,13 @@ function refreshSessionList() {
       closeBtn.textContent = "×";
       closeBtn.title = "Close session";
 
+      const actionsEl = document.createElement("span");
+      actionsEl.className = `session-actions session-actions-${sessionActionsSide}`;
+      actionsEl.draggable = true;
+      actionsEl.title = "Drag session actions to the left or right";
+      actionsEl.setAttribute("aria-label", "Session actions; drag to move to the left or right");
+      actionsEl.append(renameBtn, memoBtn);
+
       // SSH panes: star saves this connection as a one-click favorite.
       if (t.type === "ssh" && t.session && t.session.kind === "ssh") {
         const favBtn = document.createElement("button");
@@ -5790,27 +5802,69 @@ function refreshSessionList() {
         favBtn.textContent = "★";
         favBtn.title = "Save as SSH favorite (one-click reconnect)";
         favBtn.addEventListener("click", (e) => { e.stopPropagation(); addSshFavFromSession(t.session); });
-        li.append(dotEl, nameEl, renameBtn, memoBtn, favBtn, paneNo, closeBtn);
-      } else {
-        li.append(dotEl, nameEl, renameBtn, memoBtn, paneNo, closeBtn);
+        actionsEl.append(favBtn);
       }
+      actionsEl.append(closeBtn);
+      if (sessionActionsSide === "left") li.append(actionsEl, dotEl, nameEl, paneNo);
+      else li.append(dotEl, nameEl, paneNo, actionsEl);
+
+      actionsEl.addEventListener("dragstart", (e) => {
+        e.stopPropagation();
+        e.dataTransfer.setData("application/x-mymux-session-actions", String(ptyId));
+        e.dataTransfer.effectAllowed = "move";
+        li.classList.add("actions-dragging");
+      });
+      actionsEl.addEventListener("dragend", (e) => {
+        e.stopPropagation();
+        sessionListEl.querySelectorAll(".session-item").forEach((el) => {
+          el.classList.remove("actions-dragging", "drop-actions-left", "drop-actions-right");
+        });
+      });
 
       // Drag a session: reorder it within its own tab, or drop it onto another
       // tab's session (or that tab's group header) to move it to that tab.
       li.draggable = true;
       li.addEventListener("dragstart", (e) => {
+        if (e.target.closest(".session-actions")) return;
         e.dataTransfer.setData("text/plain", String(ptyId));
         e.dataTransfer.effectAllowed = "move";
       });
       li.addEventListener("dragover", (e) => {
+        const actionId = Number(e.dataTransfer.getData("application/x-mymux-session-actions"));
+        if (actionId) {
+          if (actionId !== ptyId) return;
+          e.preventDefault();
+          e.stopPropagation();
+          const rect = li.getBoundingClientRect();
+          const side = e.clientX - rect.left < rect.width / 2 ? "left" : "right";
+          li.classList.toggle("drop-actions-left", side === "left");
+          li.classList.toggle("drop-actions-right", side === "right");
+          li.classList.remove("drop-above", "drop-below");
+          return;
+        }
         e.preventDefault();
         const rect = li.getBoundingClientRect();
         const after = (e.clientY - rect.top) > rect.height / 2;
         li.classList.toggle("drop-below", after);
         li.classList.toggle("drop-above", !after);
       });
-      li.addEventListener("dragleave", () => li.classList.remove("drop-above", "drop-below"));
+      li.addEventListener("dragleave", (e) => {
+        if (li.contains(e.relatedTarget)) return;
+        li.classList.remove("drop-above", "drop-below", "drop-actions-left", "drop-actions-right");
+      });
       li.addEventListener("drop", (e) => {
+        const actionId = Number(e.dataTransfer.getData("application/x-mymux-session-actions"));
+        if (actionId) {
+          e.preventDefault();
+          e.stopPropagation();
+          li.classList.remove("drop-actions-left", "drop-actions-right");
+          if (actionId !== ptyId) return;
+          const rect = li.getBoundingClientRect();
+          sessionActionsSide = e.clientX - rect.left < rect.width / 2 ? "left" : "right";
+          try { localStorage.setItem(SESSION_ACTIONS_SIDE_KEY, sessionActionsSide); } catch {}
+          refreshSessionList();
+          return;
+        }
         e.preventDefault();
         li.classList.remove("drop-above", "drop-below");
         const dragId = Number(e.dataTransfer.getData("text/plain"));

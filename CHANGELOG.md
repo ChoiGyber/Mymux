@@ -8,6 +8,17 @@ For installers, see the [GitHub Releases](https://github.com/ChoiGyber/Mymux/rel
 
 ---
 
+## v0.1.39 — 2026-07-23
+
+### Added / New features
+- **Draggable session actions.** Rename, memo, favorite, and close buttons can
+  be dragged between the left and right side of each session row, with the
+  chosen position preserved across restarts.
+- **Session model and usage details.** Session rows now show the active model,
+  reasoning effort, and context usage together in the usage badge.
+
+---
+
 ## v0.1.38 — 2026-07-22
 
 ### Added / New features
