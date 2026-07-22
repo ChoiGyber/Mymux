@@ -8,6 +8,29 @@ For installers, see the [GitHub Releases](https://github.com/ChoiGyber/Mymux/rel
 
 ---
 
+## v0.1.38 — 2026-07-22
+
+### Added / New features
+- **Usage-reset "N" flash.** When a CL or CX rate-limit window resets (detected
+  as a large drop in usage), an "N" briefly pulses next to the badge so a freed-up
+  budget is obvious at a glance.
+  CL·CX 사용량 한도가 리셋되면(사용률 급락으로 감지) 배지 옆에 "N"이 잠깐 깜빡여
+  여유가 생긴 걸 한눈에 알 수 있습니다.
+- **Flip split orientation.** Toggle a split between side-by-side and stacked
+  (상하 ↔ 좌우) via Ctrl+Shift+O, the pane's ↻ button, or the command palette —
+  no drag-retiling needed.
+  분할된 패인을 상하 ↔ 좌우로 즉시 전환합니다 (Ctrl+Shift+O · 패인 ↻ 버튼 ·
+  커맨드 팔레트).
+
+### Fixed
+- **Buddy speaks the real context %.** The mascot's context-usage line now shows
+  the actual current percentage (matching the badge) instead of the fixed
+  50/70/85 milestone value.
+  마스코트가 말하는 컨텍스트 사용량이 고정값(50/70/85) 대신 실제 현재 %(배지와
+  동일)로 표시됩니다.
+
+---
+
 ## v0.1.37 — 2026-07-22
 
 ### Added / New features

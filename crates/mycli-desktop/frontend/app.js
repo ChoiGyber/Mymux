@@ -473,6 +473,11 @@ async function setupListeners() {
       e.preventDefault();
       splitPane("vertical");
     }
+    // Ctrl+Shift+O — flip split orientation (side-by-side ↔ stacked)
+    if (e.ctrlKey && e.shiftKey && e.key === "O") {
+      e.preventDefault();
+      flipSplitDirection();
+    }
     // Ctrl+Shift+W — close pane
     if (e.ctrlKey && e.shiftKey && e.key === "W") {
       e.preventDefault();
@@ -1787,11 +1792,13 @@ async function createPane(parentEl, shell, args, cwd) {
     <span class="pane-actions">
       <button class="pane-btn split-h" title="Split horizontally (Ctrl+Shift+D)">&#8596;</button>
       <button class="pane-btn split-v" title="Split vertically (Ctrl+Shift+E)">&#8597;</button>
+      <button class="pane-btn flip" title="분할 방향 전환 상하 ↔ 좌우 (Ctrl+Shift+O)">&#8635;</button>
       <button class="pane-btn close" title="Close pane (Ctrl+Shift+W)">&times;</button>
     </span>
   `;
   statusBar.querySelector(".split-h").addEventListener("click", (e) => { e.stopPropagation(); setFocusedPane(id); splitPane("horizontal"); });
   statusBar.querySelector(".split-v").addEventListener("click", (e) => { e.stopPropagation(); setFocusedPane(id); splitPane("vertical"); });
+  statusBar.querySelector(".flip").addEventListener("click", (e) => { e.stopPropagation(); setFocusedPane(id); flipSplitDirection(); });
   statusBar.querySelector(".close").addEventListener("click", (e) => { e.stopPropagation(); closePane(id); });
 
   // Mouse-drag the status bar onto another pane's edge (top/bottom/left/right)
@@ -2897,7 +2904,9 @@ function maybeAnnounceCtx(id, t) {
     t.ctxLvl = lvl;
     if (notifyFlashPrefs.ctxVoice && notifyFlashPrefs.character && notifyFlashPrefs.character !== "none") {
       const dialect = CTX_PHRASES[notifyFlashPrefs.dialect] ? notifyFlashPrefs.dialect : "standard";
-      showFoxAt(t.paneEl, id, false, CTX_PHRASES[dialect][lvl - 1]);
+      // Swap the phrase's hardcoded level % (50/70/85) for the real current %
+      // so the buddy speaks the same number the badge shows.
+      showFoxAt(t.paneEl, id, false, CTX_PHRASES[dialect][lvl - 1].replace(/\d+%/, pct + "%"));
     }
   } else if (lvl < cur && pct <= CTX_LEVELS[cur - 1] - CTX_REARM_DROP) {
     t.ctxLvl = lvl;
@@ -2917,6 +2926,33 @@ function usageSeg(label, pct, stale) {
   s.appendChild(b);
   return s;
 }
+// A usage "reset" is a large drop in a rate-limit percentage — a fresh window
+// opened and the budget is free again. When detected, flash an "N" beside CL/CX
+// for RESET_N_MS so it's noticeable at a glance. Tracked per source (CL 5h, CX).
+const RESET_N_MS = 60000;
+const RESET_DROP = 40; // ≥40%p fall from ≥50% counts as a reset
+let prevCL5h = null, prevCXpct = null;
+let clResetAt = 0, cxResetAt = 0;
+function detectUsageReset(now) {
+  const cl = activeClaudeLimits();
+  const cur5h = cl && cl.fiveH != null ? cl.fiveH : null;
+  if (prevCL5h != null && cur5h != null && prevCL5h >= 50 && cur5h <= prevCL5h - RESET_DROP) {
+    clResetAt = now; setTimeout(updateGlobalUsageUi, RESET_N_MS + 200); // clear the N later
+  }
+  if (cur5h != null) prevCL5h = cur5h;
+  const curCX = codexLimits && codexLimits.pct != null ? codexLimits.pct : null;
+  if (prevCXpct != null && curCX != null && prevCXpct >= 50 && curCX <= prevCXpct - RESET_DROP) {
+    cxResetAt = now; setTimeout(updateGlobalUsageUi, RESET_N_MS + 200);
+  }
+  if (curCX != null) prevCXpct = curCX;
+}
+function resetNBadge() {
+  const n = document.createElement("span");
+  n.className = "usage-reset-n";
+  n.textContent = "N";
+  n.title = "방금 사용량이 리셋됨 (New)";
+  return n;
+}
 function updateGlobalUsageUi() {
   const el = document.getElementById("usage-global");
   if (!el) return;
@@ -2924,6 +2960,7 @@ function updateGlobalUsageUi() {
   el.title = "";
   if (!notifyFlashPrefs.ctxBadge) return;
   const now = performance.now();
+  detectUsageReset(now);
   const tips = [];
   const cl = activeClaudeLimits();
   if (cl && (cl.fiveH != null || cl.wk != null || cl.mo != null)) {
@@ -2932,6 +2969,7 @@ function updateGlobalUsageUi() {
     tool.className = "usage-tool";
     tool.textContent = "CL";
     el.appendChild(tool);
+    if (clResetAt && now - clResetAt < RESET_N_MS) el.appendChild(resetNBadge());
     if (cl.fiveH != null) el.appendChild(usageSeg("5h", cl.fiveH, stale));
     if (cl.wk != null) el.appendChild(usageSeg("wk", cl.wk, stale));
     if (cl.mo != null) el.appendChild(usageSeg("mo", cl.mo, stale));
@@ -2950,6 +2988,7 @@ function updateGlobalUsageUi() {
     tool.className = "usage-tool";
     tool.textContent = "CX";
     el.appendChild(tool);
+    if (cxResetAt && now - cxResetAt < RESET_N_MS) el.appendChild(resetNBadge());
     el.appendChild(usageSeg(codexLimits.label || "usage", codexLimits.pct, false));
     if (codexLimits.secondary) el.appendChild(usageSeg(codexLimits.secondary.label || "wk", codexLimits.secondary.pct, false));
     tips.push(`Codex 전체 사용량 (plan: ${codexLimits.plan || "?"})`
@@ -3470,6 +3509,7 @@ function commandPaletteActions() {
     { name: "Toggle light / dark theme / 테마 전환", hint: "", run: () => setTheme(currentThemeMode() === "dark" ? "light" : "dark") },
     { name: "Increase font size / 글자 크게", hint: "Ctrl +", run: () => adjustTerminalFontSize(1) },
     { name: "Decrease font size / 글자 작게", hint: "Ctrl -", run: () => adjustTerminalFontSize(-1) },
+    { name: "Flip split orientation / 분할 방향 전환 (상하 ↔ 좌우)", hint: "Ctrl+Shift+O", run: () => flipSplitDirection() },
   ];
 }
 
@@ -3740,11 +3780,13 @@ function setupDividerDrag(divider, container, direction) {
 
     const rect = container.getBoundingClientRect();
     const children = Array.from(container.children).filter((c) => !c.classList.contains("pane-divider"));
+    // Read orientation live from the container so flip-direction keeps drag correct.
+    const horizontal = container.classList.contains("horizontal");
 
     const onMove = (e) => {
       if (!dragging) return;
       let ratio;
-      if (direction === "horizontal") {
+      if (horizontal) {
         ratio = (e.clientX - rect.left) / rect.width;
       } else {
         ratio = (e.clientY - rect.top) / rect.height;
@@ -3766,6 +3808,23 @@ function setupDividerDrag(divider, container, direction) {
     document.addEventListener("mousemove", onMove);
     document.addEventListener("mouseup", onUp);
   });
+}
+
+// Flip the focused pane's split between side-by-side (horizontal) and stacked
+// (vertical) — a quick "상하 ↔ 좌우" toggle without drag-retiling. The divider
+// reads its orientation live from the container, so no re-wiring is needed.
+function flipSplitDirection() {
+  const t = terminals.get(focusedPaneId);
+  if (!t || !t.paneEl) return;
+  const c = t.paneEl.parentElement;
+  if (!c || !c.classList || !c.classList.contains("pane-container")) return;
+  const kids = [...c.children].filter((x) => !x.classList.contains("pane-divider"));
+  if (kids.length < 2) { toast("이 패인은 분할되어 있지 않아요 — 먼저 분할하세요"); return; }
+  const toVertical = c.classList.contains("horizontal");
+  c.classList.toggle("horizontal", !toVertical);
+  c.classList.toggle("vertical", toVertical);
+  refitAllPanes();
+  saveSessionNow();
 }
 
 function closePane(ptyId) {
