@@ -5861,19 +5861,28 @@ async function copyPaneMemo(id, feedbackButton = null) {
 }
 // Type the memo into the pane's command line. run=false pastes it for review
 // (bracketed-paste safe, no Enter); run=true writes it raw and presses Enter.
-function sendMemoToPane(id, text, run) {
+async function sendMemoToPane(id, text, run) {
   const t = terminals.get(id);
   if (!t || !t.term) return;
   const body = text || "";
   if (!body) return;
   armNotifyCycle(id);
   focusSession(id);
-  if (run) invoke("pty_write", { id, data: body.replace(/\r?\n/g, "\r").replace(/\r+$/, "") + "\r" });
-  else t.term.paste(body);
+  if (run) {
+    const normalizedBody = body.replace(/\r?\n/g, "\r").replace(/\r+$/, "");
+    await invoke("pty_write", { id, data: normalizedBody });
+    // Let TUIs consume the pasted text before receiving Enter as a distinct key.
+    await sleep(32);
+    await invoke("pty_write", { id, data: "\r" });
+  } else {
+    t.term.paste(body);
+  }
 }
 let memoPopover = null;
 let memoPopoverAnchor = null;
 let memoPopoverResizeObserver = null;
+let memoPopoverAnchorOffset = { x: 0, y: 0 };
+let memoPopoverDrag = null;
 let memoNativePaneHidden = false;
 let memoNativePaneTransitions = Promise.resolve();
 const MEMO_POPOVER_SIZE_KEY = "mymux.memoPopoverSize.v1";
@@ -5891,6 +5900,62 @@ function clampMemoPopoverSize(size) {
     width: Math.max(Math.min(260, maxWidth), Math.min(maxWidth, Math.round(size.width))),
     height: Math.max(Math.min(180, maxHeight), Math.min(maxHeight, Math.round(size.height))),
   };
+}
+function memoPopoverAnchorPosition(pop = memoPopover, anchor = memoPopoverAnchor) {
+  if (!pop || !anchor || !anchor.isConnected) return null;
+  const anchorRect = anchor.getBoundingClientRect();
+  const width = pop.offsetWidth;
+  const height = pop.offsetHeight;
+  const dock = anchor.closest(".pane-command-shortcuts");
+  const opensRight = dock?.classList.contains("dock-side-left");
+  let left = opensRight ? anchorRect.right + 8 : anchorRect.left - width - 8;
+  if (left < 8 || left + width > window.innerWidth - 8) {
+    const alternate = opensRight
+      ? anchorRect.left - width - 8
+      : anchorRect.right + 8;
+    if (alternate >= 8 && alternate + width <= window.innerWidth - 8) left = alternate;
+  }
+  let top = anchorRect.top;
+  return {
+    left: Math.max(8, Math.min(window.innerWidth - width - 8, left)),
+    top: Math.max(8, Math.min(window.innerHeight - height - 8, top)),
+  };
+}
+function positionMemoPopover() {
+  const base = memoPopoverAnchorPosition();
+  if (!base || !memoPopover) return null;
+  const width = memoPopover.offsetWidth;
+  const height = memoPopover.offsetHeight;
+  const left = Math.max(
+    8,
+    Math.min(window.innerWidth - width - 8, base.left + memoPopoverAnchorOffset.x)
+  );
+  const top = Math.max(
+    8,
+    Math.min(window.innerHeight - height - 8, base.top + memoPopoverAnchorOffset.y)
+  );
+  memoPopover.style.left = `${left}px`;
+  memoPopover.style.top = `${top}px`;
+  return { base, left, top };
+}
+function normalizeMemoPopoverAnchorOffset(position = positionMemoPopover()) {
+  if (!position) return;
+  memoPopoverAnchorOffset = {
+    x: position.left - position.base.left,
+    y: position.top - position.base.top,
+  };
+}
+function cleanupMemoPopoverDrag() {
+  if (!memoPopoverDrag) return;
+  document.removeEventListener("pointermove", memoPopoverDrag.onMove);
+  document.removeEventListener("pointerup", memoPopoverDrag.onUp);
+  document.removeEventListener("pointercancel", memoPopoverDrag.onCancel);
+  window.removeEventListener("blur", memoPopoverDrag.onBlur);
+  memoPopoverDrag.pop.classList.remove("memo-dragging");
+  memoPopoverDrag = null;
+}
+function onMemoViewportResize() {
+  normalizeMemoPopoverAnchorOffset();
 }
 function hideNativePaneForMemo() {
   if (memoNativePaneHidden || !browserTabActive || browserMode !== "native") return;
@@ -5912,14 +5977,17 @@ function restoreNativePaneAfterMemo() {
 }
 function closeMemoPopover(restoreFocus = true, restoreNativePane = true) {
   const anchor = memoPopoverAnchor;
+  cleanupMemoPopoverDrag();
   if (memoPopoverResizeObserver) {
     memoPopoverResizeObserver.disconnect();
     memoPopoverResizeObserver = null;
   }
   if (memoPopover) { memoPopover.remove(); memoPopover = null; }
   memoPopoverAnchor = null;
+  memoPopoverAnchorOffset = { x: 0, y: 0 };
   document.removeEventListener("mousedown", onMemoOutside, true);
   document.removeEventListener("keydown", onMemoKey, true);
+  window.removeEventListener("resize", onMemoViewportResize);
   if (restoreNativePane) restoreNativePaneAfterMemo();
   if (restoreFocus && anchor) {
     requestAnimationFrame(() => {
@@ -5987,48 +6055,70 @@ function openMemoPopover(id, anchorEl) {
   const size = clampMemoPopoverSize(savedMemoPopoverSize());
   pop.style.width = size.width + "px";
   pop.style.height = size.height + "px";
-  // Open inward from the pane edge: a left dock opens to its right, while a
-  // right dock opens to its left. Clamp both axes to the current viewport.
-  const r = anchorEl.getBoundingClientRect();
-  const pw = pop.offsetWidth || size.width;
-  const ph = pop.offsetHeight || size.height;
-  const dock = anchorEl.closest(".pane-command-shortcuts");
-  const opensRight = dock?.classList.contains("dock-side-left");
-  let left = opensRight ? r.right + 8 : r.left - pw - 8;
-  if (left < 8 || left + pw > window.innerWidth - 8) {
-    const alternate = opensRight ? r.left - pw - 8 : r.right + 8;
-    if (alternate >= 8 && alternate + pw <= window.innerWidth - 8) left = alternate;
-  }
-  left = Math.max(8, Math.min(window.innerWidth - pw - 8, left));
-  let top = r.top;
-  if (top + ph > window.innerHeight - 8) top = Math.max(8, window.innerHeight - ph - 8);
-  top = Math.max(8, top);
-  pop.style.left = left + "px";
-  pop.style.top = top + "px";
   memoPopover = pop;
   memoPopoverAnchor = anchorEl;
+  memoPopoverAnchorOffset = { x: 0, y: 0 };
+  positionMemoPopover();
   memoPopoverResizeObserver = new ResizeObserver(() => {
     if (!memoPopover || memoPopover !== pop) return;
     const next = clampMemoPopoverSize({ width: pop.offsetWidth, height: pop.offsetHeight });
-    const rect = pop.getBoundingClientRect();
-    if (rect.right > window.innerWidth - 8) {
-      pop.style.left = Math.max(8, window.innerWidth - rect.width - 8) + "px";
-    }
-    if (rect.bottom > window.innerHeight - 8) {
-      pop.style.top = Math.max(8, window.innerHeight - rect.height - 8) + "px";
-    }
+    normalizeMemoPopoverAnchorOffset();
     try { localStorage.setItem(MEMO_POPOVER_SIZE_KEY, JSON.stringify(next)); } catch {}
   });
   memoPopoverResizeObserver.observe(pop);
+  head.addEventListener("pointerdown", (event) => {
+    if (event.button !== 0 || event.target.closest(".memo-x")) return;
+    event.preventDefault();
+    cleanupMemoPopoverDrag();
+    const rect = pop.getBoundingClientRect();
+    const grabX = event.clientX - rect.left;
+    const grabY = event.clientY - rect.top;
+    const pointerId = event.pointerId;
+    const onMove = (moveEvent) => {
+      if (moveEvent.pointerId !== pointerId || memoPopover !== pop) return;
+      const base = memoPopoverAnchorPosition(pop, anchorEl);
+      if (!base) return;
+      memoPopoverAnchorOffset = {
+        x: moveEvent.clientX - grabX - base.left,
+        y: moveEvent.clientY - grabY - base.top,
+      };
+      normalizeMemoPopoverAnchorOffset(positionMemoPopover());
+    };
+    const finish = (finishEvent) => {
+      if (finishEvent.pointerId !== pointerId) return;
+      cleanupMemoPopoverDrag();
+    };
+    const onBlur = () => cleanupMemoPopoverDrag();
+    memoPopoverDrag = {
+      pop,
+      onMove,
+      onUp: finish,
+      onCancel: finish,
+      onBlur,
+    };
+    pop.classList.add("memo-dragging");
+    document.addEventListener("pointermove", onMove);
+    document.addEventListener("pointerup", finish);
+    document.addEventListener("pointercancel", finish);
+    window.addEventListener("blur", onBlur);
+  });
   ta.addEventListener("input", () => setPaneMemo(id, ta.value));
   xBtn.addEventListener("click", () => closeMemoPopover());
   copyBtn.addEventListener("click", () => copyPaneMemo(id, copyBtn));
   typeBtn.addEventListener("click", () => { sendMemoToPane(id, ta.value, false); closeMemoPopover(false); });
-  runBtn.addEventListener("click", () => { sendMemoToPane(id, ta.value, true); closeMemoPopover(false); });
+  runBtn.addEventListener("click", async () => {
+    try {
+      await sendMemoToPane(id, ta.value, true);
+    } catch (e) {
+      toast("메모 실행 실패: " + String(e), true);
+    }
+    closeMemoPopover(false);
+  });
   clearBtn.addEventListener("click", () => { ta.value = ""; setPaneMemo(id, ""); ta.focus(); });
   setTimeout(() => ta.focus(), 0);
   document.addEventListener("mousedown", onMemoOutside, true);
   document.addEventListener("keydown", onMemoKey, true);
+  window.addEventListener("resize", onMemoViewportResize);
 }
 
 // Rebuild the full session list, grouped by tab.
@@ -6539,11 +6629,13 @@ function positionPaneCommandDock(t) {
   const top = Math.max(minTop, Math.min(maxTop, Math.round(t.commandDockY * paneHeight)));
   host.style.top = `${top}px`;
   host.style.bottom = "auto";
+  if (memoPopoverAnchor && host.contains(memoPopoverAnchor)) positionMemoPopover();
 }
 
 function applyPaneCommandDockSide(host, side) {
   host.classList.toggle("dock-side-left", side === "left");
   host.classList.toggle("dock-side-right", side === "right");
+  if (memoPopoverAnchor && host.contains(memoPopoverAnchor)) positionMemoPopover();
 }
 
 function setPaneCommandDockSide(side, focusPtyId = null) {

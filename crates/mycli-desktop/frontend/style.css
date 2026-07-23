@@ -2188,7 +2188,13 @@ html[data-theme="dark"] .pane-command-shortcut {
   resize: both;
   overflow: auto;
 }
-.memo-head { display: flex; align-items: center; justify-content: space-between; gap: 6px; }
+.memo-head {
+  display: flex; align-items: center; justify-content: space-between; gap: 6px;
+  cursor: grab;
+  user-select: none;
+  touch-action: none;
+}
+.memo-popover.memo-dragging .memo-head { cursor: grabbing; }
 .memo-title {
   display: inline-flex; align-items: center; gap: 5px;
   font-size: 12px; font-weight: 600; color: var(--text);
@@ -2200,6 +2206,7 @@ html[data-theme="dark"] .pane-command-shortcut {
   display: inline-flex; align-items: center; justify-content: center;
   border: none; border-radius: 4px; background: none; color: var(--text-dim);
   cursor: pointer;
+  touch-action: manipulation;
 }
 .memo-x .icon { width: 14px; height: 14px; }
 .memo-x:hover { color: var(--red); }
