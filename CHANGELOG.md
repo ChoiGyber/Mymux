@@ -8,6 +8,46 @@ For installers, see the [GitHub Releases](https://github.com/ChoiGyber/Mymux/rel
 
 ---
 
+## v0.1.40 — 2026-07-23
+
+### Added / New features
+- **Clear unsent AI input.** Press Ctrl+Shift+Backspace to clear the current
+  unsent input in Claude Code or Codex.
+- **Editable pane memos.** Every terminal pane now has a matching monochrome
+  memo button beside its command shortcuts. The resizable editor focuses
+  immediately, auto-saves per session, remembers its size, and includes
+  one-click copy, type, run, and clear actions.
+- **Terminal font selector.** Choose D2Coding, Cascadia Code, Consolas, or the
+  system monospace stack from the toolbar. The choice persists and immediately
+  remeasures and refits every open terminal.
+- **Global mode-specific command shortcuts.** Each saved command now has
+  independent `쉘` and `AI` visibility toggles that apply to every session in
+  that mode. AI shortcuts send prompt text directly, while shell shortcuts keep
+  their configured working-directory behavior. Paged `+N` controls expose every
+  configured shortcut without making the pane-edge dock grow indefinitely.
+
+### Fixed
+- **Accurate Codex context usage.** The current-context percentage now uses
+  `last_token_usage` instead of cumulative token usage.
+- **Correct AI badge ownership.** Claude Code and Codex session badges now keep
+  the correct owner and model without leaking model data between sessions.
+- **Movable pane command dock.** The command shortcut and memo dock can be
+  dragged vertically or between the left and right pane edges. Its side persists
+  across panes and is also selectable with ArrowLeft, ArrowRight, Enter, or
+  Space on the drag handle.
+- **Compact session usage.** Session-list usage pills and tooltips now show only
+  the current percentage; full model and reasoning details remain in the pane.
+- **Right-aligned toolbar actions.** The title and global usage stay at the left
+  while every other toolbar control is grouped at the right edge, with
+  horizontal scrolling preserved in narrow windows.
+- **Visible memos over the native browser.** Opening a session memo now hides
+  the native browser child pane while the popover is active and restores it
+  exactly once when the memo closes, including rapid toggles and session closes.
+- **Clearer history popup.** The history/autocomplete popup is positioned 5px
+  farther from the input so it no longer obscures typed text.
+
+---
+
 ## v0.1.39 — 2026-07-23
 
 ### Added / New features

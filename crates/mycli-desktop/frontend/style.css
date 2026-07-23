@@ -99,9 +99,32 @@ header h1 .byline {
 }
 #toolbar-actions {
   display: flex;
+  align-items: center;
   gap: 6px;
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding-bottom: 2px;
+  scrollbar-width: thin;
+  scrollbar-color: var(--border) transparent;
   -webkit-app-region: no-drag;
 }
+/* Keep title/usage at the left while the action cluster hugs the right edge.
+   The flexible spacer collapses to zero before controls overflow, so narrow
+   windows retain normal left-to-right horizontal scrolling. */
+#toolbar-actions::before {
+  content: "";
+  flex: 1 1 0;
+  min-width: 0;
+}
+#toolbar-actions > * { flex: 0 0 auto; }
+#toolbar-actions::-webkit-scrollbar { height: 4px; }
+#toolbar-actions::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: 999px;
+}
+#toolbar-actions::-webkit-scrollbar-track { background: transparent; }
 /* Account-wide usage readout (Claude 5h/wk rate limits · Codex plan window).
    Sits next to the title; values colored by the shared green→다홍→red ramp. */
 #usage-global {
@@ -114,6 +137,9 @@ header h1 .byline {
   color: var(--text-dim);
   white-space: nowrap;
   user-select: none;
+  min-width: 0;
+  max-width: 32vw;
+  overflow: hidden;
 }
 #usage-global:empty { display: none; }
 #usage-global .usage-tool {
@@ -247,13 +273,8 @@ header h1 .byline {
   75% { transform: rotate(-3deg) translateX(-1px); }
 }
 
-/* Star on SSH session rows (saves the connection as a favorite) */
-.session-fav {
-  border: none; background: none; color: var(--text-dim);
-  cursor: pointer; font-size: 11px; padding: 0 2px; visibility: hidden;
-}
-.session-item:hover .session-fav { visibility: visible; }
-.session-fav:hover { color: #f5b301; }
+/* Star on SSH session rows (saves the connection as a favorite). */
+.session-fav:hover { color: var(--accent); }
 #toolbar-actions button:hover {
   background: var(--accent);
   color: #fff;
@@ -621,7 +642,8 @@ html[data-theme="light"] #toolbar-actions #btn-update:hover {
   z-index: 1000;
 }
 
-#default-shell {
+#default-shell,
+#terminal-font {
   padding: 4px 8px;
   border: 1px solid var(--border);
   border-radius: var(--radius);
@@ -630,7 +652,25 @@ html[data-theme="light"] #toolbar-actions #btn-update:hover {
   font-size: 12px;
   cursor: pointer;
 }
-#default-shell:hover { color: var(--text); }
+#default-shell:hover,
+#terminal-font:hover { color: var(--text); }
+.toolbar-font-picker {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--text-dim);
+  font-size: 11px;
+  white-space: nowrap;
+}
+#terminal-font {
+  max-width: 118px;
+  min-height: 25px;
+}
+#terminal-font:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: 1px;
+  border-color: var(--accent);
+}
 
 /* Prominent Send button at the top-right of each saved-command box */
 .cmd-item { position: relative; }
@@ -750,9 +790,28 @@ html[data-theme="light"] #toolbar-actions #btn-update:hover {
 .cmd-actions .copy-btn { order: 1; }
 .cmd-actions .edit-btn { order: 2; }
 .cmd-actions .send-btn { order: 3; }
-.cmd-actions .fav-btn { order: 4; font-size: 13px; padding: 1px 5px; }
-.cmd-actions .fav-btn.on { color: var(--accent); }
-/* Copy/Edit appear on hover; the star remains next to Send as the shortcut toggle. */
+.cmd-actions .favorite-mode-toggles {
+  order: 4;
+  display: inline-flex;
+  gap: 2px;
+}
+.cmd-actions .favorite-mode-toggle {
+  min-width: 26px;
+  padding: 2px 5px;
+  font-size: 10px;
+  font-weight: 700;
+}
+.cmd-actions .favorite-mode-toggle.on {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: #fff;
+}
+.cmd-actions .favorite-mode-toggle.on:hover {
+  background: var(--accent-hover);
+  border-color: var(--accent-hover);
+  color: #fff;
+}
+/* Copy/Edit appear on hover; the two mode toggles always remain visible. */
 .cmd-actions .copy-btn,
 .cmd-actions .edit-btn { opacity: 0; transition: opacity 0.1s; }
 .cmd-item:hover .cmd-actions .copy-btn,
@@ -1491,9 +1550,8 @@ html[data-theme="light"] #toolbar-actions #btn-update:hover {
 .pane-ctx:empty { display: none; }
 .pane-ctx.stale { opacity: 0.38; }
 
-/* Favorite-command dock: available only while an AI CLI owns the pane. It is
-   anchored to the right edge, starts above the terminal input, and can be
-   dragged vertically by its small grip. */
+/* Per-pane command dock. The memo tool is always present, even with no saved
+   favorites. The grip moves the dock vertically and between either pane edge. */
 .pane-command-shortcuts {
   position: absolute;
   bottom: 54px;
@@ -1508,16 +1566,15 @@ html[data-theme="light"] #toolbar-actions #btn-update:hover {
   visibility: visible;
   transition: opacity 0.18s ease, transform 0.18s ease, visibility 0s linear;
 }
-.pane-command-shortcuts.ai-hidden {
-  opacity: 0;
-  transform: translateX(12px);
-  visibility: hidden;
-  pointer-events: none;
-  transition: opacity 0.18s ease, transform 0.18s ease, visibility 0s linear 0.18s;
+.pane-command-shortcuts.dock-side-right {
+  right: 1px;
+  left: auto;
+  align-items: flex-end;
 }
-.pane-command-shortcuts.shell-mode {
-  top: 26px;
-  bottom: auto;
+.pane-command-shortcuts.dock-side-left {
+  left: 1px;
+  right: auto;
+  align-items: flex-start;
 }
 .pane-command-shortcuts.shell-mode .pane-command-shortcut {
   background: var(--surface);
@@ -1529,21 +1586,68 @@ html[data-theme="light"] #toolbar-actions #btn-update:hover {
   color: #fff;
 }
 .pane-command-dock-grip {
-  width: 24px;
-  height: 14px;
-  padding: 0 0 2px;
+  width: 22px;
+  height: 22px;
+  min-width: 22px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   border: 1px solid rgba(15, 158, 240, 0.38);
   border-right: 0;
-  border-radius: 5px 0 0 5px;
+  border-radius: 6px 0 0 6px;
   background: var(--surface);
   color: var(--text-dim);
-  font: 700 10px/11px "D2Coding", monospace;
-  letter-spacing: 1px;
-  text-align: center;
   cursor: grab;
   user-select: none;
+  touch-action: none;
+}
+.pane-command-dock-grip .icon { width: 14px; height: 14px; }
+.dock-side-left .pane-command-dock-grip {
+  border-right: 1px solid rgba(15, 158, 240, 0.38);
+  border-left: 0;
+  border-radius: 0 6px 6px 0;
 }
 .pane-command-dock-grip:active { cursor: grabbing; }
+.pane-command-dock-grip:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: 1px;
+  color: var(--accent);
+}
+.pane-command-tool {
+  width: 22px;
+  height: 22px;
+  min-width: 22px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid rgba(15, 158, 240, 0.44);
+  border-right: 0;
+  border-radius: 6px 0 0 6px;
+  background: var(--surface);
+  color: var(--text-dim);
+  cursor: pointer;
+  box-shadow: -1px 1px 5px rgba(0, 0, 0, 0.12);
+  transition: background 0.12s ease, color 0.12s ease, transform 0.12s ease;
+}
+.pane-command-tool .icon { width: 14px; height: 14px; }
+.pane-command-tool.has-memo { color: var(--accent); }
+.dock-side-left .pane-command-tool {
+  border-right: 1px solid rgba(15, 158, 240, 0.44);
+  border-left: 0;
+  border-radius: 0 6px 6px 0;
+  box-shadow: 1px 1px 5px rgba(0, 0, 0, 0.12);
+}
+.pane-command-tool:hover,
+.pane-command-tool:focus-visible {
+  outline: none;
+  background: var(--accent);
+  color: #fff;
+  transform: translateX(-2px);
+}
+.dock-side-left .pane-command-tool:hover,
+.dock-side-left .pane-command-tool:focus-visible { transform: translateX(2px); }
 .pane-command-shortcut {
   min-width: 31px;
   height: 22px;
@@ -1559,12 +1663,32 @@ html[data-theme="light"] #toolbar-actions #btn-update:hover {
   box-shadow: -1px 1px 5px rgba(0, 0, 0, 0.12);
   transition: background 0.12s ease, color 0.12s ease, transform 0.12s ease;
 }
+.dock-side-left .pane-command-shortcut {
+  border-right: 1px solid rgba(15, 158, 240, 0.44);
+  border-left: 0;
+  border-radius: 0 7px 7px 0;
+  padding: 0 8px 1px 7px;
+  box-shadow: 1px 1px 5px rgba(0, 0, 0, 0.12);
+}
 .pane-command-shortcut:hover,
 .pane-command-shortcut:focus-visible {
   outline: none;
   background: var(--accent);
   color: #fff;
   transform: translateX(-2px);
+}
+.dock-side-left .pane-command-shortcut:hover,
+.dock-side-left .pane-command-shortcut:focus-visible { transform: translateX(2px); }
+.pane-command-more {
+  min-width: 31px;
+  color: var(--accent);
+  border-style: dashed;
+  font-size: 10px;
+}
+.pane-command-shortcuts.dock-side-preview-left > *,
+.pane-command-shortcuts.dock-side-preview-right > * {
+  outline: 1px solid var(--accent);
+  outline-offset: 1px;
 }
 html[data-theme="dark"] .pane-command-shortcut {
   background: #d8edff;
@@ -1972,9 +2096,6 @@ html[data-theme="dark"] .pane-command-shortcut {
 /* Drag-reorder: drop-position indicator on the top/bottom edge. */
 .session-item.drop-above { box-shadow: inset 0 2px 0 0 var(--accent); }
 .session-item.drop-below { box-shadow: inset 0 -2px 0 0 var(--accent); }
-.session-item.drop-actions-left { box-shadow: inset 3px 0 0 0 var(--accent); }
-.session-item.drop-actions-right { box-shadow: inset -3px 0 0 0 var(--accent); }
-.session-item.actions-dragging { cursor: grabbing; }
 .session-dot {
   width: 16px;
   text-align: center;
@@ -1986,6 +2107,7 @@ html[data-theme="dark"] .pane-command-shortcut {
 }
 .session-name {
   flex: 1;
+  min-width: 0;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1995,7 +2117,7 @@ html[data-theme="dark"] .pane-command-shortcut {
   color: var(--text-dim);
   flex-shrink: 0;
 }
-/* ctx usage pill next to the session name ("model | reasoning | %").
+/* Percentage-only ctx usage pill next to the session name.
    Color is set inline per usage; dims when the statusline goes stale. */
 .session-ctx {
   flex: 0 1 auto;
@@ -2018,71 +2140,71 @@ html[data-theme="dark"] .pane-command-shortcut {
   align-items: center;
   gap: 2px;
   flex-shrink: 0;
-  cursor: grab;
 }
-.session-actions:active { cursor: grabbing; }
-.session-actions-left { order: -1; }
 .session-empty {
   padding: 16px 10px;
   text-align: center;
   color: var(--text-dim);
   font-size: 12px;
 }
-.session-rename {
+.session-action {
+  width: 22px;
+  height: 22px;
+  min-width: 22px;
+  padding: 0;
   border: none;
   background: transparent;
   color: var(--text-dim);
-  font-size: 12px;
-  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   cursor: pointer;
-  padding: 0 2px;
-  opacity: 0;
+  opacity: 0.55;
   flex-shrink: 0;
+  border-radius: 4px;
+  touch-action: none;
 }
-.session-item:hover .session-rename { opacity: 1; }
+.session-action .icon { width: 14px; height: 14px; }
+.session-item:hover .session-action,
+.session-action:focus-visible { opacity: 1; }
+.session-action:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: 1px;
+}
+.session-action:hover { background: var(--surface-hover); }
 .session-rename:hover { color: var(--accent); }
-.session-close {
-  border: none;
-  background: transparent;
-  color: var(--text-dim);
-  font-size: 15px;
-  line-height: 1;
-  cursor: pointer;
-  opacity: 0;
-  flex-shrink: 0;
-  padding: 0 2px;
-}
-.session-item:hover .session-close { opacity: 0.7; }
 .session-close:hover { opacity: 1; color: var(--red); }
 .session-item { cursor: grab; }
 
-/* Per-session scratch memo 🗒 */
-.session-memo {
-  border: none; background: none; color: var(--text-dim);
-  cursor: pointer; opacity: 0; font-size: 12px; line-height: 1; padding: 0 1px;
-}
-.session-item:hover .session-memo { opacity: 0.7; }
-.session-memo:hover { opacity: 1; color: var(--accent); }
-.session-memo.has-memo,
-.session-item:hover .session-memo.has-memo { opacity: 1; color: var(--accent); }
 .memo-popover {
-  position: fixed; z-index: 10000; width: 300px; box-sizing: border-box;
+  position: fixed; z-index: 10000; width: 300px; height: 250px; box-sizing: border-box;
   display: flex; flex-direction: column; gap: 6px; padding: 8px;
   background: var(--surface); border: 1px solid var(--border);
   border-radius: 8px; box-shadow: 0 10px 30px rgba(0, 0, 0, 0.35);
+  min-width: min(260px, calc(100vw - 16px));
+  min-height: min(180px, calc(100vh - 16px));
+  max-width: calc(100vw - 16px);
+  max-height: calc(100vh - 16px);
+  resize: both;
+  overflow: auto;
 }
 .memo-head { display: flex; align-items: center; justify-content: space-between; gap: 6px; }
 .memo-title {
+  display: inline-flex; align-items: center; gap: 5px;
   font-size: 12px; font-weight: 600; color: var(--text);
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
+.memo-title .icon { width: 14px; height: 14px; }
 .memo-x {
-  border: none; background: none; color: var(--text-dim);
-  cursor: pointer; font-size: 16px; line-height: 1; padding: 0 2px;
+  width: 24px; height: 24px; padding: 0;
+  display: inline-flex; align-items: center; justify-content: center;
+  border: none; border-radius: 4px; background: none; color: var(--text-dim);
+  cursor: pointer;
 }
+.memo-x .icon { width: 14px; height: 14px; }
 .memo-x:hover { color: var(--red); }
 .memo-text {
-  width: 100%; height: 160px; resize: vertical; box-sizing: border-box;
+  flex: 1 1 auto; width: 100%; min-height: 72px; height: auto; resize: none; box-sizing: border-box;
   background: var(--bg); color: var(--text);
   border: 1px solid var(--border); border-radius: 6px;
   padding: 6px 8px; font: inherit; font-size: 12px; line-height: 1.5;
@@ -2091,11 +2213,14 @@ html[data-theme="dark"] .pane-command-shortcut {
 .memo-tools { display: flex; gap: 4px; }
 .memo-btn {
   flex: 1; min-width: 0; box-sizing: border-box;
+  display: inline-flex; align-items: center; justify-content: center; gap: 4px;
   background: var(--bg); color: var(--text);
   border: 1px solid var(--border); border-radius: 6px;
   padding: 4px; font-size: 11px; cursor: pointer; white-space: nowrap;
 }
+.memo-btn .icon { width: 13px; height: 13px; }
 .memo-btn:hover { border-color: var(--accent); color: var(--accent); }
+.memo-btn.copy-success { border-color: var(--green); color: var(--green); }
 .session-group.drop-target {
   background: var(--surface-hover);
   outline: 1px dashed var(--accent);

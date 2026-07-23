@@ -8,9 +8,9 @@ mod terminal;
 mod tools;
 mod update;
 
-use std::sync::Arc;
 use browser::BrowserManager;
 use explorer::ExplorerManager;
+use std::sync::Arc;
 use terminal::TerminalManager;
 
 fn main() {
@@ -80,6 +80,18 @@ fn main() {
             tools::tool_installed,
         ])
         .setup(|_app| {
+            #[cfg(debug_assertions)]
+            {
+                use tauri::Manager;
+                if let Some(win) = _app.get_webview_window("main") {
+                    let title = format!(
+                        "Mymux v{} [최신 테스트] — Command Manager",
+                        env!("CARGO_PKG_VERSION")
+                    );
+                    let _ = win.set_title(&title);
+                }
+            }
+
             // WebView2 fires no DOM focus / hasFocus / visibility / focus=true
             // event when the window is re-activated via Alt-Tab, so the frontend
             // cannot tell it regained focus and the terminal cursor stays hollow.

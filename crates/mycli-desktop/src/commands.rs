@@ -166,20 +166,48 @@ pub fn set_favorite(
     favorite: bool,
     favorite_target: Option<String>,
 ) -> Result<(), String> {
+    if favorite {
+        if let Some(target) = favorite_target.as_deref() {
+            if !is_valid_favorite_target(target) {
+                return Err(format!("Invalid favorite target: {target}"));
+            }
+        }
+    }
     let s = store()?;
     let mut cmds = s.list().map_err(|e| e.to_string())?;
     if let Some(c) = cmds.iter_mut().find(|c| c.id == id) {
         c.favorite = favorite;
         if favorite {
             if let Some(target) = favorite_target {
-                if matches!(target.as_str(), "shell" | "ai") {
-                    c.favorite_target = target;
-                }
+                c.favorite_target = target;
             }
         }
         s.update(c.clone()).map_err(|e| e.to_string())?;
     }
     Ok(())
+}
+
+fn is_valid_favorite_target(target: &str) -> bool {
+    matches!(target, "shell" | "ai" | "both")
+}
+
+#[cfg(test)]
+mod favorite_target_tests {
+    use super::is_valid_favorite_target;
+
+    #[test]
+    fn accepts_all_supported_favorite_targets() {
+        for target in ["shell", "ai", "both"] {
+            assert!(is_valid_favorite_target(target), "{target}");
+        }
+    }
+
+    #[test]
+    fn rejects_unknown_favorite_targets() {
+        for target in ["", "all", "terminal", "Shell"] {
+            assert!(!is_valid_favorite_target(target), "{target}");
+        }
+    }
 }
 
 #[tauri::command]
