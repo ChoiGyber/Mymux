@@ -2087,29 +2087,51 @@ async function createPane(parentEl, shell, args, cwd) {
       const ti = terminals.get(id); if (ti) ti.imeComposing = false;
     });
 
-    // ── macOS WKWebView IME shim ──────────────────────────────────────────────
-    // On macOS WebKit the Korean/CJK IME fires NO composition events and instead
-    // delivers every refinement as an `input` event with inputType
-    // `insertReplacementText` (isComposing:false, keyCode 229) — xterm.js never
-    // sees a composition, forwards only the raw first jamo and drops the
-    // replacements, so syllables split (xtermjs/xterm.js#5887, #5894; WKWebView
-    // only, Chrome/Electron unaffected). Hijack that flow at `beforeinput`: erase
-    // the partial we already sent (Backspace ×liveLen) and send the refined
-    // syllable, bypassing xterm entirely. ASCII/normal keys fall through to xterm.
+    // ── macOS WKWebView Korean/CJK IME fix ────────────────────────────────────
+    // macOS-only. On WebKit (WKWebView) the very FIRST character of a typing run
+    // arrives as a committed `input` event of type `insertText` (isComposing
+    // false) BEFORE WKWebView starts a composition; every later character then
+    // comes through normal composition events that xterm handles correctly. Left
+    // alone, xterm forwards that first jamo raw, so the opening syllable splits
+    // into consonant+vowel ("ㅈ ㅏ 도행전"). WKWebView-only — Chrome/WebView2 are
+    // unaffected (xtermjs/xterm.js#5887, #5894). See docs/macos-webkit-gotchas.md.
+    //
+    // Fix: intercept that first `insertText` at `beforeinput`, DON'T send the jamo
+    // standalone — seed the textarea with it so the composition that follows
+    // builds the whole syllable and xterm's native handler emits it composed. Any
+    // stray `insertReplacementText` (before composition engages) is rerouted
+    // through xterm's OWN data pipeline (coreService.triggerDataEvent → onData) —
+    // never straight to the PTY — so command-history tracking and the shortcut
+    // autocomplete stay in sync (writing to the PTY directly desynced both: it
+    // broke Backspace and auto-inserted shortcuts).
     if (IS_MAC) {
       const ta = term.textarea;
-      let liveLen = 0; // display chars of the in-progress syllable already sent to the PTY
+      let liveLen = 0; // chars of the in-progress syllable already sent to the PTY
+      const feed = (data) => {
+        if (!data) return;
+        try { if (typeof term.input === "function") { term.input(data, true); return; } } catch {}
+        try { term._core.coreService.triggerDataEvent(data, true); return; } catch {}
+        invoke("pty_write", { id, data });
+      };
       const commit = () => { liveLen = 0; };
       ta.addEventListener("beforeinput", (e) => {
         const it = e.inputType;
         const d = e.data || "";
         const isReplace = it === "insertReplacementText";
         const isImeInsert = it === "insertText" && !!d && /[^\x00-\x7F]/.test(d) && !e.isComposing;
-        if (!isReplace && !isImeInsert) { commit(); return; } // ASCII/other → let xterm handle
+        if (!isReplace && !isImeInsert) { commit(); return; } // ASCII/special → xterm handles it
         e.preventDefault();
         e.stopImmediatePropagation();
-        const erase = isReplace ? "\x7f".repeat(liveLen) : "";
-        invoke("pty_write", { id, data: erase + d });
+        if (isImeInsert) {
+          // Seed the first jamo into the textarea; the following composition
+          // absorbs it and xterm emits the finished syllable.
+          try { ta.value = d; if (ta.setSelectionRange) ta.setSelectionRange(d.length, d.length); } catch {}
+          liveLen = 0;
+          return;
+        }
+        // insertReplacementText (rare once composition engages): erase our partial
+        // and send the refined syllable through xterm's pipeline.
+        feed("\x7f".repeat(liveLen) + d);
         liveLen = [...d].length;
         try { ta.value = ""; } catch {}
       }, true);

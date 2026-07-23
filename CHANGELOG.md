@@ -8,6 +8,23 @@ For installers, see the [GitHub Releases](https://github.com/ChoiGyber/Mymux/rel
 
 ---
 
+## v0.1.41 — 2026-07-24
+
+### Fixed
+- **macOS Korean/CJK input.** Typing Korean in the shell, Claude Code, and Codex
+  now composes correctly — including the first syllable, which previously split
+  into separate jamo ("ㅈ ㅏ 도행전"). On macOS WebKit the first character of a
+  run arrives as a committed `insertText` before composition starts; that jamo is
+  now seeded into the input so the following composition builds the whole
+  syllable. The old v0.1.34 shim (which broke Backspace and the shortcut
+  autocomplete in the shell) is removed. See `docs/macos-webkit-gotchas.md`.
+- **macOS Backspace and shortcut autocomplete.** No longer corrupted by the IME
+  path — IME bytes are routed through the terminal's normal input pipeline
+  instead of straight to the PTY, keeping command tracking and autocomplete in
+  sync.
+
+---
+
 ## v0.1.40 — 2026-07-23
 
 ### Added / New features
