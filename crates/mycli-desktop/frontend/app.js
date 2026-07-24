@@ -6593,8 +6593,8 @@ async function loadCommands() {
 }
 
 function commandShortcutLabel(cmd) {
-  const alias = String(cmd.alias || "").replace(/\s+/g, "").trim();
-  if (alias) return alias.slice(0, 4).toUpperCase();
+  const alias = String(cmd.alias || "").trim();
+  if (alias) return alias;
   const words = String(cmd.command || "").match(/[A-Za-z0-9]+/g) || [];
   const initials = words.slice(0, 3).map((word) => word[0]).join("");
   if (initials) return initials.toUpperCase();
