@@ -4,6 +4,9 @@ on:
   push:
     branches: [main]
   pull_request:
+  # Manual retry lever — CI was disabled for a month (every day-one run failed
+  # and logs have since expired), so keep a way to rerun it without a push.
+  workflow_dispatch:
 
 # Cancel superseded runs on the same ref.
 concurrency:

@@ -37,13 +37,13 @@ impl CommandStore {
 
     /// Create a store with a custom path (for testing).
     pub fn with_path(path: PathBuf) -> Result<Self, CoreError> {
-        if let Some(parent) = path.parent() {
-            if !parent.exists() {
-                fs::create_dir_all(parent).map_err(|e| CoreError::Io {
-                    path: parent.to_path_buf(),
-                    source: e,
-                })?;
-            }
+        if let Some(parent) = path.parent()
+            && !parent.exists()
+        {
+            fs::create_dir_all(parent).map_err(|e| CoreError::Io {
+                path: parent.to_path_buf(),
+                source: e,
+            })?;
         }
         if !path.exists() {
             fs::write(&path, "[]").map_err(|e| CoreError::Io {
