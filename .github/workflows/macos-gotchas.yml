@@ -1,0 +1,26 @@
+name: macOS Gotchas Guard
+
+# Static guard for the macOS/WKWebView landmines (Korean IME composition,
+# focus keeper, Keychain credentials, clipboard caps) — see
+# docs/macos-webkit-gotchas.md §7. Lives in its own tiny workflow because the
+# full CI workflow (ci.yml) is manually disabled; this one costs ~10s and must
+# run on every push so a deleted guard is caught at commit time, not at the
+# next Mac build.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: macos-gotchas-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  guard:
+    name: macOS gotchas guard
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check macOS WebKit source invariants
+        run: node scripts/check-macos-gotchas.mjs
