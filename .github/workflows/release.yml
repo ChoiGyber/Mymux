@@ -41,6 +41,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # The mac dmg is built later from this same tag — catch a deleted
+      # macOS/WKWebView guard (docs/macos-webkit-gotchas.md) before anything
+      # for this release is published.
+      - name: Check macOS WebKit source invariants
+        run: node scripts/check-macos-gotchas.mjs
+
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
 

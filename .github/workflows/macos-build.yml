@@ -26,6 +26,11 @@ jobs:
         with:
           ref: ${{ inputs.tag }}
 
+      # Fail fast (before the expensive universal build) if any of the
+      # macOS/WKWebView source guards regressed — docs/macos-webkit-gotchas.md.
+      - name: Check macOS WebKit source invariants
+        run: node scripts/check-macos-gotchas.mjs
+
       - name: Install Rust toolchain (both mac targets)
         uses: dtolnay/rust-toolchain@stable
         with:
