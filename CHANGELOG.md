@@ -8,6 +8,32 @@ For installers, see the [GitHub Releases](https://github.com/ChoiGyber/Mymux/rel
 
 ---
 
+## v0.1.42 — 2026-07-26
+
+### Fixed
+- **Windows Korean first-syllable split after switching back to the window.**
+  When you Alt-Tabbed away (to a browser, docs, another app) and came straight
+  back to type Korean into an AI CLI (Claude Code, Codex), the very first
+  syllable could split into separate jamo ("자" → "ㅈ ㅏ") — so it looked like a
+  typo and you'd Backspace and retype. Cause: on window return the focus keeper
+  did a real OS-level `blur()`+`focus()` on the terminal's input field to revive
+  focus, and one of its retries could land in the gap between your first keydown
+  and the IME's `compositionstart`, desyncing Windows' IME mid-syllable. The
+  keeper now re-syncs xterm's focus state with a synthetic focus event when the
+  field already has focus, so the live IME composition is never disturbed. This
+  is the Windows counterpart to the macOS first-syllable fix in v0.1.41.
+- **Windows 한글 첫 음절 깨짐(창 복귀 직후).** 다른 창(브라우저·문서·다른 앱)에
+  갔다가 Mymux로 돌아와 곧바로 AI CLI(Claude Code, Codex)에 한글을 치면 첫 음절이
+  자모로 쪼개지곤 했습니다("자" → "ㅈ ㅏ") — 오타처럼 보여 백스페이스로 지우고 다시
+  치게 되던 문제입니다. 원인은 창 복귀 시 포커스를 되살리려고 터미널 입력 필드를
+  실제로 `blur()`+`focus()` 하던 코드로, 그 재시도가 첫 키 입력과 IME
+  `compositionstart` 사이 틈에 끼어들며 조합 중인 IME를 흐트러뜨렸습니다. 이제
+  입력 필드에 이미 포커스가 있으면 합성 focus 이벤트로 xterm 상태만 갱신해, 진행
+  중인 IME 조합을 전혀 건드리지 않습니다. v0.1.41의 macOS 첫 음절 수정에 대응하는
+  Windows판입니다.
+
+---
+
 ## v0.1.41 — 2026-07-24
 
 ### Fixed
