@@ -430,6 +430,16 @@ html[data-theme="light"] #toolbar-actions #btn-update:hover {
   opacity: 0.35;
   cursor: default;
 }
+/* Hidden-files eye toggle: dimmed when off, highlighted when showing dotfiles. */
+#btn-explorer-hidden {
+  opacity: 0.4;
+}
+#btn-explorer-hidden.on {
+  opacity: 1;
+  background: var(--accent);
+  color: #fff;
+  border-color: var(--accent);
+}
 #explorer-path {
   font-size: 11px;
   color: var(--text-dim);

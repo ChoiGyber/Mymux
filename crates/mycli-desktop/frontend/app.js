@@ -154,6 +154,11 @@ let explorerHistIdx = -1;
 let fileClipboard = null; // { path, name, mode: 'copy' | 'cut' }
 let explorerCtxEntry = null;
 let explorerEntries = []; // current dir listing (for in-folder name search)
+// Show dotfiles (names starting with ".", e.g. .env / .bashrc) in the explorer.
+// Persisted; defaults to showing them so config files are reachable + editable.
+let showHiddenFiles = (() => {
+  try { return localStorage.getItem("mymux.showHidden") !== "false"; } catch { return true; }
+})();
 
 // ── Init: wait for both DOM and Tauri ──
 window.addEventListener("DOMContentLoaded", async () => {
@@ -441,6 +446,16 @@ async function setupListeners() {
   if (btnExpFwd) btnExpFwd.addEventListener("click", explorerForward);
   const btnExpNewFolder = document.getElementById("btn-explorer-newfolder");
   if (btnExpNewFolder) btnExpNewFolder.addEventListener("click", openNewFolderModal);
+  const btnExpHidden = document.getElementById("btn-explorer-hidden");
+  if (btnExpHidden) {
+    syncHiddenToggleBtn();
+    btnExpHidden.addEventListener("click", () => {
+      showHiddenFiles = !showHiddenFiles;
+      try { localStorage.setItem("mymux.showHidden", showHiddenFiles ? "true" : "false"); } catch {}
+      syncHiddenToggleBtn();
+      renderFileList(explorerEntries);
+    });
+  }
   const newFolderOpenSession = document.getElementById("newfolder-open-session");
   if (newFolderOpenSession) {
     newFolderOpenSession.addEventListener("change", () => {
@@ -728,8 +743,8 @@ function renderFileList(entries) {
   fileListEl.innerHTML = "";
   const q = (document.getElementById("explorer-search")?.value || "").trim().toLowerCase();
   for (const entry of entries) {
-    // Skip hidden files starting with .
-    if (entry.name.startsWith(".")) continue;
+    // Hidden files (names starting with ".") are shown unless the toggle is off.
+    if (!showHiddenFiles && entry.name.startsWith(".")) continue;
     if (q && !entry.name.toLowerCase().includes(q)) continue;
 
     const li = document.createElement("li");
@@ -779,6 +794,16 @@ function renderFileList(entries) {
 
     fileListEl.appendChild(li);
   }
+}
+
+// Reflect the show-hidden state on the eye toggle button (active = showing).
+function syncHiddenToggleBtn() {
+  const btn = document.getElementById("btn-explorer-hidden");
+  if (!btn) return;
+  btn.classList.toggle("on", showHiddenFiles);
+  btn.title = showHiddenFiles
+    ? "숨김 파일(.으로 시작) 숨기기"
+    : "숨김 파일(.으로 시작) 표시";
 }
 
 function navigateTo(path) {
@@ -1189,7 +1214,10 @@ function fileExt(name) {
 async function openFileViewer(entry) {
   const ext = fileExt(entry.name);
   const lower = entry.name.toLowerCase();
-  const isText = VIEWER_TEXT_EXTS.has(ext) || lower === "dockerfile" || lower.endsWith(".gitignore") || ext === "";
+  // Dotfiles (.env, .bashrc, .npmrc, .gitconfig …) are text config; treat any
+  // leading-dot name as text so it opens in the editor. True binaries (e.g.
+  // .DS_Store) still fall back to the OS app via the backend's BINARY guard.
+  const isText = VIEWER_TEXT_EXTS.has(ext) || lower === "dockerfile" || lower.endsWith(".gitignore") || lower.startsWith(".") || ext === "";
   const sftpId = currentSftpId; // when set, the entry is remote — read over SFTP
   if (!isText) {
     if (sftpId != null) { toast("Preview isn't supported for remote binary files.", true); return; }
