@@ -1,10 +1,14 @@
 use russh::client;
 use russh::keys::key::PrivateKeyWithHashAlg;
 use russh_sftp::client::SftpSession;
+use russh_sftp::protocol::OpenFlags;
 use serde::Serialize;
 use std::collections::HashMap;
+use std::future::Future;
 use std::path::{Path, PathBuf};
+use std::pin::Pin;
 use std::sync::Arc;
+use tokio::io::AsyncWriteExt;
 use tokio::sync::Mutex;
 
 #[derive(Debug, Clone, Serialize)]
@@ -450,6 +454,97 @@ pub fn sftp_write_text_file(
             .map_err(|e| e.to_string())?;
         file.flush().await.ok();
         file.shutdown().await.ok();
+        Ok(())
+    })
+}
+
+/// Upload a local file or directory tree into an existing SFTP directory.
+///
+/// The destination is never overwritten. This keeps a drag-and-drop upload
+/// recoverable and matches the local Explorer copy behavior.
+#[tauri::command]
+pub fn sftp_upload_path(
+    state: tauri::State<'_, Arc<ExplorerManager>>,
+    session_id: u32,
+    local_path: String,
+    remote_dir: String,
+) -> Result<(), String> {
+    let state_clone = Arc::clone(&*state);
+
+    state.runtime.block_on(async {
+        let sessions = state_clone.sftp_sessions.lock().await;
+        let session = sessions.get(&session_id).ok_or("SFTP session not found")?;
+        let source = PathBuf::from(&local_path);
+        let metadata = std::fs::symlink_metadata(&source)
+            .map_err(|e| format!("Cannot read {}: {}", source.display(), e))?;
+        if metadata.file_type().is_symlink() {
+            return Err("Symbolic links are not supported for upload.".to_string());
+        }
+        let name = source
+            .file_name()
+            .ok_or("Invalid local path")?
+            .to_string_lossy()
+            .to_string();
+        let remote_path = remote_join(&remote_dir, &name);
+        upload_local_entry(&session.sftp, &source, &remote_path, metadata.is_dir()).await
+    })
+}
+
+fn remote_join(dir: &str, name: &str) -> String {
+    let base = if dir.is_empty() { "/" } else { dir.trim_end_matches('/') };
+    if base == "/" {
+        format!("/{name}")
+    } else {
+        format!("{base}/{name}")
+    }
+}
+
+fn upload_local_entry<'a>(
+    sftp: &'a SftpSession,
+    local: &'a Path,
+    remote: &'a str,
+    is_dir: bool,
+) -> Pin<Box<dyn Future<Output = Result<(), String>> + 'a>> {
+    Box::pin(async move {
+        if sftp.metadata(remote).await.is_ok() {
+            return Err(format!("Remote item already exists: {remote}"));
+        }
+
+        if is_dir {
+            sftp.create_dir(remote)
+                .await
+                .map_err(|e| format!("Cannot create remote directory {remote}: {e}"))?;
+            for entry in std::fs::read_dir(local).map_err(|e| e.to_string())? {
+                let entry = entry.map_err(|e| e.to_string())?;
+                let child_meta = std::fs::symlink_metadata(entry.path()).map_err(|e| e.to_string())?;
+                if child_meta.file_type().is_symlink() {
+                    return Err(format!("Symbolic links are not supported: {}", entry.path().display()));
+                }
+                let child_name = entry.file_name().to_string_lossy().to_string();
+                let child_remote = remote_join(remote, &child_name);
+                upload_local_entry(sftp, &entry.path(), &child_remote, child_meta.is_dir()).await?;
+            }
+            return Ok(());
+        }
+
+        let mut local_file = tokio::fs::File::open(local)
+            .await
+            .map_err(|e| format!("Cannot open {}: {e}", local.display()))?;
+        let mut remote_file = sftp
+            .open_with_flags(remote, OpenFlags::CREATE | OpenFlags::EXCLUDE | OpenFlags::WRITE)
+            .await
+            .map_err(|e| format!("Cannot create remote file {remote}: {e}"))?;
+        tokio::io::copy(&mut local_file, &mut remote_file)
+            .await
+            .map_err(|e| format!("Upload failed for {}: {e}", local.display()))?;
+        remote_file
+            .flush()
+            .await
+            .map_err(|e| format!("Cannot flush remote file {remote}: {e}"))?;
+        remote_file
+            .shutdown()
+            .await
+            .map_err(|e| format!("Cannot close remote file {remote}: {e}"))?;
         Ok(())
     })
 }

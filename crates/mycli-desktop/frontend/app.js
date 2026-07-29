@@ -73,6 +73,8 @@ let sshInput, sshPort, sshPassword, sshKeyfile, btnSshConnect;
 let toastEl, acPopup, acList;
 let sessionPanel, sessionListEl, btnToggleSessions, btnSplitH, btnSplitV;
 let btnTheme, explorerDrives;
+let pendingTabCloseId = null;
+let explorerDropUnlisten = null;
 
 // ── State ──
 let editingId = null;
@@ -90,6 +92,9 @@ let lastFrameMeta = null;
 let screenInputBound = false;
 let browserMode = "native"; // 'native' (embedded WebView) | 'ai' (CDP screencast)
 let nativeCurrentUrl = "https://www.google.com";
+let browserPages = [];
+let activeBrowserPageId = null;
+let browserInfoOpen = false;
 let paneSyncPending = false;
 let terminalFontSize = (function () {
   try {
@@ -363,6 +368,27 @@ async function setupListeners() {
     sw.addEventListener("click", () => setAccent(sw.dataset.accent));
   });
   btnNewTerminal.addEventListener("click", () => spawnTerminal());
+  const btnTabNew = document.getElementById("btn-tab-new");
+  if (btnTabNew) btnTabNew.addEventListener("click", () => spawnTerminal());
+  setupExplorerFileDrop();
+
+  const tabCloseModal = document.getElementById("tab-close-modal");
+  const tabCloseCancel = document.getElementById("tab-close-cancel");
+  const tabCloseConfirm = document.getElementById("tab-close-confirm");
+  const closeTabPrompt = () => {
+    pendingTabCloseId = null;
+    if (tabCloseModal) tabCloseModal.classList.add("hidden");
+  };
+  if (tabCloseCancel) tabCloseCancel.addEventListener("click", closeTabPrompt);
+  if (tabCloseConfirm) tabCloseConfirm.addEventListener("click", () => {
+    const id = pendingTabCloseId;
+    closeTabPrompt();
+    if (id != null) closeTab(id);
+  });
+  if (tabCloseModal) {
+    tabCloseModal.addEventListener("click", (e) => { if (e.target === tabCloseModal) closeTabPrompt(); });
+    tabCloseModal.addEventListener("keydown", (e) => { if (e.key === "Escape") closeTabPrompt(); });
+  }
 
   // "+ SSH" — open a new SSH connection anytime (works with sessions open).
   const btnSsh = document.getElementById("btn-ssh");
@@ -713,6 +739,84 @@ async function setupListeners() {
 }
 
 // ═══════════════════════════════════════════════
+function explorerDropPoint(position) {
+  const panel = document.getElementById("panel-explorer");
+  if (!panel || !position) return false;
+  const r = panel.getBoundingClientRect();
+  const x = Number(position.x);
+  const y = Number(position.y);
+  if (!Number.isFinite(x) || !Number.isFinite(y)) return false;
+  const inside = (px, py) => px >= r.left && px <= r.right && py >= r.top && py <= r.bottom;
+  // Tauri may report physical coordinates while the DOM uses CSS pixels.
+  return inside(x, y) || inside(x / (window.devicePixelRatio || 1), y / (window.devicePixelRatio || 1));
+}
+
+function setExplorerDropState(active, message = "Drop files here to copy or upload") {
+  const panel = document.getElementById("panel-explorer");
+  const hint = document.getElementById("explorer-drop-hint");
+  if (panel) panel.classList.toggle("file-drop-active", active);
+  if (hint) {
+    hint.textContent = message;
+    hint.classList.toggle("hidden", !active);
+  }
+}
+
+async function handleExplorerFileDrop(paths) {
+  const files = Array.isArray(paths) ? paths.filter(Boolean) : [];
+  if (!files.length || !currentExplorerPath) return;
+  setExplorerDropState(true, currentSftpId == null ? "Copying files…" : "Uploading files…");
+  let ok = 0;
+  const errors = [];
+  try {
+    for (const localPath of files) {
+      try {
+        if (currentSftpId == null) {
+          await invoke("fs_copy_path", { src: localPath, destDir: currentExplorerPath });
+        } else {
+          await invoke("sftp_upload_path", {
+            sessionId: currentSftpId,
+            localPath,
+            remoteDir: currentExplorerPath,
+          });
+        }
+        ok++;
+      } catch (e) {
+        errors.push(`${localPath}: ${String(e)}`);
+      }
+    }
+  } finally {
+    setExplorerDropState(false);
+  }
+  await loadExplorer();
+  if (errors.length) {
+    toast(`${ok} item(s) copied/uploaded; ${errors.length} failed. ${errors[0]}`, true);
+  } else {
+    toast(`${ok} item(s) ${currentSftpId == null ? "copied" : "uploaded"}`);
+  }
+}
+
+async function setupExplorerFileDrop() {
+  try {
+    const winApi = window.__TAURI__ && window.__TAURI__.window;
+    const win = winApi && winApi.getCurrentWindow ? winApi.getCurrentWindow() : null;
+    if (!win || !win.onDragDropEvent) return;
+    explorerDropUnlisten = await win.onDragDropEvent(({ payload }) => {
+      if (!payload) return;
+      if (payload.type === "over") {
+        setExplorerDropState(explorerDropPoint(payload.position));
+      } else if (payload.type === "drop") {
+        const accepted = explorerDropPoint(payload.position);
+        setExplorerDropState(false);
+        if (accepted) handleExplorerFileDrop(payload.paths);
+      } else {
+        setExplorerDropState(false);
+      }
+    });
+  } catch (e) {
+    console.warn("Explorer file drop setup failed", e);
+  }
+}
+
 // EXPLORER
 // ═══════════════════════════════════════════════
 
@@ -1648,7 +1752,7 @@ function toggleExplorerFav(path, name) {
   const favs = getExplorerFavorites();
   const idx = favs.findIndex((f) => f.path === path);
   if (idx >= 0) favs.splice(idx, 1);
-  else favs.push({ path, name: name || baseName(path) || path });
+  else favs.push({ path, name: name || baseName(path) || path, commandId: null });
   setExplorerFavorites(favs);
   renderExplorerFavorites();
   loadExplorer(); // refresh star state in the list
@@ -1657,6 +1761,103 @@ function removeExplorerFav(path) {
   setExplorerFavorites(getExplorerFavorites().filter((f) => f.path !== path));
   renderExplorerFavorites();
   loadExplorer();
+}
+const FAVORITE_PERMISSION_ALIASES = new Set(["cl", "cy"]);
+function isFavoritePermissionCommand(cmd) {
+  if (!cmd) return false;
+  const alias = String(cmd.alias || "").trim().toLowerCase();
+  const name = String(cmd.name || "").trim().toLowerCase();
+  return FAVORITE_PERMISSION_ALIASES.has(alias) || FAVORITE_PERMISSION_ALIASES.has(name);
+}
+function favoritePermissionCommands() {
+  return savedCmds.filter((cmd) => cmd && cmd.command && isFavoritePermissionCommand(cmd));
+}
+function favoriteCommand(favorite) {
+  if (!favorite || !favorite.commandId) return null;
+  const cmd = savedCmds.find((item) => item && item.id === favorite.commandId);
+  // A deleted command must not leave a favorite permanently unopenable.
+  if (!cmd || !cmd.command || !isFavoritePermissionCommand(cmd)) return null;
+  return cmd;
+}
+function associateFavoriteCommand(favorite, cmd) {
+  const favs = getExplorerFavorites();
+  const current = favs.find((item) => item.path === favorite.path);
+  if (!current) return;
+  current.commandId = cmd ? cmd.id : null;
+  setExplorerFavorites(favs);
+  renderExplorerFavorites();
+}
+function showFavoriteCommandMenu(event, favorite) {
+  const menu = document.getElementById("cdcmd-menu");
+  if (!menu) return;
+  event.preventDefault();
+  event.stopPropagation();
+  menu.innerHTML = "";
+
+  const title = document.createElement("div");
+  title.className = "ctx-menu-title";
+  title.textContent = `${favorite.name || baseName(favorite.path)} 열기`;
+  menu.appendChild(title);
+  let hide = null;
+  let onKeyDown = null;
+  const closeMenu = () => {
+    menu.classList.add("hidden");
+    if (hide) document.removeEventListener("mousedown", hide, true);
+    if (onKeyDown) document.removeEventListener("keydown", onKeyDown, true);
+  };
+
+  const cancel = document.createElement("button");
+  cancel.type = "button";
+  cancel.textContent = "취소 — 쉘 디렉토리만 열기";
+  cancel.addEventListener("click", () => {
+    closeMenu();
+    cdToTerminal(favorite.path);
+  });
+  menu.appendChild(cancel);
+
+  const commands = favoritePermissionCommands();
+  for (const cmd of commands) {
+    const row = document.createElement("div");
+    row.className = "fav-command-row";
+    const run = document.createElement("button");
+    run.type = "button";
+    run.textContent = cmd.description || cmd.command;
+    run.title = cmd.command;
+    run.addEventListener("click", () => {
+      closeMenu();
+      openSessionWithCommand(favorite.path, cmd);
+    });
+    const link = document.createElement("button");
+    link.type = "button";
+    link.className = "fav-link-btn";
+    link.textContent = favorite.commandId === cmd.id ? "연결됨" : "연결";
+    link.title = "이 폴더를 클릭하면 이 명령어로 바로 열기";
+    link.addEventListener("click", (e) => {
+      e.stopPropagation();
+      associateFavoriteCommand(favorite, cmd);
+      closeMenu();
+      openSessionWithCommand(favorite.path, cmd);
+    });
+    row.append(run, link);
+    menu.appendChild(row);
+  }
+
+  menu.style.left = `${event.clientX}px`;
+  menu.style.top = `${event.clientY}px`;
+  menu.classList.remove("hidden");
+  hide = (ev) => {
+    if (!menu.contains(ev.target)) {
+      closeMenu();
+      // Escape or clicking away has the same safe fallback as Cancel: keep
+      // the user's folder navigation request, but do not run a command.
+      if (ev.type === "keydown" || ev.type === "mousedown") cdToTerminal(favorite.path);
+    }
+  };
+  document.addEventListener("mousedown", hide, true);
+  onKeyDown = (ev) => {
+    if (ev.key === "Escape") hide(ev);
+  };
+  document.addEventListener("keydown", onKeyDown, true);
 }
 function renderExplorerFavorites() {
   const el = document.getElementById("explorer-favorites");
@@ -1673,8 +1874,14 @@ function renderExplorerFavorites() {
     chip.className = "fav-chip";
     chip.title = f.path;
     chip.innerHTML = `<span class="fav-chip-star">★</span><span class="fav-chip-name">${esc(f.name)}</span><button class="fav-chip-x" title="Remove">&times;</button>`;
-    chip.querySelector(".fav-chip-star").addEventListener("click", () => cdToTerminal(f.path));
-    chip.querySelector(".fav-chip-name").addEventListener("click", () => cdToTerminal(f.path));
+    const openFavorite = (e) => {
+      e.stopPropagation();
+      const cmd = favoriteCommand(f);
+      if (cmd) openSessionWithCommand(f.path, cmd);
+      else showFavoriteCommandMenu(e, f);
+    };
+    chip.querySelector(".fav-chip-star").addEventListener("click", openFavorite);
+    chip.querySelector(".fav-chip-name").addEventListener("click", openFavorite);
     chip.querySelector(".fav-chip-x").addEventListener("click", (e) => {
       e.stopPropagation();
       removeExplorerFav(f.path);
@@ -1784,10 +1991,11 @@ async function createPane(parentEl, shell, args, cwd) {
   // Scrollback search — driven by the shared search bar (Ctrl+Shift+F).
   const searchAddon = new SearchAddon.SearchAddon();
   term.loadAddon(searchAddon);
-  // Ctrl+Click opens URLs (in-app browser when enabled); a plain click stays a
-  // selection click so it never hijacks text selection over a link.
+  // Ctrl+Click opens URLs in the in-app browser. Login URLs are the one
+  // intentional exception: a normal click opens them in Mymux too, because
+  // Claude Code/Codex print an OAuth URL as the action the user must take.
   term.loadAddon(new WebLinksAddon.WebLinksAddon((event, uri) => {
-    if (event.ctrlKey || event.metaKey) openLinkFromTerminal(uri);
+    if (event.ctrlKey || event.metaKey || isAiLoginUrl(uri)) openLinkFromTerminal(uri, isAiLoginUrl(uri));
     else hintLinkOnce();
   }));
   term.open(termWrap);
@@ -2760,6 +2968,8 @@ const CODEX_CTX_RE = /(?:\bcontext(?:\s+window)?\s+(?:left|remaining)\s*:?\s*(\d
 // so Claude's own `Model: …` statusline can never populate this field.
 const CODEX_MODEL_RE = /\bmodel\s*:\s*((?:gpt|o|codex)[A-Za-z0-9._-]{0,58})/i;
 const CODEX_MODEL_ID_RE = /\b((?:gpt|o|codex)[A-Za-z0-9._-]{1,58})\b/i;
+const CODEX_EFFORT_RE = /\b(?:reasoning\s+)?effort\s*[:=]\s*(minimal|low|medium|high|xhigh)\b/i;
+const CODEX_MODEL_STATUS_RE = /\b((?:gpt|o[1-9][A-Za-z0-9._-]*|codex)[A-Za-z0-9._-]{1,58})\b/i;
 // Codex prints its product banner before it has rendered a context footer.
 // Detect that banner so the per-pane indicators can appear immediately with
 // a placeholder instead of waiting for the first completed turn.
@@ -2832,7 +3042,9 @@ function markPaneReturnedToShell(id, t) {
   t.ctxSource = null;
   t.ctxPct = null;
   t.ctxModel = null;
+  t.ctxEffort = null;
   t.codexModel = null;
+  t.codexReasoningEffort = null;
   t.codexDetected = false;
   t.ctxAt = 0;
   t.ctxLvl = 0;
@@ -2949,6 +3161,8 @@ function scanCtxUsage(id, t, data) {
       const statusText = text.slice(statusStart, statusEnd);
       const mm = CTX_MODEL_RE.exec(statusText);
       if (mm) claudeModel = mm[1].trim();
+      const em = CODEX_EFFORT_RE.exec(statusText);
+      if (em) t.ctxEffort = em[1].toLowerCase();
     }
   }
   // Codex: `NN% context left` where NN is percent REMAINING → invert.
@@ -2978,6 +3192,7 @@ function scanCtxUsage(id, t, data) {
       // in the terminal tail. Prevent global Codex rollout data from crossing.
       t.codexDetected = false;
       t.codexModel = null;
+      t.codexReasoningEffort = null;
       if (claudeModel && claudeModel !== t.ctxModel) { t.ctxModel = claudeModel; changed = true; }
     } else {
       t.codexDetected = true;
@@ -2987,11 +3202,18 @@ function scanCtxUsage(id, t, data) {
     maybeAnnounceCtx(id, t);
   }
   let codexModel = null;
+  let codexEffort = null;
   if (t.codexDetected || t.ctxSource === "codex" || codexFooter) {
     for (const m of text.matchAll(new RegExp(CODEX_MODEL_RE.source, "gi"))) codexModel = m[1];
+    const em = CODEX_EFFORT_RE.exec(text);
+    if (em) codexEffort = em[1].toLowerCase();
     if (!codexModel && codexFooter && codexFooter.line) {
       const m = CODEX_MODEL_ID_RE.exec(codexFooter.line);
       if (m) codexModel = m[1];
+    }
+    if (!codexModel) {
+      const m = CODEX_MODEL_STATUS_RE.exec(text);
+      if (m && !/^codex$/i.test(m[1])) codexModel = m[1];
     }
   }
   if (codexModel && codexModel !== t.codexModel) {
@@ -3028,11 +3250,11 @@ function ctxBadgeText(t) {
     // Codex's status footer has no reasoning setting, so prefer the active
     // rollout value and fall back to config.toml. ctxPct is converted from "left".
     parts.push(t.codexModel || codexSessionModel || codexConfiguredModel || "Codex");
-    const effort = codexSessionReasoningEffort || codexConfiguredReasoningEffort;
+    const effort = t.codexReasoningEffort || codexSessionReasoningEffort || codexConfiguredReasoningEffort;
     if (effort) parts.push(effort);
   } else {
     if (t.ctxModel) parts.push(t.ctxModel);
-    if (claudeEffort) parts.push(claudeEffort);
+    if (t.ctxEffort || claudeEffort) parts.push(t.ctxEffort || claudeEffort);
   }
   parts.push(t.ctxPct == null ? "?" : t.ctxPct + "%");
   return parts.join(" | ");
@@ -3107,8 +3329,27 @@ function usageSeg(label, pct, stale) {
 // for RESET_N_MS so it's noticeable at a glance. Tracked per source (CL 5h, CX).
 const RESET_N_MS = 60000;
 const RESET_DROP = 40; // ≥40%p fall from ≥50% counts as a reset
-let prevCL5h = null, prevCXpct = null;
+const CODEX_RESET_STATE_KEY = "mymux.codexUsageResetState.v1";
+let codexResetCount = 0;
+let codexResetLastAt = null;
+let codexResetLastPct = null;
+try {
+  const saved = JSON.parse(localStorage.getItem(CODEX_RESET_STATE_KEY) || "{}");
+  codexResetCount = Math.max(0, Number(saved.count) || 0);
+  codexResetLastAt = Number.isFinite(Number(saved.lastAt)) ? Number(saved.lastAt) : null;
+  codexResetLastPct = Number.isFinite(Number(saved.lastPct)) ? Number(saved.lastPct) : null;
+} catch (_) {}
+let prevCL5h = null, prevCXpct = codexResetLastPct;
 let clResetAt = 0, cxResetAt = 0;
+function saveCodexResetState() {
+  try {
+    localStorage.setItem(CODEX_RESET_STATE_KEY, JSON.stringify({
+      count: codexResetCount,
+      lastAt: codexResetLastAt,
+      lastPct: codexResetLastPct,
+    }));
+  } catch (_) {}
+}
 function detectUsageReset(now) {
   const cl = activeClaudeLimits();
   const cur5h = cl && cl.fiveH != null ? cl.fiveH : null;
@@ -3119,8 +3360,15 @@ function detectUsageReset(now) {
   const curCX = codexLimits && codexLimits.pct != null ? codexLimits.pct : null;
   if (prevCXpct != null && curCX != null && prevCXpct >= 50 && curCX <= prevCXpct - RESET_DROP) {
     cxResetAt = now; setTimeout(updateGlobalUsageUi, RESET_N_MS + 200);
+    codexResetCount += 1;
+    codexResetLastAt = Date.now();
+    saveCodexResetState();
   }
-  if (curCX != null) prevCXpct = curCX;
+  if (curCX != null) {
+    prevCXpct = curCX;
+    codexResetLastPct = curCX;
+    saveCodexResetState();
+  }
 }
 function resetNBadge() {
   const n = document.createElement("span");
@@ -3128,6 +3376,28 @@ function resetNBadge() {
   n.textContent = "N";
   n.title = "방금 사용량이 리셋됨 (New)";
   return n;
+}
+function codexResetBadge() {
+  const b = document.createElement("button");
+  b.type = "button";
+  b.className = "usage-reset-count";
+  b.textContent = `R-${codexResetCount}`;
+  b.title = "감지된 CX 사용량 리셋 횟수입니다. 클릭하면 로컬 기록을 초기화합니다.";
+  b.addEventListener("click", (event) => {
+    event.stopPropagation();
+    if (!codexResetCount || window.confirm("CX 리셋 감지 횟수(R-n)를 0으로 초기화할까요?")) {
+      codexResetCount = 0;
+      codexResetLastAt = null;
+      saveCodexResetState();
+      updateGlobalUsageUi();
+    }
+  });
+  return b;
+}
+async function refreshCodexUsageFromBadge(event) {
+  event.stopPropagation();
+  await loadCodexLimits();
+  toast("CX 사용량을 새로고침했습니다.");
 }
 function updateGlobalUsageUi() {
   const el = document.getElementById("usage-global");
@@ -3160,14 +3430,28 @@ function updateGlobalUsageUi() {
       div.textContent = "│";
       el.appendChild(div);
     }
-    const tool = document.createElement("span");
-    tool.className = "usage-tool";
+    const tool = document.createElement("button");
+    tool.type = "button";
+    tool.className = "usage-tool usage-clickable";
     tool.textContent = "CX";
+    tool.title = "클릭하면 CX 사용량을 새로고침합니다.";
+    tool.addEventListener("click", refreshCodexUsageFromBadge);
     el.appendChild(tool);
     if (cxResetAt && now - cxResetAt < RESET_N_MS) el.appendChild(resetNBadge());
-    el.appendChild(usageSeg(codexLimits.label || "usage", codexLimits.pct, false));
-    if (codexLimits.secondary) el.appendChild(usageSeg(codexLimits.secondary.label || "wk", codexLimits.secondary.pct, false));
+    el.appendChild(codexResetBadge());
+    // Age of the underlying snapshot (real wall-clock), not the poll time.
+    const cxAgeMs = codexLimits.snapshotAt != null ? Date.now() - codexLimits.snapshotAt : null;
+    const cxStale = cxAgeMs != null && cxAgeMs > CODEX_STALE_MS;
+    el.appendChild(usageSeg(codexLimits.label || "usage", codexLimits.pct, cxStale));
+    if (codexLimits.secondary) el.appendChild(usageSeg(codexLimits.secondary.label || "wk", codexLimits.secondary.pct, cxStale));
+    if (cxStale) {
+      const age = document.createElement("span");
+      age.className = "usage-age";
+      age.textContent = fmtAgo(cxAgeMs);
+      el.appendChild(age);
+    }
     tips.push(`Codex 전체 사용량 (plan: ${codexLimits.plan || "?"})`
+      + (cxAgeMs != null ? ` · ${fmtAgo(cxAgeMs)} 기록${cxStale ? " (오래됨 — 현재값 아닐 수 있음)" : ""}` : "")
       + (codexLimits.resetsAt ? ` · 리셋까지 ${fmtEpochRemain(codexLimits.resetsAt)}` : ""));
   }
   el.title = tips.join("\n");
@@ -3179,6 +3463,17 @@ function fmtEpochRemain(epochSec) {
   if (d > 0) return `${d}d${h % 24}h`;
   if (h > 0) return `${h}h${m % 60}m`;
   return `${m}m`;
+}
+// Codex rate-limit snapshots older than this read as stale (dimmed + age shown),
+// because they only refresh when Codex actually replies.
+const CODEX_STALE_MS = 10 * 60 * 1000;
+function fmtAgo(ms) {
+  if (ms == null || !Number.isFinite(ms) || ms < 0) return "";
+  const m = Math.floor(ms / 60000), h = Math.floor(m / 60), d = Math.floor(h / 24);
+  if (d > 0) return `${d}일 전`;
+  if (h > 0) return `${h}시간 전`;
+  if (m > 0) return `${m}분 전`;
+  return "방금";
 }
 // Codex writes a rate_limits snapshot into its session rollout on every reply;
 // mine the newest rollout's tail for the last one. Works no matter where the
@@ -3292,18 +3587,32 @@ async function loadCodexLimits() {
         continue;
       }
       try {
-        const rl = findKeyDeep(JSON.parse(lines[i]), "rate_limits");
+        const ev = JSON.parse(lines[i]);
+        const rl = findKeyDeep(ev, "rate_limits");
         const p = rl && rl.primary;
         if (!p || p.used_percent == null) continue;
+        // A window whose resets_at has already passed has rolled over: its old
+        // used_percent no longer applies, so read it as 0% until a fresh
+        // snapshot arrives (Codex only writes one when it next replies).
+        const win = (w) => {
+          if (!w || w.used_percent == null) return null;
+          const rolled = w.resets_at != null && w.resets_at * 1000 < Date.now();
+          return { pct: rolled ? 0 : Math.min(100, Math.round(w.used_percent)), label: codexWindowLabel(w.window_minutes) };
+        };
+        const prim = win(p);
+        const sec = win(rl.secondary);
+        // Freshness must come from the snapshot's OWN wall-clock timestamp, not
+        // from when we read the file: a rollout is written only on a Codex
+        // reply, so a days-old file has to read as stale — not "just now".
+        const snapMs = ev && ev.timestamp ? Date.parse(ev.timestamp) : NaN;
         codexLimits = {
-          pct: Math.min(100, Math.round(p.used_percent)),
-          label: codexWindowLabel(p.window_minutes),
-          secondary: rl.secondary && rl.secondary.used_percent != null
-            ? { pct: Math.min(100, Math.round(rl.secondary.used_percent)), label: codexWindowLabel(rl.secondary.window_minutes) }
-            : null,
+          pct: prim.pct,
+          label: prim.label,
+          secondary: sec,
           resetsAt: p.resets_at || null,
           plan: rl.plan_type || null,
           at: performance.now(),
+          snapshotAt: Number.isFinite(snapMs) ? snapMs : null,
         };
         updateGlobalUsageUi();
         foundRateLimits = true;
@@ -3512,18 +3821,77 @@ function closeTermSearch() {
 }
 
 // ── Terminal URL opening (web-links addon) ───────────────────────────────
+// Claude Code and Codex use browser-based OAuth/device login. Keep this
+// deliberately narrow: ordinary documentation URLs should retain the normal
+// Ctrl+Click behavior, while an auth link should always stay inside Mymux so
+// the login callback returns to the CLI session without switching apps.
+function isAiLoginUrl(uri) {
+  if (!/^https?:\/\//i.test(uri)) return false;
+  try {
+    const u = new URL(uri);
+    const host = u.hostname.toLowerCase();
+    const path = u.pathname.toLowerCase();
+    const authPath = /(^|\/)(oauth|authorize|device-login|device\/login|login|signin|sign-in)(\/|$)/.test(path);
+    const authQuery = /(?:login|oauth|authorize|redirect|return_to|callback|code)=/i.test(u.search);
+    return (
+      host === "auth.openai.com" ||
+      host === "accounts.openai.com" ||
+      host === "claude.com" ||
+      host === "claude.ai" && (authPath || authQuery) ||
+      /(^|\.)anthropic\.com$/.test(host) && (authPath || authQuery) ||
+      authPath && authQuery
+    );
+  } catch {
+    return false;
+  }
+  if (codexEffort && codexEffort !== t.codexReasoningEffort) {
+    t.codexReasoningEffort = codexEffort;
+    changed = true;
+  }
+}
+
 // Ctrl+Click routes into the in-app browser tab when the Browser feature is
-// enabled; otherwise falls back to the OS default browser.
-function openLinkFromTerminal(uri) {
+// enabled; authentication links force the in-app route even if the optional
+// browser tab was hidden. Non-auth links retain the user's OS-browser fallback.
+function openLinkFromTerminal(uri, forceInApp = false) {
   if (!/^https?:\/\//i.test(uri)) return;
-  if (browserEnabled()) {
+  // Authentication must stay in Mymux. Never hand the login URL to the
+  // imported-profile/Playwright launcher because that can start Chrome.
+  if (forceInApp) {
+    openInNativeBrowser(uri);
+    toast("로그인 링크를 Mymux 내부 브라우저에서 엽니다.");
+    return;
+  }
+  if (forceInApp || browserEnabled()) {
     if (browserMode !== "native") setBrowserMode("native");
     setBrowserView(true);
     const nav = document.getElementById("nav-url");
     if (nav) nav.value = uri;
     nativeNavigate(uri);
+    if (forceInApp) toast("로그인 링크를 Mymux 브라우저에서 엽니다.");
   } else {
     invoke("open_external", { path: uri }).catch((e) => toast(String(e), true));
+  }
+}
+
+function browserProfileImported() {
+  try { return localStorage.getItem("mymux.browserProfileImported.v1") === String(browserPort()); } catch { return false; }
+}
+function browserLaunchPreference() {
+  try { return localStorage.getItem("mymux.browserImportedBrowser.v1") || null; } catch { return null; }
+}
+
+async function openLoginInImportedBrowser(uri) {
+  if (browserMode !== "ai") setBrowserMode("ai");
+  const url = document.getElementById("browser-url");
+  if (url) url.value = uri;
+  setBrowserView(true);
+  try {
+    const st = await invoke("browser_launch", { port: browserPort(), url: uri, headless: true, browser: browserLaunchPreference() });
+    applyBrowserStatus(st);
+    toast("가져온 브라우저 로그인 세션으로 엽니다.");
+  } catch (e) {
+    toast(String(e), true);
   }
 }
 let linkHintShown = false;
@@ -4779,7 +5147,11 @@ function initBrowserPanel() {
   document.getElementById("btn-browser-launch").addEventListener("click", launchBrowser);
   document.getElementById("btn-browser-stop").addEventListener("click", stopBrowser);
   document.getElementById("btn-browser-refresh").addEventListener("click", refreshBrowserStatus);
+  document.getElementById("btn-browser-new-page").addEventListener("click", newBrowserPage);
+  document.getElementById("btn-browser-info").addEventListener("click", toggleBrowserInfo);
   document.getElementById("browser-port").addEventListener("input", () => updateBrowserInfo());
+  document.getElementById("btn-browser-profile-scan").addEventListener("click", scanBrowserProfiles);
+  document.getElementById("btn-browser-profile-import").addEventListener("click", importBrowserProfile);
   document.querySelectorAll("#browser-panel .copy-btn").forEach((btn) => {
     btn.addEventListener("click", () => copyBrowserField(btn.dataset.copy));
   });
@@ -4818,6 +5190,9 @@ function initBrowserPanel() {
 
   setBrowserMode("native");
   updateBrowserInfo();
+  setInterval(() => {
+    if (browserTabActive && browserMode === "ai") refreshBrowserPages();
+  }, 1500);
 }
 
 function setBrowserView(on) {
@@ -4864,6 +5239,84 @@ function updateBrowserInfo(endpointOverride) {
     `claude mcp add playwright -- npx @playwright/mcp@latest --cdp-endpoint ${ep}`;
 }
 
+function toggleBrowserInfo() {
+  browserInfoOpen = !browserInfoOpen;
+  const conn = document.getElementById("browser-conn");
+  if (conn) conn.classList.toggle("browser-info-open", browserInfoOpen);
+}
+
+function renderBrowserPages() {
+  const wrap = document.getElementById("browser-page-tabs");
+  if (!wrap) return;
+  wrap.querySelectorAll(".browser-page-tab").forEach((el) => el.remove());
+  const add = document.getElementById("btn-browser-new-page");
+  for (const page of browserPages) {
+    const tab = document.createElement("button");
+    tab.type = "button";
+    tab.className = "browser-page-tab" + (page.targetId === activeBrowserPageId ? " active" : "");
+    tab.dataset.targetId = page.targetId;
+    tab.title = page.url || "about:blank";
+    const label = page.url && page.url !== "about:blank" ? page.url.replace(/^https?:\/\//, "").split(/[/?#]/)[0] : "New page";
+    tab.innerHTML = `<span class="browser-page-label"></span><span class="browser-page-close" title="Close">×</span>`;
+    tab.querySelector(".browser-page-label").textContent = label || "New page";
+    tab.addEventListener("click", (e) => {
+      if (e.target.closest(".browser-page-close")) { closeBrowserPage(page.targetId); return; }
+      selectBrowserPage(page);
+    });
+    wrap.insertBefore(tab, add);
+  }
+  wrap.style.display = browserMode === "ai" && browserPages.length ? "flex" : "none";
+}
+
+async function refreshBrowserPages() {
+  try {
+    const pages = await invoke("browser_page_targets", { port: browserPort() });
+    browserPages = Array.isArray(pages) ? pages : [];
+    if (!browserPages.some((p) => p.targetId === activeBrowserPageId)) {
+      activeBrowserPageId = browserPages[0]?.targetId || null;
+    }
+    renderBrowserPages();
+    if (browserTabActive && browserMode === "ai" && activeBrowserPageId && !cdpWs) attachScreencast();
+  } catch {
+    browserPages = [];
+    activeBrowserPageId = null;
+    renderBrowserPages();
+  }
+}
+
+function selectBrowserPage(page) {
+  if (!page || page.targetId === activeBrowserPageId) return;
+  activeBrowserPageId = page.targetId;
+  detachScreencast();
+  renderBrowserPages();
+  if (browserTabActive && browserMode === "ai") openCdp(page.wsUrl);
+}
+
+async function newBrowserPage() {
+  try {
+    const page = await invoke("browser_new_tab", { port: browserPort(), url: "about:blank" });
+    await refreshBrowserPages();
+    const found = browserPages.find((p) => p.targetId === page.targetId) || page;
+    activeBrowserPageId = found.targetId;
+    detachScreencast();
+    renderBrowserPages();
+    if (browserTabActive && browserMode === "ai") openCdp(found.wsUrl);
+  } catch (e) { toast(String(e), true); }
+}
+
+async function closeBrowserPage(targetId) {
+  if (browserPages.length <= 1) { toast("Keep at least one browser page open.", true); return; }
+  try {
+    await invoke("browser_close_tab", { port: browserPort(), targetId });
+    if (targetId === activeBrowserPageId) {
+      detachScreencast();
+      activeBrowserPageId = null;
+    }
+    await refreshBrowserPages();
+    if (browserTabActive && browserMode === "ai" && activeBrowserPageId) attachScreencast();
+  } catch (e) { toast(String(e), true); }
+}
+
 function applyBrowserStatus(st) {
   const statusEl = document.getElementById("browser-status");
   if (st && st.running) {
@@ -4872,6 +5325,7 @@ function applyBrowserStatus(st) {
     statusEl.classList.add("running");
     if (st.port) document.getElementById("browser-port").value = st.port;
     updateBrowserInfo(st.endpoint);
+    refreshBrowserPages();
     if (browserTabActive) attachScreencast();
   } else {
     statusEl.textContent = "○ Stopped";
@@ -4879,6 +5333,9 @@ function applyBrowserStatus(st) {
     statusEl.classList.add("stopped");
     updateBrowserInfo();
     detachScreencast();
+    browserPages = [];
+    activeBrowserPageId = null;
+    renderBrowserPages();
   }
 }
 
@@ -4895,7 +5352,7 @@ async function launchBrowser() {
   const port = browserPort();
   const url = document.getElementById("browser-url").value.trim() || null;
   try {
-    const st = await invoke("browser_launch", { port, url, headless: true });
+    const st = await invoke("browser_launch", { port, url, headless: true, browser: browserLaunchPreference() });
     applyBrowserStatus(st);
     toast(`Browser launched (${st.browser}, ${st.endpoint})`);
   } catch (e) {
@@ -4908,6 +5365,59 @@ async function stopBrowser() {
     await invoke("browser_close");
     applyBrowserStatus({ running: false });
     toast("Browser stopped");
+  } catch (e) {
+    toast(String(e), true);
+  }
+}
+
+let browserImportProfiles = [];
+
+async function scanBrowserProfiles() {
+  const select = document.getElementById("browser-import-profile");
+  const importBtn = document.getElementById("btn-browser-profile-import");
+  try {
+    browserImportProfiles = await invoke("browser_profiles");
+    select.replaceChildren();
+    if (!browserImportProfiles.length) {
+      select.add(new Option("No Chrome/Edge profiles found", ""));
+      select.disabled = true;
+      importBtn.disabled = true;
+      toast("Chrome/Edge 프로필을 찾지 못했습니다.", true);
+      return;
+    }
+    for (const p of browserImportProfiles) {
+      select.add(new Option(`${p.browser} · ${p.name} (${p.profile})`, p.id));
+    }
+    select.disabled = false;
+    importBtn.disabled = false;
+    toast(`${browserImportProfiles.length}개 브라우저 프로필을 찾았습니다.`);
+  } catch (e) {
+    toast(String(e), true);
+  }
+}
+
+async function importBrowserProfile() {
+  const select = document.getElementById("browser-import-profile");
+  const selected = browserImportProfiles.find((p) => p.id === select.value);
+  if (!selected) return;
+  const consent = window.confirm(
+    `${selected.browser}의 “${selected.name}” 프로필을 Mymux AI 브라우저로 복사할까요?\n\n` +
+    "쿠키와 로그인 세션이 포함될 수 있습니다. 원본 프로필은 수정하지 않습니다."
+  );
+  if (!consent) return;
+  try {
+    const status = await invoke("browser_status");
+    if (status?.running) await stopBrowser();
+    const result = await invoke("browser_import_profile", {
+      browser: selected.browser,
+      profile: selected.profile,
+      port: browserPort(),
+      consent: true,
+    });
+    toast(String(result));
+    try { localStorage.setItem("mymux.browserProfileImported.v1", String(browserPort())); } catch {}
+    try { localStorage.setItem("mymux.browserImportedBrowser.v1", selected.browser); } catch {}
+    if (browserMode !== "ai") setBrowserMode("ai");
   } catch (e) {
     toast(String(e), true);
   }
@@ -4934,10 +5444,16 @@ async function attachScreencast() {
   if (cdpWs) return; // already attached
   const port = browserPort();
   // The debugging port + page target take a moment after launch; retry briefly.
-  let target = null;
+  let target = browserPages.find((p) => p.targetId === activeBrowserPageId) || null;
   for (let i = 0; i < 24 && !target && browserTabActive; i++) {
     try {
-      target = await invoke("browser_page_target", { port });
+      const pages = await invoke("browser_page_targets", { port });
+      browserPages = Array.isArray(pages) ? pages : [];
+      target = browserPages.find((p) => p.targetId === activeBrowserPageId) || browserPages[0] || null;
+      if (target) {
+        activeBrowserPageId = target.targetId;
+        renderBrowserPages();
+      }
     } catch {
       await sleep(250);
     }
@@ -5091,6 +5607,10 @@ function setBrowserMode(mode) {
   document.getElementById("browser-nav").style.display = mode === "native" ? "" : "none";
   document.getElementById("browser-ai-controls").style.display = mode === "ai" ? "" : "none";
   document.getElementById("browser-conn").style.display = mode === "ai" ? "" : "none";
+  const pageTabs = document.getElementById("browser-page-tabs");
+  if (pageTabs) pageTabs.style.display = mode === "ai" && browserPages.length ? "flex" : "none";
+  const conn = document.getElementById("browser-conn");
+  if (conn) conn.classList.toggle("browser-info-open", browserInfoOpen && mode === "ai");
 
   if (mode === "native") {
     // AI → Native: stop the screencast, hide its image, show the native pane.
@@ -5564,7 +6084,7 @@ function addTab(tabIdx, label) {
   `;
   tab.addEventListener("click", (e) => {
     if (e.target.classList.contains("tab-close")) {
-      closeTab(tabIdx);
+      requestCloseTab(tabIdx);
     } else if (e.target.classList.contains("tab-rename")) {
       e.stopPropagation();
       startRenameTabInBar(tabIdx, tab);
@@ -5578,7 +6098,25 @@ function addTab(tabIdx, label) {
     startRenameTabInBar(tabIdx, tab);
   });
   tab.title = "Double-click to rename";
-  terminalTabs.appendChild(tab);
+  const newTabButton = document.getElementById("btn-tab-new");
+  if (newTabButton) terminalTabs.insertBefore(tab, newTabButton);
+  else terminalTabs.appendChild(tab);
+}
+
+function requestCloseTab(tabIdx) {
+  const tabInfo = tabs.get(tabIdx);
+  if (!tabInfo) return;
+  pendingTabCloseId = tabIdx;
+  const modal = document.getElementById("tab-close-modal");
+  const message = document.getElementById("tab-close-message");
+  if (message) {
+    const label = terminalTabs.querySelector(`.tab[data-id="${tabIdx}"] span:not(.tab-close):not(.tab-rename)`)?.textContent || "this terminal";
+    message.textContent = `Close “${label}” and all panes in this terminal tab?`;
+  }
+  if (modal) {
+    modal.classList.remove("hidden");
+    document.getElementById("tab-close-cancel")?.focus();
+  }
 }
 
 function switchToAdjacentTab(dir) {
@@ -5690,6 +6228,8 @@ function presetCtxSourceFromCmd(ptyId, t, command) {
   t.ctxAt = performance.now();
   t.codexDetected = source === "codex";
   if (source === "claude") t.codexModel = null;
+  if (source === "claude") t.codexReasoningEffort = null;
+  if (source === "codex") t.ctxEffort = null;
   setPaneAiMode(t, true);
   updateCtxUi(ptyId, t);
   if (source === "codex") {
@@ -5717,12 +6257,33 @@ function runCommandCombo(cmd, ptyId = activeTermId) {
 // Write a command line once the new pane's shell is ready: wait for the first
 // OSC 133;A prompt mark (bash rcfile / PS prompt emit it), with a timeout
 // fallback for shells without integration (ConPTY queues the input anyway).
-function sendCommandWhenReady(ptyId, line) {
+function prepareSavedCommandLaunch(ptyId, cmd) {
+  const t = terminals.get(ptyId);
+  if (!t || !cmd) return;
+  // AI-targeted favorites enter the same pane state immediately, before the
+  // CLI has printed its first status line. The output scanner will fill in the
+  // concrete model/context details moments later.
+  const target = favoriteTarget(cmd);
+  if (target === "ai" || target === "both") {
+    const source = AI_CLI_COMMAND_RE.exec(cmd.command || "")?.[1]?.toLowerCase();
+    if (source) {
+      presetCtxSourceFromCmd(ptyId, t, cmd.command);
+    } else {
+      setPaneAiMode(t, true);
+      updateCtxUi(ptyId, t);
+    }
+  } else {
+    presetCtxSourceFromCmd(ptyId, t, cmd.command);
+  }
+}
+
+function sendCommandWhenReady(ptyId, line, cmd = null) {
   const t0 = performance.now();
   const tick = () => {
     const t = terminals.get(ptyId);
     if (!t) return; // pane closed before the shell came up
     if ((t.marks && t.marks.length > 0) || performance.now() - t0 > 2500) {
+      if (cmd) prepareSavedCommandLaunch(ptyId, cmd);
       armNotifyCycle(ptyId); // user-launched command — its completion should notify
       invoke("pty_write", { id: ptyId, data: line + "\r" });
       return;
@@ -5757,7 +6318,7 @@ async function openSessionWithCommand(path, cmd) {
   } else {
     ptyId = await spawnTerminal(undefined, path);
   }
-  if (ptyId != null) sendCommandWhenReady(ptyId, cmd.command);
+  if (ptyId != null) sendCommandWhenReady(ptyId, cmd.command, cmd);
 }
 
 function showCdCommandMenu(e, dirPath) {

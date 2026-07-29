@@ -8,6 +8,20 @@ For installers, see the [GitHub Releases](https://github.com/ChoiGyber/Mymux/rel
 
 ---
 
+## v0.1.43 — 2026-07-29
+
+### Added
+- Explorer local drag-and-drop copy and SFTP upload.
+- Terminal tab creation with a closing confirmation modal.
+- Browser page tabs, page management, and browser information controls.
+- CX usage refresh and persistent locally detected reset-count badge (`R-n`).
+
+### Fixed
+- CDP browser requests no longer wait indefinitely when an AI-control URL fails.
+- SSH sessions now recover model, effort, and usage badges from remote CLI status output.
+
+---
+
 ## v0.1.42 — 2026-07-26
 
 ### Fixed

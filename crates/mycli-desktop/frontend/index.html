@@ -83,6 +83,7 @@
           <input type="text" id="explorer-search" placeholder="Search this folder…" spellcheck="false" autocomplete="off" />
           <button type="button" id="explorer-search-clear" class="search-clear" title="Clear" tabindex="-1">&times;</button>
         </div>
+        <div id="explorer-drop-hint" class="hidden" aria-live="polite">Drop files here to copy or upload</div>
         <ul id="file-list"></ul>
       </div>
 
@@ -106,7 +107,9 @@
 
     <!-- ── Terminal area ── -->
     <div id="terminal-area">
-      <div id="terminal-tabs"></div>
+      <div id="terminal-tabs">
+        <button id="btn-tab-new" class="tab-new" type="button" title="Open new terminal" aria-label="Open new terminal">+</button>
+      </div>
 
       <!-- Browser (Playwright/CDP) panel — toggled by the 🌐 Browser tab -->
       <div id="browser-panel" class="hidden">
@@ -118,6 +121,8 @@
           </div>
           <div id="browser-status" class="browser-status stopped">○ Stopped</div>
         </div>
+
+        <button id="btn-browser-info" class="secondary browser-info-btn" type="button">Info</button>
 
         <!-- Native mode: address bar (drives the embedded child WebView) -->
         <div class="browser-nav" id="browser-nav">
@@ -137,11 +142,26 @@
           <button id="btn-browser-refresh" class="secondary" title="Refresh status">&#8635;</button>
         </div>
 
+        <div class="browser-import" id="browser-import">
+          <label for="browser-import-profile">Use existing login</label>
+          <select id="browser-import-profile" disabled>
+            <option value="">Click Scan to find Chrome/Edge profiles</option>
+          </select>
+          <button id="btn-browser-profile-scan" class="secondary">Scan</button>
+          <button id="btn-browser-profile-import" class="secondary" disabled>Import with consent</button>
+          <span class="muted">Copies the selected profile into Mymux; the source is not changed.</span>
+        </div>
+
+        <div id="browser-page-tabs" class="browser-page-tabs" style="display:none">
+          <button id="btn-browser-new-page" class="browser-page-new" type="button" title="New browser page">+</button>
+        </div>
+
         <!-- Live screencast surface (Phase A) -->
         <div id="browser-viewport">
           <img id="browser-screen" alt="" draggable="false" />
           <div id="browser-placeholder">
             <p><b>Native</b>: Enter an address and the built-in browser appears here.</p>
+            <p class="browser-profile-note">AI login links from Claude Code/Codex open here. Use “Scan” above if you want to explicitly copy an existing Chrome/Edge login profile into the Mymux AI browser.</p>
             <p class="muted">Switch to <b>AI Control</b> mode to see the screen driven by AI (Playwright MCP).</p>
           </div>
         </div>
@@ -298,6 +318,18 @@
         <button id="close-cancel" class="secondary">Cancel</button>
         <button id="close-forget" class="secondary">Quit without saving</button>
         <button id="close-save">Save &amp; quit</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Confirm closing a terminal tab. The app-close modal above is for quitting the whole app. -->
+  <div id="tab-close-modal" class="hidden">
+    <div class="modal-box">
+      <h2>Close terminal?</h2>
+      <p id="tab-close-message">The terminal session will be closed.</p>
+      <div class="modal-actions">
+        <button id="tab-close-cancel" class="secondary">Cancel</button>
+        <button id="tab-close-confirm">Close tab</button>
       </div>
     </div>
   </div>

@@ -48,6 +48,15 @@ pub struct BrowserStatus {
     pub browser: Option<String>,
 }
 
+#[derive(Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct BrowserProfile {
+    pub id: String,
+    pub browser: String,
+    pub name: String,
+    pub profile: String,
+}
+
 impl BrowserStatus {
     fn stopped() -> Self {
         Self {
@@ -81,8 +90,146 @@ fn user_data_dir(port: u16) -> PathBuf {
     base.join("mycli").join(format!("browser-{port}"))
 }
 
+#[cfg(windows)]
+fn known_browser_roots() -> Vec<(&'static str, PathBuf)> {
+    let Some(local) = dirs::data_local_dir() else { return Vec::new() };
+    vec![
+        ("Chrome", local.join(r"Google\Chrome\User Data")),
+        ("Edge", local.join(r"Microsoft\Edge\User Data")),
+    ]
+}
+
+/// List only profile metadata. Cookie databases and login data are not opened
+/// until the user explicitly confirms an import.
+#[tauri::command]
+pub fn browser_profiles() -> Result<Vec<BrowserProfile>, String> {
+    #[cfg(windows)]
+    {
+        let mut profiles = Vec::new();
+        for (browser, root) in known_browser_roots() {
+            let Ok(entries) = std::fs::read_dir(&root) else { continue };
+            for entry in entries.flatten() {
+                let path = entry.path();
+                let name = entry.file_name().to_string_lossy().to_string();
+                if !entry.file_type().map(|t| t.is_dir()).unwrap_or(false)
+                    || !(name == "Default" || name.starts_with("Profile "))
+                {
+                    continue;
+                }
+                let display_name = std::fs::read_to_string(path.join("Preferences"))
+                    .ok()
+                    .and_then(|raw| serde_json::from_str::<serde_json::Value>(&raw).ok())
+                    .and_then(|v| v.get("profile")?.get("name")?.as_str().map(str::to_owned))
+                    .filter(|s| !s.trim().is_empty())
+                    .unwrap_or_else(|| name.clone());
+                profiles.push(BrowserProfile {
+                    id: format!("{}:{}", browser.to_lowercase(), name),
+                    browser: browser.to_string(),
+                    name: display_name,
+                    profile: name,
+                });
+            }
+        }
+        profiles.sort_by(|a, b| a.browser.cmp(&b.browser).then(a.name.cmp(&b.name)));
+        return Ok(profiles);
+    }
+    #[cfg(not(windows))]
+    {
+        Err("Browser profile import is currently supported on Windows only.".into())
+    }
+}
+
+#[cfg(windows)]
+fn browser_process_running(browser: &str) -> bool {
+    use std::os::windows::process::CommandExt;
+    let exe = if browser == "Edge" { "msedge.exe" } else { "chrome.exe" };
+    std::process::Command::new("tasklist")
+        .args(["/FI", &format!("IMAGENAME eq {exe}")])
+        .creation_flags(0x0800_0000)
+        .output()
+        .map(|o| String::from_utf8_lossy(&o.stdout).to_ascii_lowercase().contains(&exe.to_ascii_lowercase()))
+        .unwrap_or(false)
+}
+
+#[cfg(windows)]
+fn copy_profile_tree(source: &Path, destination: &Path) -> Result<(), String> {
+    std::fs::create_dir_all(destination).map_err(|e| format!("create import directory: {e}"))?;
+    for entry in std::fs::read_dir(source).map_err(|e| format!("read browser profile: {e}"))? {
+        let entry = entry.map_err(|e| e.to_string())?;
+        let path = entry.path();
+        let name = entry.file_name().to_string_lossy().to_string();
+        if name == "Cache" || name == "Code Cache" || name == "GPUCache"
+            || name.starts_with("Singleton") || name == "LOCK"
+        {
+            continue;
+        }
+        let target = destination.join(&name);
+        let kind = entry.file_type().map_err(|e| e.to_string())?;
+        if kind.is_dir() {
+            copy_profile_tree(&path, &target)?;
+        } else if kind.is_file() {
+            std::fs::copy(&path, &target).map_err(|e| format!("copy {name}: {e}"))?;
+        }
+    }
+    Ok(())
+}
+
+/// Copy a selected Chrome/Edge profile into Mymux's isolated CDP profile.
+/// The source profile is never modified. The caller must provide explicit
+/// consent because cookies and login sessions are sensitive credentials.
+#[tauri::command]
+pub fn browser_import_profile(
+    browser: String,
+    profile: String,
+    port: Option<u16>,
+    consent: bool,
+) -> Result<String, String> {
+    if !consent {
+        return Err("Profile import requires explicit user consent.".into());
+    }
+    #[cfg(windows)]
+    {
+        let browser = match browser.as_str() {
+            "Chrome" | "Edge" => browser,
+            _ => return Err("Unsupported browser profile.".into()),
+        };
+        if !(profile == "Default" || profile.starts_with("Profile ")) {
+            return Err("Unsupported browser profile name.".into());
+        }
+        if browser_process_running(&browser) {
+            return Err(format!("Close {browser} before importing its profile."));
+        }
+        let root = known_browser_roots()
+            .into_iter()
+            .find(|(label, _)| *label == browser)
+            .map(|(_, path)| path)
+            .ok_or("Browser profile root not found.")?;
+        let source_profile = root.join(&profile);
+        if !source_profile.is_dir() {
+            return Err("Selected browser profile no longer exists.".into());
+        }
+        let destination = user_data_dir(port.unwrap_or(9222));
+        std::fs::create_dir_all(&destination).map_err(|e| format!("create Mymux profile: {e}"))?;
+        // Local State contains the Chromium encryption key needed by the
+        // copied cookie database. It is DPAPI-bound to the current Windows
+        // user and is copied only after the explicit consent above.
+        let local_state = root.join("Local State");
+        if local_state.is_file() {
+            std::fs::copy(&local_state, destination.join("Local State"))
+                .map_err(|e| format!("copy Local State: {e}"))?;
+        }
+        copy_profile_tree(&source_profile, &destination.join("Default"))?;
+        return Ok(format!("Imported {browser} {profile} into Mymux browser profile."));
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = (browser, profile, port);
+        Err("Browser profile import is currently supported on Windows only.".into())
+    }
+}
+
 /// Locate an installed Chromium-based browser. Chrome is preferred over Edge.
-fn find_browser() -> Option<(String, String)> {
+fn find_browser(preferred: Option<&str>) -> Option<(String, String)> {
     #[cfg(windows)]
     {
         let mut candidates: Vec<(String, String)> = Vec::new();
@@ -107,12 +254,18 @@ fn find_browser() -> Option<(String, String)> {
         ] {
             candidates.push(("Edge".into(), p.to_string()));
         }
-        candidates
+        let mut installed: Vec<_> = candidates
             .into_iter()
-            .find(|(_, p)| Path::new(p).exists())
+            .filter(|(_, p)| Path::new(p).exists())
+            .collect();
+        if let Some(preferred) = preferred {
+            installed.sort_by_key(|(label, _)| if label == preferred { 0 } else { 1 });
+        }
+        installed.into_iter().next()
     }
     #[cfg(target_os = "macos")]
     {
+        let mut candidates = Vec::new();
         for (label, p) in [
             (
                 "Chrome",
@@ -127,14 +280,16 @@ fn find_browser() -> Option<(String, String)> {
                 "/Applications/Chromium.app/Contents/MacOS/Chromium",
             ),
         ] {
-            if Path::new(p).exists() {
-                return Some((label.to_string(), p.to_string()));
-            }
+            if Path::new(p).exists() { candidates.push((label.to_string(), p.to_string())); }
         }
-        None
+        if let Some(preferred) = preferred {
+            candidates.sort_by_key(|(label, _)| if label == preferred { 0 } else { 1 });
+        }
+        candidates.into_iter().next()
     }
     #[cfg(all(unix, not(target_os = "macos")))]
     {
+        let mut candidates = Vec::new();
         for (label, exe) in [
             ("Chrome", "google-chrome"),
             ("Chrome", "google-chrome-stable"),
@@ -142,11 +297,12 @@ fn find_browser() -> Option<(String, String)> {
             ("Chromium", "chromium-browser"),
             ("Edge", "microsoft-edge"),
         ] {
-            if let Some(path) = which_unix(exe) {
-                return Some((label.to_string(), path));
-            }
+            if let Some(path) = which_unix(exe) { candidates.push((label.to_string(), path)); }
         }
-        None
+        if let Some(preferred) = preferred {
+            candidates.sort_by_key(|(label, _)| if label == preferred { 0 } else { 1 });
+        }
+        candidates.into_iter().next()
     }
 }
 
@@ -166,6 +322,7 @@ pub fn browser_launch(
     port: Option<u16>,
     url: Option<String>,
     headless: Option<bool>,
+    browser: Option<String>,
 ) -> Result<BrowserStatus, String> {
     let port = port.unwrap_or(9222);
     // Embedded mode (default): run headless so the only view is the in-tab
@@ -182,7 +339,7 @@ pub fn browser_launch(
         *guard = None;
     }
 
-    let (label, exe) = find_browser()
+    let (label, exe) = find_browser(browser.as_deref())
         .ok_or("Chrome/Edge not found. Please install Chrome or Edge.")?;
 
     let profile = user_data_dir(port);
@@ -260,51 +417,92 @@ pub struct PageTarget {
     pub url: String,
 }
 
+fn parse_page_targets(body: &str) -> Result<Vec<PageTarget>, String> {
+    let targets: serde_json::Value =
+        serde_json::from_str(body).map_err(|e| format!("Failed to parse CDP response: {e}"))?;
+    let arr = targets.as_array().ok_or("CDP response is not an array")?;
+    Ok(arr
+        .iter()
+        .filter(|t| t.get("type").and_then(|v| v.as_str()) == Some("page"))
+        .filter_map(|t| {
+            Some(PageTarget {
+                ws_url: t.get("webSocketDebuggerUrl")?.as_str()?.to_string(),
+                target_id: t.get("id")?.as_str()?.to_string(),
+                url: t.get("url").and_then(|v| v.as_str()).unwrap_or_default().to_string(),
+            })
+        })
+        .collect())
+}
+
+#[tauri::command]
+pub fn browser_page_targets(port: Option<u16>) -> Result<Vec<PageTarget>, String> {
+    let body = cdp_http_get(port.unwrap_or(9222), "/json/list")?;
+    parse_page_targets(&body)
+}
+
 /// Find a `page` debugging target so the frontend can open its CDP WebSocket
 /// for screencast + input. Done in Rust to dodge the WebView's CORS wall on
 /// the CDP HTTP endpoint (the WebSocket itself is allowed via
 /// `--remote-allow-origins=*`).
 #[tauri::command]
 pub fn browser_page_target(port: Option<u16>) -> Result<PageTarget, String> {
+    browser_page_targets(port)?
+        .into_iter()
+        .next()
+        .ok_or("No page target yet (the browser may still be starting)".to_string())
+}
+
+#[tauri::command]
+pub fn browser_new_tab(port: Option<u16>, url: Option<String>) -> Result<PageTarget, String> {
     let port = port.unwrap_or(9222);
-    let body = cdp_http_get(port, "/json/list")?;
-    let targets: serde_json::Value =
-        serde_json::from_str(&body).map_err(|e| format!("Failed to parse CDP response: {e}"))?;
-    let arr = targets.as_array().ok_or("CDP response is not an array")?;
-
-    let page = arr
-        .iter()
-        .find(|t| t.get("type").and_then(|v| v.as_str()) == Some("page"))
-        .ok_or("No page target yet (the browser may still be starting)")?;
-
-    let ws_url = page
-        .get("webSocketDebuggerUrl")
-        .and_then(|v| v.as_str())
-        .ok_or("webSocketDebuggerUrl missing")?
-        .to_string();
-
+    let requested = url.unwrap_or_else(|| "about:blank".to_string());
+    let body = cdp_http_request(port, "PUT", &format!("/json/new?url={}", percent_encode(&requested)))?;
+    let value: serde_json::Value = serde_json::from_str(&body)
+        .map_err(|e| format!("Failed to parse new-tab response: {e}"))?;
     Ok(PageTarget {
-        ws_url,
-        target_id: page
-            .get("id")
-            .and_then(|v| v.as_str())
-            .unwrap_or_default()
-            .to_string(),
-        url: page
-            .get("url")
-            .and_then(|v| v.as_str())
-            .unwrap_or_default()
-            .to_string(),
+        ws_url: value.get("webSocketDebuggerUrl").and_then(|v| v.as_str()).ok_or("New tab websocket URL missing")?.to_string(),
+        target_id: value.get("id").and_then(|v| v.as_str()).unwrap_or_default().to_string(),
+        url: value.get("url").and_then(|v| v.as_str()).unwrap_or_default().to_string(),
+    })
+}
+
+#[tauri::command]
+pub fn browser_close_tab(port: Option<u16>, target_id: String) -> Result<(), String> {
+    if target_id.is_empty() || target_id.contains('/') || target_id.contains('?') {
+        return Err("Invalid browser target id".into());
+    }
+    let body = cdp_http_request(port.unwrap_or(9222), "GET", &format!("/json/close/{target_id}"))?;
+    if !body.trim().is_empty() && body.trim() != "Target is closing" {
+        return Err(body);
+    }
+    Ok(())
+}
+
+fn percent_encode(value: &str) -> String {
+    value.bytes().fold(String::new(), |mut out, byte| {
+        if byte.is_ascii_alphanumeric() || b"-_.~".contains(&byte) {
+            out.push(byte as char);
+        } else {
+            out.push_str(&format!("%{byte:02X}"));
+        }
+        out
     })
 }
 
 /// Minimal dependency-free HTTP GET against the local CDP endpoint.
 fn cdp_http_get(port: u16, path: &str) -> Result<String, String> {
+    cdp_http_request(port, "GET", path)
+}
+
+fn cdp_http_request(port: u16, method: &str, path: &str) -> Result<String, String> {
     use std::io::{Read, Write};
 
     let mut stream = std::net::TcpStream::connect(("127.0.0.1", port))
         .map_err(|e| format!("CDP connection failed (:{port}) — is the browser running? {e}"))?;
-    let req = format!("GET {path} HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n");
+    let timeout = Some(std::time::Duration::from_secs(2));
+    stream.set_read_timeout(timeout).map_err(|e| e.to_string())?;
+    stream.set_write_timeout(timeout).map_err(|e| e.to_string())?;
+    let req = format!("{method} {path} HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n");
     stream
         .write_all(req.as_bytes())
         .map_err(|e| e.to_string())?;
@@ -318,7 +516,11 @@ fn cdp_http_get(port: u16, path: &str) -> Result<String, String> {
         .find("\r\n\r\n")
         .map(|i| i + 4)
         .ok_or("Malformed HTTP response")?;
-    Ok(resp[body_start..].to_string())
+    let body = resp[body_start..].to_string();
+    if !(resp.starts_with("HTTP/1.1 200") || resp.starts_with("HTTP/1.1 204")) {
+        return Err(format!("CDP HTTP error: {}", body.trim()));
+    }
+    Ok(body)
 }
 
 // ── Native embedded browser (Phase: dual-mode) ─────────────────────────────
