@@ -247,14 +247,103 @@ pub fn write_text_file(path: String, content: String) -> Result<(), String> {
     std::fs::write(&path, content).map_err(|e| e.to_string())
 }
 
-/// Tail of the newest Codex CLI session rollout (~/.codex/sessions/Y/M/D/*.jsonl).
-/// The frontend mines it for the last `rate_limits` snapshot so the toolbar can
-/// show account-wide Codex usage. Rollouts easily exceed the read_text_file cap,
-/// hence a dedicated tail reader. Directory names are zero-padded dates, so the
-/// lexicographically largest entry is the newest — only the newest day dir that
-/// actually contains a rollout is scanned (by mtime) instead of walking them all.
+fn sorted_dirs_desc(dir: &std::path::Path) -> Vec<std::path::PathBuf> {
+    let mut v: Vec<_> = std::fs::read_dir(dir)
+        .map(|rd| rd.flatten().map(|e| e.path()).filter(|p| p.is_dir()).collect())
+        .unwrap_or_default();
+    v.sort();
+    v.reverse();
+    v
+}
+
+fn collect_rollout_candidates(
+    sessions: &std::path::Path,
+) -> Vec<(std::time::SystemTime, std::path::PathBuf)> {
+    let mut candidates = Vec::new();
+    for year in sorted_dirs_desc(sessions) {
+        for month in sorted_dirs_desc(&year) {
+            for day in sorted_dirs_desc(&month) {
+                if let Ok(rd) = std::fs::read_dir(&day) {
+                    for e in rd.flatten() {
+                        let path = e.path();
+                        if path.extension().is_some_and(|x| x == "jsonl") {
+                            if let Ok(modified) = e.metadata().and_then(|m| m.modified()) {
+                                candidates.push((modified, path));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    candidates.sort_by(|a, b| b.0.cmp(&a.0));
+    candidates
+}
+
+fn normalize_rollout_cwd_for(value: &str, windows: bool) -> Option<String> {
+    let mut normalized = if windows {
+        value.replace('\\', "/").to_lowercase()
+    } else {
+        value.to_string()
+    };
+    while normalized.ends_with('/') {
+        let preserve_root = normalized == "/"
+            || windows
+                && normalized.len() == 3
+                && normalized.as_bytes()[1] == b':'
+                && normalized.as_bytes()[2] == b'/';
+        if preserve_root {
+            break;
+        }
+        normalized.pop();
+    }
+    (!normalized.is_empty()).then_some(normalized)
+}
+
+fn rollout_session_cwd_for(path: &std::path::Path, windows: bool) -> Option<String> {
+    let file = std::fs::File::open(path).ok()?;
+    for line in BufReader::new(file).lines().map_while(Result::ok) {
+        let Ok(event) = serde_json::from_str::<Value>(&line) else { continue };
+        if event.get("type").and_then(Value::as_str) != Some("session_meta") {
+            continue;
+        }
+        if let Some(cwd) = event.pointer("/payload/cwd").and_then(Value::as_str) {
+            return normalize_rollout_cwd_for(cwd, windows);
+        }
+    }
+    None
+}
+
+fn select_rollout_candidate_for(
+    candidates: &[(std::time::SystemTime, std::path::PathBuf)],
+    cwd: Option<&str>,
+    windows: bool,
+) -> Option<std::path::PathBuf> {
+    if let Some(target) = cwd.and_then(|value| normalize_rollout_cwd_for(value, windows)) {
+        for (_, path) in candidates {
+            if rollout_session_cwd_for(path, windows).as_deref() == Some(target.as_str()) {
+                return Some(path.clone());
+            }
+        }
+    }
+    candidates.first().map(|(_, path)| path.clone())
+}
+
+fn select_rollout_candidate(
+    candidates: &[(std::time::SystemTime, std::path::PathBuf)],
+    cwd: Option<&str>,
+) -> Option<std::path::PathBuf> {
+    select_rollout_candidate_for(candidates, cwd, cfg!(windows))
+}
+
+/// Tail of the newest matching Codex CLI rollout
+/// (~/.codex/sessions/Y/M/D/*.jsonl). When a pane cwd is supplied, search every
+/// date directory and prefer the newest rollout whose session metadata has that
+/// exact normalized cwd. Fall back to the globally newest rollout only when no
+/// exact match exists. Rollouts exceed the general text-reader cap, hence a
+/// dedicated tail reader.
 #[tauri::command]
-pub fn codex_rollout_tail(max_bytes: Option<u64>) -> Result<String, String> {
+pub fn codex_rollout_tail(max_bytes: Option<u64>, cwd: Option<String>) -> Result<String, String> {
     use std::io::{Read, Seek, SeekFrom};
     let max_bytes = max_bytes.unwrap_or(65536).min(1_000_000);
     let sessions = dirs::home_dir()
@@ -262,39 +351,9 @@ pub fn codex_rollout_tail(max_bytes: Option<u64>) -> Result<String, String> {
         .join(".codex")
         .join("sessions");
 
-    fn sorted_dirs_desc(dir: &std::path::Path) -> Vec<std::path::PathBuf> {
-        let mut v: Vec<_> = std::fs::read_dir(dir)
-            .map(|rd| rd.flatten().map(|e| e.path()).filter(|p| p.is_dir()).collect())
-            .unwrap_or_default();
-        v.sort();
-        v.reverse();
-        v
-    }
-
-    let mut newest: Option<(std::time::SystemTime, std::path::PathBuf)> = None;
-    'search: for year in sorted_dirs_desc(&sessions) {
-        for month in sorted_dirs_desc(&year) {
-            for day in sorted_dirs_desc(&month) {
-                if let Ok(rd) = std::fs::read_dir(&day) {
-                    for e in rd.flatten() {
-                        let p = e.path();
-                        if p.extension().is_some_and(|x| x == "jsonl") {
-                            if let Ok(m) = e.metadata().and_then(|m| m.modified()) {
-                                if newest.as_ref().map_or(true, |(t, _)| m > *t) {
-                                    newest = Some((m, p));
-                                }
-                            }
-                        }
-                    }
-                }
-                if newest.is_some() {
-                    break 'search; // newest day with any rollout is enough
-                }
-            }
-        }
-    }
-
-    let (_, path) = newest.ok_or("No codex rollout found")?;
+    let candidates = collect_rollout_candidates(&sessions);
+    let path = select_rollout_candidate(&candidates, cwd.as_deref())
+        .ok_or("No codex rollout found")?;
     let mut f = std::fs::File::open(&path).map_err(|e| e.to_string())?;
     let len = f.metadata().map_err(|e| e.to_string())?.len();
     let start = len.saturating_sub(max_bytes);
@@ -302,6 +361,128 @@ pub fn codex_rollout_tail(max_bytes: Option<u64>) -> Result<String, String> {
     let mut buf = Vec::new();
     f.read_to_end(&mut buf).map_err(|e| e.to_string())?;
     Ok(String::from_utf8_lossy(&buf).to_string())
+}
+
+#[cfg(test)]
+mod codex_rollout_tests {
+    use super::{
+        collect_rollout_candidates, normalize_rollout_cwd_for, select_rollout_candidate_for,
+    };
+    use std::path::{Path, PathBuf};
+    use std::time::{Duration, SystemTime};
+
+    fn unique_test_dir() -> PathBuf {
+        let nonce = SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        std::env::temp_dir().join(format!("mymux-rollout-test-{}-{nonce}", std::process::id()))
+    }
+
+    fn write_rollout(path: &Path, cwd: &str, marker: &str) {
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        let meta = serde_json::json!({
+            "type": "session_meta",
+            "payload": { "cwd": cwd, "marker": marker }
+        });
+        std::fs::write(path, format!("{meta}\n")).unwrap();
+    }
+
+    fn set_modified(path: &Path, modified: SystemTime) {
+        let file = std::fs::OpenOptions::new().write(true).open(path).unwrap();
+        file.set_times(std::fs::FileTimes::new().set_modified(modified))
+            .unwrap();
+    }
+
+    #[test]
+    fn cwd_normalization_is_target_aware() {
+        assert_eq!(
+            normalize_rollout_cwd_for(r"D:\Project\Mymux\\", true),
+            Some("d:/project/mymux".to_string())
+        );
+        assert_eq!(
+            normalize_rollout_cwd_for("d:/PROJECT/mymux/", true),
+            Some("d:/project/mymux".to_string())
+        );
+        assert_eq!(
+            normalize_rollout_cwd_for(r"C:\", true),
+            Some("c:/".to_string())
+        );
+        assert_eq!(
+            normalize_rollout_cwd_for("/", true),
+            Some("/".to_string())
+        );
+        assert_eq!(
+            normalize_rollout_cwd_for("/Project/Mymux/", false),
+            Some("/Project/Mymux".to_string())
+        );
+        assert_eq!(
+            normalize_rollout_cwd_for("/project/mymux/", false),
+            Some("/project/mymux".to_string())
+        );
+        assert_ne!(
+            normalize_rollout_cwd_for("/Project/Mymux", false),
+            normalize_rollout_cwd_for("/project/mymux", false)
+        );
+        assert_eq!(
+            normalize_rollout_cwd_for(r"/tmp\Name/", false),
+            Some(r"/tmp\Name".to_string())
+        );
+        assert_eq!(
+            normalize_rollout_cwd_for("/", false),
+            Some("/".to_string())
+        );
+    }
+
+    #[test]
+    fn exact_cwd_does_not_match_parent_prefix() {
+        let root = unique_test_dir();
+        let prefix = root.join("prefix.jsonl");
+        let exact = root.join("exact.jsonl");
+        write_rollout(&prefix, r"D:\Project\Mymux-old", "prefix");
+        write_rollout(&exact, r"d:/project/mymux/", "exact");
+        let candidates = vec![
+            (SystemTime::UNIX_EPOCH + Duration::from_secs(2), prefix.clone()),
+            (SystemTime::UNIX_EPOCH + Duration::from_secs(1), exact.clone()),
+        ];
+
+        assert_eq!(
+            select_rollout_candidate_for(&candidates, Some(r"D:\Project\Mymux"), true),
+            Some(exact)
+        );
+        assert_eq!(
+            select_rollout_candidate_for(&candidates, Some(r"D:\Project\Missing"), true),
+            Some(prefix)
+        );
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn prior_day_exact_session_beats_newer_unrelated_rollout() {
+        let root = unique_test_dir();
+        let matching = root.join("2026").join("07").join("29").join("matching.jsonl");
+        let unrelated = root.join("2026").join("07").join("30").join("unrelated.jsonl");
+        write_rollout(&matching, r"D:\Project\Mymux", "matching-prior-day");
+        write_rollout(&unrelated, r"D:\Project\Other", "unrelated-newer-day");
+        set_modified(
+            &matching,
+            SystemTime::UNIX_EPOCH + Duration::from_secs(1),
+        );
+        set_modified(
+            &unrelated,
+            SystemTime::UNIX_EPOCH + Duration::from_secs(2),
+        );
+
+        let candidates = collect_rollout_candidates(&root);
+        assert_eq!(candidates.len(), 2, "all date directories must be searched");
+        assert_eq!(candidates[0].1, unrelated, "candidates must be ordered by mtime");
+
+        assert_eq!(
+            select_rollout_candidate_for(&candidates, Some(r"D:\Project\Mymux"), true),
+            Some(matching)
+        );
+        std::fs::remove_dir_all(root).unwrap();
+    }
 }
 
 #[derive(Debug, Serialize)]

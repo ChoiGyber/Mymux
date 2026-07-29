@@ -75,6 +75,11 @@ let sessionPanel, sessionListEl, btnToggleSessions, btnSplitH, btnSplitV, btnEqu
 let btnTheme, explorerDrives;
 let pendingTabCloseId = null;
 let explorerDropUnlisten = null;
+let explorerUploadUnlisten = null;
+let activeSftpUpload = null;
+let uploadAiPromptTail = Promise.resolve();
+let explorerFocusGeneration = 0;
+let explorerLoadGeneration = 0;
 
 // ── State ──
 let editingId = null;
@@ -151,6 +156,7 @@ let commandHistory = loadCommandHistory();
 let acSelectedIdx = -1;
 let currentExplorerPath = "";
 let currentSftpId = null;
+let explorerBlockedPaneId = null;
 // Explorer directory history (Chrome-style back/forward). Each entry is
 // { path, sftpId }; explorerHistIdx points at the currently-shown entry.
 let explorerHistory = [];
@@ -751,12 +757,69 @@ function explorerDropPoint(position) {
   const panel = document.getElementById("panel-explorer");
   if (!panel || !position) return false;
   const r = panel.getBoundingClientRect();
+  return dragPointCandidates(position)
+    .some(({ x, y }) => x >= r.left && x <= r.right && y >= r.top && y <= r.bottom);
+}
+
+function dragPointCandidates(position) {
+  if (!position) return [];
   const x = Number(position.x);
   const y = Number(position.y);
-  if (!Number.isFinite(x) || !Number.isFinite(y)) return false;
-  const inside = (px, py) => px >= r.left && px <= r.right && py >= r.top && py <= r.bottom;
-  // Tauri may report physical coordinates while the DOM uses CSS pixels.
-  return inside(x, y) || inside(x / (window.devicePixelRatio || 1), y / (window.devicePixelRatio || 1));
+  if (!Number.isFinite(x) || !Number.isFinite(y)) return [];
+  // Tauri reports DragDropEvent.position as physical pixels; DOM hit-testing
+  // uses CSS pixels. Raw physical coordinates can still fall inside the CSS
+  // viewport at 125–200% scaling and select the wrong pane, so never try them
+  // before/alongside the converted point.
+  const scale = window.devicePixelRatio || 1;
+  return [{ x: x / scale, y: y / scale }];
+}
+
+function paneAtDragPoint(position) {
+  for (const point of dragPointCandidates(position)) {
+    if (point.x < 0 || point.y < 0 || point.x > window.innerWidth || point.y > window.innerHeight) continue;
+    const leaf = document.elementFromPoint(point.x, point.y)?.closest?.(".pane-leaf");
+    const ptyId = leaf?.dataset?.ptyId ? Number(leaf.dataset.ptyId) : null;
+    if (ptyId != null && Number.isFinite(ptyId)) return { leaf, ptyId };
+  }
+  return null;
+}
+
+function fileDropTarget(position) {
+  if (explorerDropPoint(position)) {
+    if (explorerBlockedPaneId != null) {
+      return {
+        kind: "blocked",
+        ptyId: explorerBlockedPaneId,
+        message: "이 SSH 세션의 SFTP 연결을 사용할 수 없습니다.",
+      };
+    }
+    if (!currentExplorerPath) return null;
+    return {
+      kind: "explorer",
+      sftpId: currentSftpId,
+      remoteDir: currentExplorerPath,
+      ptyId: currentSftpId == null ? null : sftpOwnerPaneId(currentSftpId),
+    };
+  }
+
+  const hit = paneAtDragPoint(position);
+  if (!hit) return null;
+  const owner = terminals.get(hit.ptyId);
+  if (!owner || owner.type !== "ssh") return null;
+  if (owner.sftpId == null) {
+    const detail = owner.sftpStatus === "connecting"
+      ? "SFTP 연결 중입니다. 잠시 후 다시 시도하세요."
+      : owner.sftpStatus === "unsupported"
+        ? "이 서버는 SFTP를 지원하지 않습니다."
+        : "이 SSH 세션의 SFTP 연결을 사용할 수 없습니다.";
+    return { kind: "blocked", ptyId: hit.ptyId, message: detail };
+  }
+  return {
+    kind: "ssh-pane",
+    ptyId: hit.ptyId,
+    sftpId: owner.sftpId,
+    remoteDir: owner.remotePath || owner.session?.remotePath || owner.cwd || owner.session?.cwd || null,
+  };
 }
 
 function setExplorerDropState(active, message = "Drop files here to copy or upload") {
@@ -769,46 +832,416 @@ function setExplorerDropState(active, message = "Drop files here to copy or uplo
   }
 }
 
-async function handleExplorerFileDrop(paths) {
-  const files = Array.isArray(paths) ? paths.filter(Boolean) : [];
-  if (!files.length || !currentExplorerPath) return;
-  if (currentSftpId != null) {
-    const preview = files.slice(0, 5).map((p) => `• ${p}`).join("\n");
-    const more = files.length > 5 ? `\n… 외 ${files.length - 5}개` : "";
-    const ok = window.confirm(
-      `서버에 파일을 업로드합니다.\n\n대상: ${currentExplorerPath}\n${preview}${more}\n\n` +
-      "심볼릭 링크는 업로드하지 않으며, 같은 이름의 원격 파일은 덮어쓰지 않습니다. 계속하시겠습니까?"
+function clearPaneDropState() {
+  document.querySelectorAll(".pane-leaf.file-drop-active").forEach((pane) => {
+    pane.classList.remove("file-drop-active", "file-drop-blocked");
+    delete pane.dataset.fileDropMessage;
+  });
+}
+
+function showFileDropTarget(target) {
+  setExplorerDropState(false);
+  clearPaneDropState();
+  if (!target) return;
+  if (target.kind === "explorer") {
+    setExplorerDropState(
+      true,
+      target.sftpId == null ? "Drop files here to copy" : "Drop files here to upload",
     );
-    if (!ok) return;
+    return;
   }
-  setExplorerDropState(true, currentSftpId == null ? "Copying files…" : "Uploading files…");
+  const pane = target.ptyId == null ? null : terminals.get(target.ptyId)?.paneEl;
+  if (!pane) return;
+  pane.dataset.fileDropMessage = target.kind === "blocked"
+    ? target.message
+    : `이 SSH 세션으로 업로드${target.remoteDir ? ` · ${target.remoteDir}` : ""}`;
+  pane.classList.add("file-drop-active");
+  pane.classList.toggle("file-drop-blocked", target.kind === "blocked");
+}
+
+function resetUploadProgressPlacement() {
+  const card = document.getElementById("explorer-upload-progress");
+  const panel = document.getElementById("panel-explorer");
+  const fileList = document.getElementById("file-list");
+  if (!card || !panel) return;
+  card.classList.remove("pane-upload-progress");
+  if (fileList && fileList.parentElement === panel) panel.insertBefore(card, fileList);
+  else panel.appendChild(card);
+}
+
+function placeUploadProgress(ptyId) {
+  const card = document.getElementById("explorer-upload-progress");
+  const pane = ptyId == null ? null : terminals.get(ptyId)?.paneEl;
+  if (!card || !pane) {
+    resetUploadProgressPlacement();
+    return;
+  }
+  pane.appendChild(card);
+  card.classList.add("pane-upload-progress");
+}
+
+function sftpOwnerPaneId(sftpId) {
+  for (const [id, t] of terminals) {
+    if (t.sftpId === sftpId) return id;
+  }
+  return null;
+}
+
+function renderUploadProgress(percent, title, detail) {
+  const card = document.getElementById("explorer-upload-progress");
+  if (!card) return;
+  const pct = Math.max(0, Math.min(100, Number(percent) || 0));
+  card.classList.remove("hidden");
+  card.style.setProperty("--upload-pct", `${pct}%`);
+  card.setAttribute("aria-valuenow", String(Math.round(pct)));
+  const titleEl = card.querySelector(".upload-progress-title");
+  const detailEl = card.querySelector(".upload-progress-detail");
+  if (titleEl && title) titleEl.textContent = title;
+  if (detailEl) detailEl.textContent = detail || `${Math.round(pct)}%`;
+}
+
+function finishUploadProgress(delay = 1200) {
+  const card = document.getElementById("explorer-upload-progress");
+  setTimeout(() => {
+    if (!activeSftpUpload && card) {
+      card.classList.add("hidden");
+      resetUploadProgressPlacement();
+    }
+  }, delay);
+}
+
+function localDroppedName(path) {
+  return String(path || "").replace(/[\\/]+$/, "").split(/[\\/]/).pop() || String(path || "");
+}
+
+function aiSafeUploadedName(name) {
+  return String(name).replace(/[\u0000-\u001f\u007f-\u009f]/g, (character) => {
+    if (character === "\n") return "\\n";
+    if (character === "\r") return "\\r";
+    if (character === "\t") return "\\t";
+    return `\\u${character.charCodeAt(0).toString(16).padStart(4, "0")}`;
+  });
+}
+
+function promptUploadedNamesToAi(ptyId, names, remoteDir) {
+  return new Promise((resolve) => {
+    const modal = document.getElementById("sftp-ai-prompt-modal");
+    const list = document.getElementById("sftp-ai-prompt-files");
+    const message = document.getElementById("sftp-ai-prompt-message");
+    const insert = document.getElementById("sftp-ai-prompt-insert");
+    const skip = document.getElementById("sftp-ai-prompt-skip");
+    const close = document.getElementById("sftp-ai-prompt-close");
+    if (!modal || !list || !insert || !skip || !close) {
+      resolve(false);
+      return;
+    }
+
+    const owner = terminals.get(ptyId);
+    const label = owner ? sessionLabelFor(owner) : "SSH";
+    message.textContent =
+      `${label} AI 입력창에 업로드한 파일명을 넣을까요?` +
+      (remoteDir ? ` 대상 폴더: ${remoteDir}` : "");
+    list.innerHTML = "";
+    names.forEach((name) => {
+      const item = document.createElement("li");
+      item.textContent = name;
+      list.appendChild(item);
+    });
+
+    const finish = (accepted) => {
+      modal.classList.add("hidden");
+      insert.removeEventListener("click", onInsert);
+      skip.removeEventListener("click", onSkip);
+      close.removeEventListener("click", onSkip);
+      modal.removeEventListener("click", onBackdrop);
+      document.removeEventListener("keydown", onKey);
+      resolve(accepted);
+    };
+    const onInsert = () => finish(true);
+    const onSkip = () => finish(false);
+    const onBackdrop = (event) => { if (event.target === modal) finish(false); };
+    const onKey = (event) => { if (event.key === "Escape") finish(false); };
+
+    insert.addEventListener("click", onInsert);
+    skip.addEventListener("click", onSkip);
+    close.addEventListener("click", onSkip);
+    modal.addEventListener("click", onBackdrop);
+    document.addEventListener("keydown", onKey);
+    modal.classList.remove("hidden");
+    insert.focus();
+  });
+}
+
+async function queueUploadedNamesToAi(ptyId, sftpId, names, remoteDir) {
+  let release;
+  const previous = uploadAiPromptTail;
+  uploadAiPromptTail = new Promise((resolve) => { release = resolve; });
+  await previous;
+  try {
+    const owner = terminals.get(ptyId);
+    if (!owner || owner.sftpId !== sftpId || !owner.aiMode) return false;
+    return await promptUploadedNamesToAi(ptyId, names, remoteDir);
+  } finally {
+    release();
+  }
+}
+
+async function requestSftpUploadCancel() {
+  const upload = activeSftpUpload;
+  if (!upload || !upload.id || upload.cancelRequested) return;
+  upload.cancelRequested = true;
+  const button = document.getElementById("explorer-upload-cancel");
+  if (button) {
+    button.disabled = true;
+    button.textContent = "Cancelling…";
+  }
+  renderUploadProgress(
+    upload.total > 0
+      ? Math.min(100, (upload.completedBytes + upload.currentItemBytes) * 100 / upload.total)
+      : 0,
+    "Cancelling upload…",
+    "Removing incomplete remote items…",
+  );
+  try {
+    await invoke("sftp_cancel_upload", { uploadId: upload.id });
+  } catch (error) {
+    if (activeSftpUpload === upload) {
+      upload.cancelRequested = false;
+      if (button) {
+        button.disabled = false;
+        button.textContent = "Cancel";
+      }
+      toast(`Could not cancel upload: ${String(error)}`, true);
+    }
+  }
+}
+
+function onSftpUploadProgress(event) {
+  const payload = event && event.payload;
+  const active = activeSftpUpload;
+  if (!payload || !active || payload.uploadId !== active.id) return;
+  const itemBytes = Math.max(0, Number(payload.bytesTransferred) || 0);
+  active.currentItemBytes = itemBytes;
+  const transferred = Math.min(active.total, active.completedBytes + itemBytes);
+  const pct = active.total > 0 ? transferred * 100 / active.total : 100;
+  renderUploadProgress(
+    pct,
+    `Uploading ${active.currentIndex + 1} of ${active.fileCount}`,
+    `${formatSize(transferred)} / ${formatSize(active.total)} · ${Math.round(pct)}%`,
+  );
+}
+
+async function handleExplorerFileDrop(paths, target = null) {
+  const files = Array.isArray(paths) ? paths.filter(Boolean) : [];
+  if (!files.length) return;
+  if (activeSftpUpload) {
+    toast("An SFTP upload is already in progress.", true);
+    return;
+  }
+
+  // Freeze the source and destination for the whole batch. A session/folder
+  // click while uploading cannot redirect later files to a different server.
+  const uploadSftpId = target ? target.sftpId : currentSftpId;
+  let uploadRemoteDir = target ? target.remoteDir : currentExplorerPath;
+  const ownerPtyId = target?.ptyId ??
+    (uploadSftpId == null ? null : sftpOwnerPaneId(uploadSftpId));
+  if (uploadSftpId != null && !uploadRemoteDir) {
+    try {
+      uploadRemoteDir = await invoke("sftp_home_dir", { sessionId: uploadSftpId });
+    } catch (error) {
+      toast(`SFTP upload destination is unavailable: ${String(error)}`, true);
+      return;
+    }
+  }
+  if (!uploadRemoteDir) return;
+  if (uploadSftpId != null) {
+    const owner = ownerPtyId == null ? null : terminals.get(ownerPtyId);
+    const ownerLabel = owner ? sessionLabelFor(owner) : `SFTP ${uploadSftpId}`;
+    const preview = files.slice(0, 5).map((path) => `• ${path}`).join("\n");
+    const more = files.length > 5 ? `\n… and ${files.length - 5} more` : "";
+    if (!window.confirm(
+      `Upload to the server?\n\nSession: ${ownerLabel}\nDestination: ${uploadRemoteDir}\n` +
+      `${preview}${more}\n\n` +
+      "Existing remote items are never overwritten."
+    )) return;
+  }
+
+  placeUploadProgress(target?.kind === "ssh-pane" ? ownerPtyId : null);
+  if (target?.kind !== "ssh-pane") {
+    setExplorerDropState(true, uploadSftpId == null ? "Copying files…" : "Preparing upload…");
+  }
   let ok = 0;
   const errors = [];
+  const uploadedNames = [];
+  let upload = null;
+  if (uploadSftpId != null) {
+    activeSftpUpload = { id: null, preflight: true };
+    const cancelButton = document.getElementById("explorer-upload-cancel");
+    if (cancelButton) {
+      cancelButton.disabled = true;
+      cancelButton.textContent = "Cancel";
+    }
+    renderUploadProgress(0, "Preparing upload…", `Scanning ${files.length} item(s)`);
+  }
   try {
-    for (const localPath of files) {
-      try {
-        if (currentSftpId == null) {
-          await invoke("fs_copy_path", { src: localPath, destDir: currentExplorerPath });
-        } else {
-          await invoke("sftp_upload_path", {
-            sessionId: currentSftpId,
-            localPath,
-            remoteDir: currentExplorerPath,
-          });
+    if (uploadSftpId == null) {
+      for (const localPath of files) {
+        try {
+          await invoke("fs_copy_path", { src: localPath, destDir: uploadRemoteDir });
+          ok++;
+        } catch (e) {
+          errors.push(`${localPath}: ${String(e)}`);
         }
-        ok++;
-      } catch (e) {
-        errors.push(`${localPath}: ${String(e)}`);
+      }
+    } else {
+      const accepted = [];
+      for (const localPath of files) {
+        try {
+          const size = Number(await invoke("sftp_upload_size", { localPath })) || 0;
+          accepted.push({ localPath, size });
+        } catch (e) {
+          errors.push(`${localPath}: ${String(e)}`);
+        }
+      }
+      if (!accepted.length) {
+        toast(`No files can be uploaded. ${errors[0] || "All items were rejected."}`, true);
+        return;
+      }
+
+      upload = {
+        id: null,
+        total: accepted.reduce((sum, item) => sum + item.size, 0),
+        completedBytes: 0,
+        currentIndex: 0,
+        fileCount: accepted.length,
+        currentItemBytes: 0,
+        cancelRequested: false,
+        cancelled: false,
+        begun: false,
+      };
+      activeSftpUpload = upload;
+      try {
+        upload.id = String(await invoke("sftp_begin_upload", {
+          sessionId: uploadSftpId,
+          remoteDir: uploadRemoteDir,
+        }));
+        upload.begun = true;
+      } catch (error) {
+        errors.push(`Could not start upload: ${String(error)}`);
+      }
+      if (upload.begun) {
+        const cancelButton = document.getElementById("explorer-upload-cancel");
+        if (cancelButton) {
+          cancelButton.disabled = false;
+          cancelButton.textContent = "Cancel";
+        }
+        renderUploadProgress(0, `Uploading 1 of ${accepted.length}`, `0 B / ${formatSize(upload.total)}`);
+
+        for (let index = 0; index < accepted.length; index++) {
+          if (upload.cancelRequested) {
+            upload.cancelled = true;
+            break;
+          }
+          const { localPath, size } = accepted[index];
+          upload.currentIndex = index;
+          upload.currentItemBytes = 0;
+          try {
+            await invoke("sftp_upload_path", {
+              sessionId: uploadSftpId,
+              localPath,
+              remoteDir: uploadRemoteDir,
+              uploadId: upload.id,
+            });
+            upload.completedBytes += size;
+            uploadedNames.push(localDroppedName(localPath));
+            ok++;
+          } catch (e) {
+            const message = String(e);
+            if (message.includes("UPLOAD_CANCELLED")) {
+              upload.cancelled = true;
+              if (message.includes("Cleanup incomplete:")) {
+                errors.push(`${localPath}: ${message}`);
+              }
+              break;
+            }
+            errors.push(`${localPath}: ${message}`);
+          }
+        }
       }
     }
   } finally {
     setExplorerDropState(false);
+    if (upload) {
+      if (upload.begun) {
+        try {
+          await invoke("sftp_finish_upload", { uploadId: upload.id });
+        } catch (error) {
+          errors.push(`Could not finish upload state: ${String(error)}`);
+        }
+      }
+      const cancelButton = document.getElementById("explorer-upload-cancel");
+      if (cancelButton) cancelButton.disabled = true;
+      if (upload.cancelled) {
+        const transferred = Math.min(upload.total, upload.completedBytes);
+        const pct = upload.total > 0 ? transferred * 100 / upload.total : 0;
+        renderUploadProgress(pct, "Upload cancelled", `${ok} item(s) completed`);
+      } else if (!errors.length) {
+        renderUploadProgress(100, "Upload complete", `${formatSize(upload.total)} · 100%`);
+      } else {
+        const transferred = Math.min(upload.total, upload.completedBytes);
+        const pct = upload.total > 0 ? transferred * 100 / upload.total : 0;
+        renderUploadProgress(pct, "Upload failed", `${ok} item(s) completed · ${errors.length} failed`);
+      }
+      finishUploadProgress(upload.cancelled || errors.length ? 3000 : 1400);
+    }
+    if (uploadSftpId != null) activeSftpUpload = null;
+    if (uploadSftpId != null && !upload) {
+      const card = document.getElementById("explorer-upload-progress");
+      if (card) card.classList.add("hidden");
+      resetUploadProgressPlacement();
+    }
   }
-  await loadExplorer();
-  if (errors.length) {
+
+  if (currentSftpId === uploadSftpId && currentExplorerPath === uploadRemoteDir) {
+    await loadExplorer();
+  }
+  if (upload && upload.cancelled) {
+    const cleanupWarning = errors.length ? ` ${errors[0]}` : "";
+    toast(`Upload cancelled; ${ok} item(s) completed.${cleanupWarning}`, errors.length > 0);
+  } else if (errors.length) {
     toast(`${ok} item(s) copied/uploaded; ${errors.length} failed. ${errors[0]}`, true);
   } else {
-    toast(`${ok} item(s) ${currentSftpId == null ? "copied" : "uploaded"}`);
+    toast(`${ok} item(s) ${uploadSftpId == null ? "copied" : "uploaded"}`);
+    if (ownerPtyId != null) {
+      const owner = terminals.get(ownerPtyId);
+      if (owner && notifyFlashPrefs.character !== "none") {
+        showFoxAt(owner.paneEl, ownerPtyId, false, "업로드가 완료되었어요!");
+      }
+    }
+  }
+
+  const aiOwner = ownerPtyId == null ? null : terminals.get(ownerPtyId);
+  if (uploadSftpId != null && uploadedNames.length &&
+      aiOwner && aiOwner.sftpId === uploadSftpId && aiOwner.aiMode) {
+    const insertNames = await queueUploadedNamesToAi(
+      ownerPtyId,
+      uploadSftpId,
+      uploadedNames,
+      uploadRemoteDir,
+    );
+    const liveOwner = terminals.get(ownerPtyId);
+    if (insertNames && liveOwner && liveOwner.sftpId === uploadSftpId && liveOwner.aiMode) {
+      // Keep the paste strictly single-line. If bracketed paste is unavailable,
+      // embedded newlines can become Enter and submit the first filename.
+      await sendMemoToPane(
+        ownerPtyId,
+        uploadedNames.map(aiSafeUploadedName).join(", "),
+        false,
+      );
+      toast("업로드한 파일명을 AI 입력창에 넣었습니다.");
+    } else if (insertNames) {
+      toast("AI 입력 대상 세션이 변경되어 파일명을 넣지 않았습니다.", true);
+    }
   }
 }
 
@@ -817,16 +1250,29 @@ async function setupExplorerFileDrop() {
     const winApi = window.__TAURI__ && window.__TAURI__.window;
     const win = winApi && winApi.getCurrentWindow ? winApi.getCurrentWindow() : null;
     if (!win || !win.onDragDropEvent) return;
+    const eventApi = window.__TAURI__ && window.__TAURI__.event;
+    if (eventApi && eventApi.listen && !explorerUploadUnlisten) {
+      explorerUploadUnlisten = await eventApi.listen("sftp-upload-progress", onSftpUploadProgress);
+    }
+    const cancelButton = document.getElementById("explorer-upload-cancel");
+    if (cancelButton && cancelButton.dataset.bound !== "true") {
+      cancelButton.dataset.bound = "true";
+      cancelButton.addEventListener("click", requestSftpUploadCancel);
+    }
     explorerDropUnlisten = await win.onDragDropEvent(({ payload }) => {
       if (!payload) return;
       if (payload.type === "over") {
-        setExplorerDropState(explorerDropPoint(payload.position));
+        showFileDropTarget(fileDropTarget(payload.position));
       } else if (payload.type === "drop") {
-        const accepted = explorerDropPoint(payload.position);
-        setExplorerDropState(false);
-        if (accepted) handleExplorerFileDrop(payload.paths);
+        const target = fileDropTarget(payload.position);
+        showFileDropTarget(null);
+        if (target?.kind === "blocked") {
+          toast(target.message, true);
+        } else if (target) {
+          handleExplorerFileDrop(payload.paths, target);
+        }
       } else {
-        setExplorerDropState(false);
+        showFileDropTarget(null);
       }
     });
   } catch (e) {
@@ -838,6 +1284,9 @@ async function setupExplorerFileDrop() {
 // ═══════════════════════════════════════════════
 
 async function loadExplorer() {
+  const loadGeneration = ++explorerLoadGeneration;
+  const loadSftpId = currentSftpId;
+  const loadPath = currentExplorerPath;
   fileListEl.innerHTML = "";
   explorerPath.textContent = currentExplorerPath || "/";
   explorerPath.title = (currentExplorerPath || "") + " — click to copy";
@@ -845,17 +1294,29 @@ async function loadExplorer() {
 
   try {
     let entries;
-    if (currentSftpId) {
+    if (loadSftpId) {
       entries = await invoke("sftp_list_dir", {
-        sessionId: currentSftpId,
-        path: currentExplorerPath,
+        sessionId: loadSftpId,
+        path: loadPath,
       });
     } else {
-      entries = await invoke("explorer_list_local", { path: currentExplorerPath });
+      entries = await invoke("explorer_list_local", { path: loadPath });
     }
+    if (loadGeneration !== explorerLoadGeneration ||
+        currentSftpId !== loadSftpId || currentExplorerPath !== loadPath) return;
     explorerEntries = entries;
     renderFileList(entries);
+    if (loadSftpId != null) {
+      const ownerId = sftpOwnerPaneId(loadSftpId);
+      const owner = ownerId == null ? null : terminals.get(ownerId);
+      if (owner) {
+        owner.remotePath = loadPath;
+        if (owner.session) owner.session.remotePath = loadPath;
+        saveSessionNow();
+      }
+    }
   } catch (err) {
+    if (loadGeneration !== explorerLoadGeneration) return;
     fileListEl.innerHTML = `<li style="padding:10px;color:var(--red);font-size:12px;">${esc(String(err))}</li>`;
   }
 }
@@ -1006,6 +1467,10 @@ async function filePaste() {
 // (back/forward replays). `sftpId` defaults to the current source so plain
 // folder clicks keep whichever mode (local PC / SFTP) is active.
 function explorerGo(path, sftpId = currentSftpId, record = true) {
+  explorerBlockedPaneId = null;
+  if (explorerMode) {
+    explorerMode.querySelectorAll("option[data-sftp-blocked]").forEach((option) => option.remove());
+  }
   currentSftpId = sftpId == null ? null : sftpId;
   currentExplorerPath = path;
   if (record) {
@@ -1036,11 +1501,19 @@ function explorerForward() {
 function syncExplorerNav() {
   const back = document.getElementById("btn-explorer-back");
   const fwd = document.getElementById("btn-explorer-forward");
-  if (back) back.disabled = explorerHistIdx <= 0;
-  if (fwd) fwd.disabled = explorerHistIdx >= explorerHistory.length - 1;
+  if (back) back.disabled = explorerBlockedPaneId != null || explorerHistIdx <= 0;
+  if (fwd) fwd.disabled =
+    explorerBlockedPaneId != null || explorerHistIdx >= explorerHistory.length - 1;
   const btnNewFolder = document.getElementById("btn-explorer-newfolder");
-  if (btnNewFolder) btnNewFolder.classList.toggle("hidden", currentSftpId != null);
+  if (btnNewFolder) {
+    btnNewFolder.classList.toggle(
+      "hidden",
+      explorerBlockedPaneId != null || currentSftpId != null,
+    );
+  }
+  if (btnExplorerUp) btnExplorerUp.disabled = explorerBlockedPaneId != null;
   if (explorerMode) {
+    if (explorerBlockedPaneId != null) return;
     const want = currentSftpId == null ? "local" : String(currentSftpId);
     if (explorerMode.value !== want && [...explorerMode.options].some((o) => o.value === want)) {
       explorerMode.value = want;
@@ -1663,33 +2136,43 @@ function closeViewerFile(id) {
 
 // Operate the CLI in a folder: open a new local terminal already in that
 // directory, or `cd` the active SSH terminal for remote paths (escaped).
-function cdToTerminal(path) {
-  if (currentSftpId) {
-    const safe = String(path).replace(/'/g, "'\\''");
-    // Route the cd to the SSH terminal that OWNS this sftp session (its pane
-    // stores t.sftpId at connect time — see doSshConnect), not just whatever
-    // pane happens to be active. Otherwise the cd lands in a local/other shell.
-    let targetId = null;
-    for (const [id, t] of terminals) {
-      if (t.sftpId === currentSftpId) { targetId = id; break; }
-    }
+// ── Explorer: new folder modal ──
+async function cdToTerminal(path) {
+  if (currentSftpId != null) {
+    const sftpId = currentSftpId;
+    const targetId = sftpOwnerPaneId(sftpId);
     if (targetId == null || !terminals.has(targetId)) {
-      if (activeTermId == null || !terminals.has(activeTermId)) {
-        toast("이 서버의 SSH 세션을 찾을 수 없습니다.", true);
-        return;
-      }
-      targetId = activeTermId; // fallback: best-effort to the active terminal
+      toast("The SSH session for this server is no longer available.", true);
+      return;
     }
-    armNotifyCycle(targetId); // user-launched command — its completion should notify
-    invoke("pty_write", { id: targetId, data: `cd '${safe}'\r` });
-    // Bring that SSH session into view so the user sees the directory change.
+    let resolved;
+    try {
+      resolved = await invoke("sftp_resolve_dir", { sessionId: sftpId, path: String(path) });
+    } catch (error) {
+      toast("Remote directory is unavailable: " + error, true);
+      return;
+    }
+    const owner = terminals.get(targetId);
+    if (!owner || owner.sftpId !== sftpId) {
+      toast("The SSH/SFTP session changed before cd could run.", true);
+      return;
+    }
+    const safe = resolved.replace(/'/g, "'\\''");
+    armNotifyCycle(targetId);
+    await invoke("pty_write", { id: targetId, data: `cd '${safe}'\r` });
+    owner.remotePath = resolved;
+    owner.cwd = resolved;
+    if (owner.session) {
+      owner.session.remotePath = resolved;
+      owner.session.cwd = resolved;
+    }
+    explorerGo(resolved, sftpId);
+    saveSessionNow();
     const tab = findTabForPane(targetId);
     if (tab && tab.tabIdx !== activeTabIdx) switchToTab(tab.tabIdx);
     setFocusedPane(targetId);
     return;
   }
-  // Local: open the folder in the CURRENT window by splitting the active tab.
-  // Fall back to a new tab only when no terminal pane is active.
   if (!browserTabActive && activeTabIdx != null && focusedPaneId != null && terminals.has(focusedPaneId)) {
     splitPane("horizontal", path);
   } else {
@@ -1697,7 +2180,6 @@ function cdToTerminal(path) {
   }
 }
 
-// ── Explorer: new folder modal ──
 function openNewFolderModal() {
   const modal = document.getElementById("newfolder-modal");
   const nameInput = document.getElementById("newfolder-name");
@@ -1922,25 +2404,42 @@ async function goUp() {
 
 function onExplorerModeChange() {
   const val = explorerMode.value;
+  if (val.startsWith("blocked:")) return;
+  const generation = ++explorerFocusGeneration;
   if (val === "local") {
-    invoke("explorer_home_dir").then((home) => explorerGo(home, null));
+    invoke("explorer_home_dir").then((home) => {
+      if (generation === explorerFocusGeneration) explorerGo(home, null);
+    });
   } else {
     // val is sftp session id
     const id = parseInt(val);
+    const ownerId = sftpOwnerPaneId(id);
+    const owner = ownerId == null ? null : terminals.get(ownerId);
+    const remembered = owner &&
+      (owner.remotePath || owner.session?.remotePath || owner.cwd);
+    if (remembered) {
+      explorerGo(remembered, id);
+      return;
+    }
     invoke("sftp_home_dir", { sessionId: id })
-      .then((home) => explorerGo(home, id))
-      .catch(() => explorerGo("/", id));
+      .then((home) => {
+        if (generation === explorerFocusGeneration) explorerGo(home, id);
+      })
+      .catch(() => {
+        if (generation === explorerFocusGeneration) explorerGo("/", id);
+      });
   }
 }
 
-function addSftpOption(sftpId, label) {
+function addSftpOption(sftpId, label, autoSwitch = true) {
   const opt = document.createElement("option");
   opt.value = sftpId;
   opt.textContent = label;
   explorerMode.appendChild(opt);
-  // Auto switch to new SFTP
-  explorerMode.value = sftpId;
-  onExplorerModeChange();
+  if (autoSwitch) {
+    explorerMode.value = sftpId;
+    onExplorerModeChange();
+  }
 }
 
 function removeSftpOption(sftpId) {
@@ -2466,6 +2965,10 @@ function setFocusedPane(ptyId) {
     }
   }
   updateSessionActive();
+  showExplorerForSession(ptyId);
+  if (t && t.type !== "ssh" && (t.codexDetected || t.ctxSource === "codex")) {
+    loadCodexLimits();
+  }
 }
 
 // Safety net for terminal focus. The WebView can drop the active terminal's
@@ -3131,6 +3634,8 @@ let codexConfiguredReasoningEffort = null; // from ~/.codex/config.toml
 let codexSessionReasoningEffort = null; // active session reasoning setting from rollout events
 let codexSessionCtxPct = null; // active session context usage from rollout token_count events
 let codexSessionCtxAt = 0;
+let codexSnapshotPaneId = null; // local pane that owns the currently-polled rollout
+let codexSnapshotRequestGeneration = 0;
 
 // Scan one pump-tick's worth of PTY output for the statusline patterns. Keeps a
 // short tail so a pattern split across ticks still matches on the next one.
@@ -3239,6 +3744,10 @@ function scanCtxUsage(id, t, data) {
     changed = true;
     if (t.ctxSource === "codex" || t.codexDetected) loadCodexLimits();
   }
+  if (codexEffort && codexEffort !== t.codexReasoningEffort) {
+    t.codexReasoningEffort = codexEffort;
+    changed = true;
+  }
   // Account-wide Claude rate limits (5h:34% wk:12% …) — global, not per-pane.
   let limitsChanged = false;
   for (const [key, re, field, rfield] of CL_LIMIT_KEYS) {
@@ -3267,8 +3776,11 @@ function ctxBadgeText(t) {
   if (t.ctxSource === "codex") {
     // Codex's status footer has no reasoning setting, so prefer the active
     // rollout value and fall back to config.toml. ctxPct is converted from "left".
-    parts.push(t.codexModel || codexSessionModel || codexConfiguredModel || "Codex");
-    const effort = t.codexReasoningEffort || codexSessionReasoningEffort || codexConfiguredReasoningEffort;
+    const localFallback = t.type !== "ssh";
+    parts.push(t.codexModel || t.codexSnapshotModel ||
+      (localFallback ? codexConfiguredModel : null) || "Codex");
+    const effort = t.codexReasoningEffort || t.codexSnapshotEffort ||
+      (localFallback ? codexConfiguredReasoningEffort : null);
     if (effort) parts.push(effort);
   } else {
     if (t.ctxModel) parts.push(t.ctxModel);
@@ -3301,9 +3813,9 @@ function updateCtxUi(id, t) {
       const nameEl = li.querySelector(".session-name");
       if (nameEl) nameEl.after(se); else li.appendChild(se);
     }
-    const sessionPct = t.ctxPct == null ? "?" : t.ctxPct + "%";
-    se.textContent = sessionPct;
-    se.title = sessionPct;
+    const sessionText = ctxBadgeText(t);
+    se.textContent = sessionText;
+    se.title = sessionText;
     se.style.color = color;
     se.style.borderColor = color;
     se.classList.toggle("stale", stale);
@@ -3570,6 +4082,7 @@ function parseCodexTokenCountEvent(ev) {
 }
 function applyCodexSessionSnapshot() {
   for (const [pid, tt] of terminals) {
+    if (tt.type === "ssh" || pid !== codexSnapshotPaneId) continue;
     if (!tt.codexDetected || tt.ctxSource !== "codex") continue;
     let changed = false;
     const stalePanePct = tt.ctxPct == null || performance.now() - (tt.ctxAt || 0) > 10_000;
@@ -3580,12 +4093,32 @@ function applyCodexSessionSnapshot() {
       maybeAnnounceCtx(pid, tt);
       changed = true;
     }
+    if (codexSessionModel && codexSessionModel !== tt.codexSnapshotModel) {
+      tt.codexSnapshotModel = codexSessionModel;
+      changed = true;
+    }
+    if (codexSessionReasoningEffort &&
+        codexSessionReasoningEffort !== tt.codexSnapshotEffort) {
+      tt.codexSnapshotEffort = codexSessionReasoningEffort;
+      changed = true;
+    }
     if (changed || tt.ctxSource === "codex") updateCtxUi(pid, tt);
   }
 }
 async function loadCodexLimits() {
   try {
-    const tail = await invoke("codex_rollout_tail", { maxBytes: 65536 });
+    const requestGeneration = ++codexSnapshotRequestGeneration;
+    const ownerId = focusedPaneId;
+    const owner = ownerId == null ? null : terminals.get(ownerId);
+    const localCodexOwner = owner && owner.type !== "ssh" &&
+      (owner.codexDetected || owner.ctxSource === "codex");
+    const snapshotPaneId = localCodexOwner ? ownerId : null;
+    const cwd = localCodexOwner ? (owner.cwd || owner.session?.cwd || null) : null;
+    // A real rollout can grow past 400 KB; 64 KB commonly contains only the
+    // newest token/rate events and misses turn_context model/effort settings.
+    const tail = await invoke("codex_rollout_tail", { maxBytes: 1_000_000, cwd });
+    if (requestGeneration !== codexSnapshotRequestGeneration) return;
+    codexSnapshotPaneId = snapshotPaneId;
     const lines = tail.split("\n");
     let foundSessionSettings = false;
     let foundSessionCtx = false;
@@ -3612,10 +4145,9 @@ async function loadCodexLimits() {
           const ev = JSON.parse(lines[i]);
           const nextPct = parseCodexTokenCountEvent(ev);
           if (nextPct != null) {
-            if (nextPct !== codexSessionCtxPct) {
-              codexSessionCtxPct = nextPct;
-              codexSessionCtxAt = performance.now();
-            }
+            codexSessionCtxPct = nextPct;
+            // Even the same rounded percentage is a fresh live token_count.
+            codexSessionCtxAt = performance.now();
             applyCodexSessionSnapshot();
             foundSessionCtx = true;
           }
@@ -3884,10 +4416,6 @@ function isAiLoginUrl(uri) {
     );
   } catch {
     return false;
-  }
-  if (codexEffort && codexEffort !== t.codexReasoningEffort) {
-    t.codexReasoningEffort = codexEffort;
-    changed = true;
   }
 }
 
@@ -4524,6 +5052,7 @@ function closePane(ptyId) {
   const paneEl = tInfo.paneEl;
   const splitContainer = paneEl.parentElement;
 
+  detachPaneSftp(ptyId);
   invoke("pty_close", { id: ptyId });
   tInfo.term.dispose();
   paneEl.remove();
@@ -5154,6 +5683,98 @@ function quickConnectTmux(c) {
 
 // Parameterized SSH connect (used by the form and by session restore).
 // auth: 'key' (keyfile/agent → auto-reconnect) | 'password' (prompted on restore).
+function showSftpUnsupportedModal() {
+  const modal = document.getElementById("sftp-unsupported-modal");
+  if (!modal) return;
+  const close = () => modal.classList.add("hidden");
+  const ok = document.getElementById("sftp-unsupported-ok");
+  if (ok && !ok._sftpBound) {
+    ok._sftpBound = true;
+    ok.addEventListener("click", close);
+    modal.addEventListener("click", (e) => { if (e.target === modal) close(); });
+    modal.addEventListener("keydown", (e) => { if (e.key === "Escape") close(); });
+  }
+  modal.classList.remove("hidden");
+  ok?.focus();
+}
+
+function isSftpUnsupportedError(error) {
+  return String(error || "").includes("SFTP_UNSUPPORTED:");
+}
+
+function detachPaneSftp(ptyId) {
+  const t = terminals.get(ptyId);
+  if (!t) return;
+  const uploadCard = document.getElementById("explorer-upload-progress");
+  if (uploadCard && t.paneEl?.contains(uploadCard)) resetUploadProgressPlacement();
+  t.sftpConnectToken = (t.sftpConnectToken || 0) + 1;
+  const oldId = t.sftpId;
+  t.sftpId = null;
+  if (oldId != null) {
+    removeSftpOption(oldId);
+    invoke("sftp_disconnect", { sessionId: oldId }).catch(() => {});
+  }
+}
+
+async function attachSftpToPane(ptyId, credentials, announce = true) {
+  const t = terminals.get(ptyId);
+  if (!t || t.type !== "ssh") return null;
+  detachPaneSftp(ptyId);
+  const token = t.sftpConnectToken;
+  t.sftpStatus = "connecting";
+  if (focusedPaneId === ptyId) showExplorerBlockedForSession(ptyId, t);
+  if (announce) toast("Connecting SFTP...");
+  let sftpId = null;
+  try {
+    sftpId = await invoke("sftp_connect", credentials);
+    const live = terminals.get(ptyId);
+    if (!live || live.sftpConnectToken !== token) {
+      await invoke("sftp_disconnect", { sessionId: sftpId }).catch(() => {});
+      return null;
+    }
+    live.sftpId = sftpId;
+    live.sftpStatus = "connected";
+    live.sftpError = null;
+    let initialPath = live.remotePath || live.session?.remotePath ||
+      live.cwd || live.session?.cwd || null;
+    if (initialPath) {
+      try {
+        initialPath = await invoke("sftp_resolve_dir", { sessionId: sftpId, path: initialPath });
+      } catch {
+        initialPath = null;
+      }
+    }
+    if (!initialPath) {
+      initialPath = await invoke("sftp_home_dir", { sessionId: sftpId }).catch(() => "/");
+    }
+    const current = terminals.get(ptyId);
+    if (!current || current.sftpConnectToken !== token || current.sftpId !== sftpId) {
+      await invoke("sftp_disconnect", { sessionId: sftpId }).catch(() => {});
+      return null;
+    }
+    current.remotePath = initialPath;
+    if (!current.cwd) current.cwd = current.session?.cwd || initialPath;
+    if (current.session) {
+      current.session.remotePath = initialPath;
+      if (!current.session.cwd) current.session.cwd = current.cwd;
+    }
+    addSftpOption(sftpId, `SSH: ${current.sshTarget || credentials.host}`, focusedPaneId === ptyId);
+    if (announce) toast("SFTP connected");
+    saveSessionNow();
+    return sftpId;
+  } catch (error) {
+    if (sftpId != null) await invoke("sftp_disconnect", { sessionId: sftpId }).catch(() => {});
+    const live = terminals.get(ptyId);
+    if (!live || live.sftpConnectToken !== token) return null;
+    live.sftpStatus = isSftpUnsupportedError(error) ? "unsupported" : "error";
+    live.sftpError = String(error);
+    if (focusedPaneId === ptyId) showExplorerBlockedForSession(ptyId, live);
+    if (live.sftpStatus === "unsupported") showSftpUnsupportedModal();
+    else if (announce) toast("SSH opened. SFTP: " + error, true);
+    return null;
+  }
+}
+
 async function doSshConnect(opts) {
   const { target, username, host, port, password, keyPath } = opts;
   const auth = opts.auth || (password && !keyPath ? "password" : "key");
@@ -5171,13 +5792,16 @@ async function doSshConnect(opts) {
 
   const sshArgs = ["-p", String(port)];
   if (keyPath) sshArgs.push("-i", keyPath); // use the specified key for the terminal too
-  sshArgs.push(target);
   // tmux on connect: a name → create/attach that session; empty → attach to an
   // existing session (or start one if none).
+  let tmuxCommand = null;
   if (opts.tmux) {
     const nm = (opts.tmuxName || "").trim().replace(/[^A-Za-z0-9_.-]/g, "");
-    sshArgs.push("-t", nm ? `tmux new-session -A -s ${nm}` : "tmux attach || tmux new-session");
+    sshArgs.push("-t");
+    tmuxCommand = nm ? `tmux new-session -A -s ${nm}` : "tmux attach || tmux new-session";
   }
+  sshArgs.push(target);
+  if (tmuxCommand) sshArgs.push(tmuxCommand);
 
   try {
     // No password is ever persisted — only the auth *kind*. tmux settings ride
@@ -5205,16 +5829,11 @@ async function doSshConnect(opts) {
     switchToTab(tabIdx);
     refreshSessionList();
 
-    // Establish SFTP connection for explorer
-    toast("Connecting SFTP...");
-    try {
-      const sftpId = await invoke("sftp_connect", { host, port, username, password, keyPath });
-      terminals.get(ptyId).sftpId = sftpId;
-      addSftpOption(sftpId, `SSH: ${target}`);
-      toast("SFTP connected");
-    } catch (sftpErr) {
-      toast("SSH opened. SFTP: " + sftpErr, true);
-    }
+    await attachSftpToPane(
+      ptyId,
+      { host, port, username, password, keyPath },
+      true,
+    );
   } catch (err) {
     toast("SSH failed: " + err, true);
     tabEl.remove();
@@ -5832,9 +6451,40 @@ async function buildPaneNode(parentEl, node) {
   if (node && node.leaf) {
     const s = node.leaf;
     if (s.kind === "ssh") {
-      const id = await createPane(parentEl, "ssh", ["-p", String(s.port || 22), s.target]);
+      const sshArgs = ["-p", String(s.port || 22)];
+      if (s.keyPath) sshArgs.push("-i", s.keyPath);
+      let tmuxCommand = null;
+      if (s.tmux) {
+        const name = (s.tmuxName || "").trim().replace(/[^A-Za-z0-9_.-]/g, "");
+        sshArgs.push("-t");
+        tmuxCommand = name ? `tmux new-session -A -s ${name}` : "tmux attach || tmux new-session";
+      }
+      sshArgs.push(s.target);
+      if (tmuxCommand) sshArgs.push(tmuxCommand);
+      const id = await createPane(parentEl, "ssh", sshArgs);
       const t = terminals.get(id);
-      if (t) { t.sshTarget = s.target; t.session = { ...s }; markMemoIndicator(id); }
+      if (t) {
+        t.sshTarget = s.target;
+        t.session = { ...s };
+        t.remotePath = s.remotePath || s.cwd || null;
+        t.cwd = s.cwd || null;
+        markMemoIndicator(id);
+      }
+      // A restored key/agent-auth pane has enough non-secret information to
+      // reopen its SFTP channel. Password-auth panes intentionally do not.
+      if (s.auth === "key" && s.host && s.username) {
+        await attachSftpToPane(
+          id,
+          {
+            host: s.host,
+            port: s.port || 22,
+            username: s.username,
+            password: null,
+            keyPath: s.keyPath || null,
+          },
+          false,
+        );
+      }
     } else {
       const id = await createPane(parentEl, s.shell || getDefaultShellId(), null, s.cwd || undefined);
       const t = terminals.get(id);
@@ -6354,10 +7004,7 @@ function closeTab(tabIdx) {
   for (const ptyId of [...tabInfo.panes]) {
     const tInfo = terminals.get(ptyId);
     if (tInfo) {
-      if (tInfo.sftpId) {
-        invoke("sftp_disconnect", { sessionId: tInfo.sftpId });
-        removeSftpOption(tInfo.sftpId);
-      }
+      detachPaneSftp(ptyId);
       invoke("pty_close", { id: ptyId });
       tInfo.term.dispose();
       terminals.delete(ptyId);
@@ -6494,23 +7141,38 @@ function sendCommandWhenReady(ptyId, line, cmd = null) {
 
 // cd-button context menu: open a session AT the folder and run a saved command.
 async function openSessionWithCommand(path, cmd) {
-  if (currentSftpId) {
-    // Remote: reuse the cd routing (owning SSH pane), as one guarded line.
-    let targetId = null;
-    for (const [id, t] of terminals) {
-      if (t.sftpId === currentSftpId) { targetId = id; break; }
+  if (currentSftpId != null) {
+    const sftpId = currentSftpId;
+    const targetId = sftpOwnerPaneId(sftpId);
+    if (targetId == null || !terminals.has(targetId)) {
+      toast("The SSH session for this server is no longer available.", true);
+      return;
     }
-    if (targetId == null) targetId = activeTermId;
-    if (targetId == null || !terminals.has(targetId)) { toast("이 서버의 SSH 세션을 찾을 수 없습니다.", true); return; }
-    const safe = String(path).replace(/'/g, "'\\''");
-    armNotifyCycle(targetId); // user-launched command — its completion should notify
-    invoke("pty_write", { id: targetId, data: `cd '${safe}' && ${cmd.command}\r` });
+    let resolved;
+    try {
+      resolved = await invoke("sftp_resolve_dir", { sessionId: sftpId, path: String(path) });
+    } catch (error) {
+      toast("Remote directory is unavailable: " + error, true);
+      return;
+    }
+    const owner = terminals.get(targetId);
+    if (!owner || owner.sftpId !== sftpId) return;
+    const safe = resolved.replace(/'/g, "'\\''");
+    armNotifyCycle(targetId);
+    await invoke("pty_write", { id: targetId, data: `cd '${safe}' && ${cmd.command}\r` });
+    owner.remotePath = resolved;
+    owner.cwd = resolved;
+    if (owner.session) {
+      owner.session.remotePath = resolved;
+      owner.session.cwd = resolved;
+    }
+    explorerGo(resolved, sftpId);
+    saveSessionNow();
     const tab = findTabForPane(targetId);
     if (tab && tab.tabIdx !== activeTabIdx) switchToTab(tab.tabIdx);
     setFocusedPane(targetId);
     return;
   }
-  // Local: new pane already starts in the folder — just run the command there.
   let ptyId = null;
   if (!browserTabActive && activeTabIdx != null && focusedPaneId != null && terminals.has(focusedPaneId)) {
     ptyId = await splitPane("horizontal", path);
@@ -7118,23 +7780,77 @@ function focusSession(ptyId) {
 function showExplorerForSession(ptyId) {
   const t = terminals.get(ptyId);
   if (!t) return;
+  const generation = ++explorerFocusGeneration;
   if (t.type === "ssh") {
-    if (t.sftpId == null) return; // no SFTP channel for this SSH session
-    // Already browsing this server: keep the user's current remote spot.
-    if (currentSftpId === t.sftpId) return;
-    if (t.cwd) explorerGo(t.cwd, t.sftpId);
-    else {
-      // Remote cwd isn't tracked — land on the server's home directory.
-      invoke("sftp_home_dir", { sessionId: t.sftpId })
-        .then((home) => explorerGo(home, t.sftpId))
-        .catch(() => explorerGo("/", t.sftpId));
+    if (t.sftpId == null) {
+      showExplorerBlockedForSession(ptyId, t);
+      if (t.sftpStatus === "unsupported") showSftpUnsupportedModal();
+      return;
     }
-  } else {
-    if (!t.cwd) return;
-    // Skip the refetch when the explorer is already on this local folder.
-    if (currentSftpId == null && currentExplorerPath === t.cwd) return;
-    explorerGo(t.cwd, null);
+    if (currentSftpId === t.sftpId) {
+      t.remotePath = currentExplorerPath;
+      if (t.session) t.session.remotePath = currentExplorerPath;
+      return;
+    }
+    const rememberedPath = t.remotePath || t.session?.remotePath ||
+      t.cwd || t.session?.cwd;
+    if (rememberedPath) {
+      explorerGo(rememberedPath, t.sftpId);
+      return;
+    }
+    const expectedSftpId = t.sftpId;
+    invoke("sftp_home_dir", { sessionId: expectedSftpId })
+      .then((home) => {
+        const live = terminals.get(ptyId);
+        if (generation === explorerFocusGeneration && focusedPaneId === ptyId &&
+            live && live.sftpId === expectedSftpId) explorerGo(home, expectedSftpId);
+      })
+      .catch(() => {
+        const live = terminals.get(ptyId);
+        if (generation === explorerFocusGeneration && focusedPaneId === ptyId &&
+            live && live.sftpId === expectedSftpId) explorerGo("/", expectedSftpId);
+      });
+    return;
   }
+  if (!t.cwd) return;
+  if (currentSftpId == null && currentExplorerPath === t.cwd) return;
+  explorerGo(t.cwd, null);
+}
+
+function showExplorerBlockedForSession(ptyId, terminal) {
+  explorerBlockedPaneId = ptyId;
+  explorerFocusGeneration++;
+  explorerLoadGeneration++;
+  currentSftpId = null;
+  currentExplorerPath = "";
+  const status = terminal?.sftpStatus === "connecting"
+    ? "SFTP 연결 중…"
+    : terminal?.sftpStatus === "unsupported"
+      ? "SFTP 미지원"
+      : "SFTP 연결 안 됨";
+  if (explorerPath) {
+    explorerPath.textContent = status;
+    explorerPath.title = "이 SSH 세션에는 현재 업로드할 수 없습니다.";
+  }
+  if (fileListEl) {
+    fileListEl.innerHTML = "";
+    const item = document.createElement("li");
+    item.className = "explorer-blocked-message";
+    item.textContent = terminal?.sftpStatus === "connecting"
+      ? "SFTP 연결이 완료되면 이 세션의 원격 파일이 표시됩니다."
+      : "이 SSH 세션의 SFTP 연결을 사용할 수 없어 업로드가 차단되었습니다.";
+    fileListEl.appendChild(item);
+  }
+  if (explorerMode) {
+    explorerMode.querySelectorAll("option[data-sftp-blocked]").forEach((option) => option.remove());
+    const option = document.createElement("option");
+    option.value = `blocked:${ptyId}`;
+    option.dataset.sftpBlocked = "true";
+    option.textContent = `SSH: ${status}`;
+    explorerMode.appendChild(option);
+    explorerMode.value = option.value;
+  }
+  syncExplorerNav();
 }
 
 // Inline-rename a session (pane). WebView2 has no window.prompt, so edit in place.
@@ -8113,9 +8829,62 @@ function hideAutocomplete() {
 // EXPLORER SYNC — follow terminal cd
 // ═══════════════════════════════════════════════
 
+async function resolveRemotePaneDir(ptyId, rawPath) {
+  const t = terminals.get(ptyId);
+  if (!t || t.type !== "ssh" || t.sftpId == null) return null;
+  const sftpId = t.sftpId;
+  let path = String(rawPath == null ? "" : rawPath).trim();
+  path = path.replace(/^["']|["']$/g, "").trim();
+  if (path === "-") return null;
+
+  let candidate;
+  if (!path || path === "~" || path === "$HOME") {
+    candidate = await invoke("sftp_home_dir", { sessionId: sftpId });
+  } else if (path.startsWith("~/")) {
+    const home = await invoke("sftp_home_dir", { sessionId: sftpId });
+    candidate = `${home.replace(/\/+$/, "")}/${path.slice(2)}`;
+  } else if (path.startsWith("/")) {
+    candidate = path;
+  } else {
+    const base = t.remotePath || t.cwd ||
+      await invoke("sftp_home_dir", { sessionId: sftpId });
+    candidate = `${String(base).replace(/\/+$/, "")}/${path}`;
+  }
+
+  const resolved = await invoke("sftp_resolve_dir", { sessionId: sftpId, path: candidate });
+  const live = terminals.get(ptyId);
+  if (!live || live.sftpId !== sftpId) return null;
+  live.remotePath = resolved;
+  live.cwd = resolved;
+  if (live.session) {
+    live.session.remotePath = resolved;
+    live.session.cwd = resolved;
+  }
+  if (focusedPaneId === ptyId) explorerGo(resolved, sftpId);
+  saveSessionNow();
+  return resolved;
+}
+
 function syncExplorerOnCd(input, ptyId) {
+  const t = terminals.get(ptyId);
+  if (t && t.type === "ssh") {
+    if (t.sftpId == null) return;
+    const match = String(input || "").match(/^cd(?:\s+--)?(?:\s+(.+))?$/i);
+    if (!match) return;
+    setTimeout(() => {
+      resolveRemotePaneDir(ptyId, match[1] || "").catch(() => {
+        // The shell remains authoritative. A failed SFTP validation means the
+        // Explorer/persisted cwd is left at its last known-good directory.
+      });
+    }, 300);
+    return;
+  }
+  syncLocalExplorerOnCd(input, ptyId);
+}
+
+function syncLocalExplorerOnCd(input, ptyId) {
   const tInfo = terminals.get(ptyId);
-  if (!tInfo || tInfo.type === "ssh") return;
+  if (!tInfo) return;
   const baseCwd = tInfo.cwd || currentExplorerPath;
 
   let targetPath = null;

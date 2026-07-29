@@ -1,6 +1,6 @@
 [package]
 name = "mycli-desktop"
-version = "0.1.44"
+version = "0.1.45"
 edition = "2024"
 
 # The executable (and therefore the OS process / Task Manager name) is "Mymux".
@@ -20,6 +20,9 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 uuid = { workspace = true }
 dirs = { workspace = true }
+fs2 = { workspace = true }
+cap-std = "4"
+cap-fs-ext = "4"
 portable-pty = "0.9"
 russh = "0.58"
 russh-sftp = "2.1"
@@ -33,7 +36,7 @@ image = { version = "0.25", default-features = false, features = ["png"] }
 reqwest = { version = "0.13", default-features = false, features = ["json", "rustls"] }
 
 [target.'cfg(windows)'.dependencies]
-windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_UI_WindowsAndMessaging"] }
+windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_UI_WindowsAndMessaging", "Win32_Storage_FileSystem"] }
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }

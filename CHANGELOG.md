@@ -8,6 +8,31 @@ For installers, see the [GitHub Releases](https://github.com/ChoiGyber/Mymux/rel
 
 ---
 
+## v0.1.45 — 2026-07-30
+
+### Added
+- **Secure SFTP upload batches.** Remote uploads now show aggregate progress,
+  support cancellation, keep the selected SSH session and destination fixed for
+  the whole batch, and publish through temporary sibling paths without
+  overwriting an existing remote file.
+- **Upload-to-AI handoff.** After uploading into an SSH session running an AI
+  CLI, Mymux can place the uploaded file names into that pane's input for review
+  without submitting them.
+- **SSH/SFTP session-aware Explorer.** Remote `cd` commands and pane focus keep
+  each session's Explorer path in sync, while servers without SFTP show a clear
+  blocked state without disrupting their SSH terminals.
+
+### Fixed
+- **Hardened upload source validation and cleanup.** Uploads reject symlinks and
+  unsafe names, detect local file or directory replacement while streaming,
+  clean partial remote trees in reverse creation order, and serialize
+  cross-process known-host updates.
+- **Pane-specific Codex usage lookup.** Codex rollout snapshots now prefer the
+  session matching each pane's working directory instead of always reading the
+  globally newest rollout.
+
+---
+
 ## v0.1.44 — 2026-07-29
 
 ### Added / 새 기능
