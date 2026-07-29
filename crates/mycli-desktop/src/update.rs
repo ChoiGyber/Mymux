@@ -5,16 +5,23 @@
 //! which downloads + installs the signed update and relaunches the app.
 
 use tauri_plugin_updater::UpdaterExt;
+use serde::Serialize;
+
+#[derive(Debug, Serialize)]
+pub struct UpdateInfo {
+    pub version: String,
+    pub body: Option<String>,
+}
 
 /// Check the configured updater endpoint for a newer release.
 ///
 /// Returns `Some(version)` when an update is available, `None` when the app is
 /// already up to date.
 #[tauri::command]
-pub async fn update_check(app: tauri::AppHandle) -> Result<Option<String>, String> {
+pub async fn update_check(app: tauri::AppHandle) -> Result<Option<UpdateInfo>, String> {
     let updater = app.updater().map_err(|e| e.to_string())?;
     match updater.check().await {
-        Ok(Some(update)) => Ok(Some(update.version)),
+        Ok(Some(update)) => Ok(Some(UpdateInfo { version: update.version, body: update.body })),
         Ok(None) => Ok(None),
         Err(e) => Err(e.to_string()),
     }

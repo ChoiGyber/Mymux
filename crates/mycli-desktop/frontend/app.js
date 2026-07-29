@@ -71,7 +71,7 @@ let modalOverlay, modalTitle, form, inputName, inputCommand, inputDesc, btnCance
 let terminalTabs, terminalContainer, terminalWelcome;
 let sshInput, sshPort, sshPassword, sshKeyfile, btnSshConnect;
 let toastEl, acPopup, acList;
-let sessionPanel, sessionListEl, btnToggleSessions, btnSplitH, btnSplitV;
+let sessionPanel, sessionListEl, btnToggleSessions, btnSplitH, btnSplitV, btnEqualWidth, btnEqualHeight;
 let btnTheme, explorerDrives;
 let pendingTabCloseId = null;
 let explorerDropUnlisten = null;
@@ -214,6 +214,8 @@ window.addEventListener("DOMContentLoaded", async () => {
   btnToggleSessions = document.getElementById("btn-toggle-sessions");
   btnSplitH = document.getElementById("btn-split-h");
   btnSplitV = document.getElementById("btn-split-v");
+  btnEqualWidth = document.getElementById("btn-equal-width");
+  btnEqualHeight = document.getElementById("btn-equal-height");
   btnTheme = document.getElementById("btn-theme");
   explorerDrives = document.getElementById("explorer-drives");
 
@@ -248,12 +250,16 @@ window.addEventListener("DOMContentLoaded", async () => {
 
   // Restore the previous session if one was saved; otherwise open a default terminal.
   try {
-    const restored = await restoreSession();
+    const restored = await promptRestorePreviousSession();
     if (!restored) await maybeShowStartupGuide();
   } catch (e) {
     console.error("Session restore error:", e);
     try { await spawnTerminal(); } catch {}
   }
+
+  // After the restore prompt settled (so modals never stack): first launch of
+  // a new version shows the "업데이트 완료 — 수정사항" changelog modal.
+  maybeShowWhatsNew();
 
   // Panes opened during restore/startup are sized before the container layout
   // AND the embedded font have settled. That leaves the first session fitted to
@@ -361,6 +367,8 @@ async function setupListeners() {
   }
   btnSplitH.addEventListener("click", () => splitPane("horizontal"));
   btnSplitV.addEventListener("click", () => splitPane("vertical"));
+  btnEqualWidth.addEventListener("click", () => equalizeActiveTabSplits("horizontal"));
+  btnEqualHeight.addEventListener("click", () => equalizeActiveTabSplits("vertical"));
 
   // Theme controls
   btnTheme.addEventListener("click", () => setTheme(currentThemeMode() === "dark" ? "light" : "dark"));
@@ -764,6 +772,15 @@ function setExplorerDropState(active, message = "Drop files here to copy or uplo
 async function handleExplorerFileDrop(paths) {
   const files = Array.isArray(paths) ? paths.filter(Boolean) : [];
   if (!files.length || !currentExplorerPath) return;
+  if (currentSftpId != null) {
+    const preview = files.slice(0, 5).map((p) => `• ${p}`).join("\n");
+    const more = files.length > 5 ? `\n… 외 ${files.length - 5}개` : "";
+    const ok = window.confirm(
+      `서버에 파일을 업로드합니다.\n\n대상: ${currentExplorerPath}\n${preview}${more}\n\n` +
+      "심볼릭 링크는 업로드하지 않으며, 같은 이름의 원격 파일은 덮어쓰지 않습니다. 계속하시겠습니까?"
+    );
+    if (!ok) return;
+  }
   setExplorerDropState(true, currentSftpId == null ? "Copying files…" : "Uploading files…");
   let ok = 0;
   const errors = [];
@@ -2376,7 +2393,7 @@ async function createPane(parentEl, shell, args, cwd) {
     }
   }
   paneEl.addEventListener("mousedown", () => { if (focusedPaneId !== id) setFocusedPane(id); }, true);
-  paneEl.addEventListener("click", () => setFocusedPane(id));
+  paneEl.addEventListener("click", () => { setFocusedPane(id); showExplorerForSession(id); });
   termWrap.addEventListener("click", () => { setFocusedPane(id); term.focus(); });
   // A plain mouse drag should select text. dragDropEnabled:false re-enables the
   // webview's native HTML5 drag, which would otherwise hijack a drag that begins
@@ -3074,6 +3091,7 @@ const CL_LIMIT_KEYS = [
 let claudeLimits = null;    // { fiveH, fiveHReset, wk, wkReset, mo, moReset, at } — from a pane's HUD statusline
 let claudeLimitsApi = null; // same shape (5h+wk only) — from the OAuth usage API; works without OMC/statusline
 let codexLimits = null;     // { pct, label, secondary, resetsAt, plan, at }
+let codexResetCredits = null; // { availableCount, credits }
 // Two independent sources feed the CL readout: the live pane statusline
 // (claudeLimits) and the direct OAuth usage API (claudeLimitsApi). Whichever was
 // refreshed most recently wins — a rendering Claude pane redraws its statusline
@@ -3378,25 +3396,45 @@ function resetNBadge() {
   return n;
 }
 function codexResetBadge() {
+  const count = Number(codexResetCredits?.availableCount || 0);
+  if (count <= 0) return null;
   const b = document.createElement("button");
   b.type = "button";
   b.className = "usage-reset-count";
-  b.textContent = `R-${codexResetCount}`;
-  b.title = "감지된 CX 사용량 리셋 횟수입니다. 클릭하면 로컬 기록을 초기화합니다.";
-  b.addEventListener("click", (event) => {
+  b.textContent = `R-${count}`;
+  b.title = "사용 가능한 Codex 리셋권입니다. 클릭하면 리셋권을 사용합니다.";
+  b.addEventListener("click", async (event) => {
     event.stopPropagation();
-    if (!codexResetCount || window.confirm("CX 리셋 감지 횟수(R-n)를 0으로 초기화할까요?")) {
-      codexResetCount = 0;
-      codexResetLastAt = null;
-      saveCodexResetState();
-      updateGlobalUsageUi();
-    }
+    if (!window.confirm(`Codex 리셋권 1개를 사용하시겠습니까?\n남은 리셋권: ${count}개`)) return;
+    b.disabled = true;
+    try {
+      const outcome = await invoke("codex_consume_reset_credit", {
+        creditId: codexResetCredits?.credits?.[0]?.id || null,
+      });
+      if (outcome === "reset" || outcome === "alreadyRedeemed") {
+        toast("Codex 리셋권을 사용했습니다.");
+        await loadCodexLimits();
+      } else if (outcome === "noCredit") {
+        toast("사용 가능한 Codex 리셋권이 없습니다.", true);
+      } else if (outcome === "nothingToReset") {
+        toast("현재 리셋할 사용량 제한이 없습니다.", true);
+      } else {
+        toast(`Codex 리셋 결과: ${outcome}`, true);
+      }
+    } catch (e) { toast(`Codex 리셋 실패: ${e}`, true); }
+    await loadCodexResetCredits();
   });
   return b;
+}
+async function loadCodexResetCredits() {
+  try { codexResetCredits = await invoke("codex_reset_credits"); }
+  catch { codexResetCredits = null; }
+  updateGlobalUsageUi();
 }
 async function refreshCodexUsageFromBadge(event) {
   event.stopPropagation();
   await loadCodexLimits();
+  await loadCodexResetCredits();
   toast("CX 사용량을 새로고침했습니다.");
 }
 function updateGlobalUsageUi() {
@@ -3438,7 +3476,8 @@ function updateGlobalUsageUi() {
     tool.addEventListener("click", refreshCodexUsageFromBadge);
     el.appendChild(tool);
     if (cxResetAt && now - cxResetAt < RESET_N_MS) el.appendChild(resetNBadge());
-    el.appendChild(codexResetBadge());
+    const resetBadge = codexResetBadge();
+    if (resetBadge) el.appendChild(resetBadge);
     // Age of the underlying snapshot (real wall-clock), not the poll time.
     const cxAgeMs = codexLimits.snapshotAt != null ? Date.now() - codexLimits.snapshotAt : null;
     const cxStale = cxAgeMs != null && cxAgeMs > CODEX_STALE_MS;
@@ -3686,6 +3725,8 @@ function initCtxUsage() {
   setInterval(loadCodexModelSetting, 60_000);
   loadCodexLimits();
   setInterval(loadCodexLimits, 5_000);
+  loadCodexResetCredits();
+  setInterval(loadCodexResetCredits, 60_000);
   loadClaudeUsageApi();
   setInterval(loadClaudeUsageApi, 60_000);
   // Staleness sweep: dim badges whose statusline stopped redrawing (Claude
@@ -4389,6 +4430,79 @@ function flipSplitDirection() {
   c.classList.toggle("vertical", toVertical);
   refitAllPanes();
   saveSessionNow();
+}
+
+// Make every matching split container in the active tab evenly sized. Splits
+// are a nested binary tree ([A, [B, C]] for three columns), so a plain
+// flex:1 per child would give A half and B/C a quarter each. Instead each
+// child is weighted by how many leaf pane "tracks" it spans along the
+// equalized axis, which makes every track come out the same size while
+// perpendicular splits (each column's own stack) stay independent.
+function equalizeActiveTabSplits(direction) {
+  const tab = activeTabIdx == null ? null : tabs.get(activeTabIdx);
+  const root = tab && tab.rootEl;
+  if (!root || !root.classList) {
+    toast("No active session tab / 활성 세션 탭이 없습니다.", true);
+    return 0;
+  }
+
+  const wantedDirection = direction === "vertical" ? "column" : "row";
+
+  // Leaf tracks an element spans along the equalized axis: same-direction
+  // containers add their children up, perpendicular containers are as wide
+  // (tall) as their widest child, and a leaf pane is a single track.
+  const countTracks = (el) => {
+    if (!el.classList || !el.classList.contains("pane-container")) return 1;
+    const kids = [...el.children].filter((c) => !c.classList.contains("pane-divider"));
+    if (!kids.length) return 1;
+    const counts = kids.map(countTracks);
+    return getComputedStyle(el).flexDirection === wantedDirection
+      ? counts.reduce((a, b) => a + b, 0)
+      : Math.max(...counts);
+  };
+
+  const containers = [];
+  const allContainers = [root, ...root.querySelectorAll(".pane-container")];
+  for (const container of allContainers) {
+    if (getComputedStyle(container).flexDirection === wantedDirection) containers.push(container);
+  }
+
+  let changed = 0;
+  const row = wantedDirection === "row";
+  for (const container of containers) {
+    const children = [...container.children].filter((child) => !child.classList.contains("pane-divider"));
+    if (children.length < 2) continue;
+    children.forEach((child) => {
+      // Zero-basis flex so intrinsic terminal/content size cannot push the
+      // split off its target ratio; grow by spanned track count (see above).
+      child.style.flex = `${countTracks(child)} 1 0px`;
+      if (row) {
+        child.style.minWidth = "0";
+        child.style.width = "0";
+        child.style.maxWidth = "none";
+      } else {
+        child.style.minHeight = "0";
+        child.style.height = "0";
+        child.style.maxHeight = "none";
+      }
+    });
+    changed++;
+  }
+
+  if (!changed) {
+    const label = direction === "vertical" ? "vertical split / 세로 분할" : "horizontal split / 가로 분할";
+    toast(`No matching ${label} found / 일치하는 분할이 없습니다.`, true);
+    return 0;
+  }
+
+  clearPaneZoom();
+  refitAllPanes();
+  requestAnimationFrame(() => refitAllPanes());
+  saveSessionNow();
+  toast(direction === "vertical"
+    ? "Vertical split heights equalized / 세로 분할 높이를 동일하게 맞췄습니다."
+    : "Horizontal split widths equalized / 가로 분할 너비를 동일하게 맞췄습니다.");
+  return changed;
 }
 
 function closePane(ptyId) {
@@ -6103,6 +6217,91 @@ function addTab(tabIdx, label) {
   else terminalTabs.appendChild(tab);
 }
 
+// Ask before reconnecting saved sessions so an update/restart never silently
+// reopens terminals the user no longer wants. The saved data remains intact
+// when the user chooses a fresh start and can be offered again next launch.
+async function promptRestorePreviousSession() {
+  let saved = null;
+  try { saved = await invoke("session_load"); } catch (e) { console.error("session_load failed", e); }
+  if (!saved || !Array.isArray(saved.tabs) || saved.tabs.length === 0) return false;
+
+  const modal = document.getElementById("restore-session-modal");
+  const yes = document.getElementById("restore-session-yes");
+  const no = document.getElementById("restore-session-no");
+  const close = document.getElementById("restore-session-close");
+  if (!modal || !yes || !no) return true;
+  return new Promise((resolve) => {
+    const finish = (restore) => {
+      modal.classList.add("hidden");
+      yes.removeEventListener("click", onYes);
+      no.removeEventListener("click", onNo);
+      close?.removeEventListener("click", onNo);
+      modal.removeEventListener("click", onBackdrop);
+      modal.removeEventListener("keydown", onKey);
+      resolve(restore);
+    };
+    const onYes = () => finish(true);
+    const onNo = () => finish(false);
+    const onBackdrop = (e) => { if (e.target === modal) onNo(); };
+    const onKey = (e) => { if (e.key === "Escape") onNo(); };
+    yes.addEventListener("click", onYes);
+    no.addEventListener("click", onNo);
+    close?.addEventListener("click", onNo);
+    modal.addEventListener("click", onBackdrop);
+    modal.addEventListener("keydown", onKey);
+    modal.classList.remove("hidden");
+    yes.focus();
+  }).then((restore) => restore ? restoreSession() : false);
+}
+
+// Post-update changelog: on the first launch of a new version, show what
+// changed. The notes are stashed in localStorage by the update button right
+// before installing (the updater manifest is no longer queryable once we ARE
+// the latest version). A fresh install — no last-run version and an empty
+// localStorage — stays silent.
+async function maybeShowWhatsNew() {
+  let current = null;
+  try { current = await window.__TAURI__.app.getVersion(); } catch {}
+  if (!current) return;
+
+  const LAST_KEY = "mymuxLastRunVersion";
+  const NOTES_KEY = "mymuxPendingUpdateNotes";
+  let last = null, pending = null, storeCount = 0;
+  try {
+    last = localStorage.getItem(LAST_KEY);
+    storeCount = localStorage.length;
+    pending = JSON.parse(localStorage.getItem(NOTES_KEY) || "null");
+    localStorage.setItem(LAST_KEY, current);
+    localStorage.removeItem(NOTES_KEY);
+  } catch {}
+
+  if (last === current) return; // same version as last run
+  // No recorded version yet: an existing profile (any stored state) means we
+  // just updated from a build that predates this tracking — still announce.
+  if (!last && storeCount === 0) return;
+
+  const modal = document.getElementById("whatsnew-modal");
+  if (!modal) return;
+  const versionEl = document.getElementById("whatsnew-version");
+  const notesEl = document.getElementById("whatsnew-notes");
+  if (versionEl) versionEl.textContent = `v${current} 업데이트가 완료되었습니다.`;
+  if (notesEl) {
+    notesEl.textContent = pending && pending.version === current && pending.body
+      ? String(pending.body)
+      : "세션 레이아웃과 안정성 개선, 사용성 업데이트가 포함되어 있습니다.";
+  }
+
+  const ok = document.getElementById("whatsnew-ok");
+  const close = document.getElementById("whatsnew-close");
+  const hide = () => modal.classList.add("hidden");
+  ok?.addEventListener("click", hide);
+  close?.addEventListener("click", hide);
+  modal.addEventListener("click", (e) => { if (e.target === modal) hide(); });
+  modal.addEventListener("keydown", (e) => { if (e.key === "Escape") hide(); });
+  modal.classList.remove("hidden");
+  ok?.focus();
+}
+
 function requestCloseTab(tabIdx) {
   const tabInfo = tabs.get(tabIdx);
   if (!tabInfo) return;
@@ -6364,6 +6563,7 @@ function setPaneCwd(ptyId, path) {
   const t = terminals.get(ptyId);
   if (!t) return;
   t.cwd = path || null;
+  if (t.session) t.session.cwd = path || null;
   const el = t.paneEl && t.paneEl.querySelector(".pane-cwd");
   if (el) {
     const lbl = t.paneEl.querySelector(".pane-label");
@@ -6373,6 +6573,7 @@ function setPaneCwd(ptyId, path) {
     el.textContent = cwdLabel === labelText ? "" : cwdLabel;
     el.title = path || "";
   }
+  saveSessionNow();
 }
 
 // Reorder a session within its own tab's panes — changes the session-list order
@@ -6911,6 +7112,29 @@ function focusSession(ptyId) {
     setFocusedPane(ptyId);
   }
   terminals.get(ptyId)?.term.focus();
+  showExplorerForSession(ptyId);
+}
+
+function showExplorerForSession(ptyId) {
+  const t = terminals.get(ptyId);
+  if (!t) return;
+  if (t.type === "ssh") {
+    if (t.sftpId == null) return; // no SFTP channel for this SSH session
+    // Already browsing this server: keep the user's current remote spot.
+    if (currentSftpId === t.sftpId) return;
+    if (t.cwd) explorerGo(t.cwd, t.sftpId);
+    else {
+      // Remote cwd isn't tracked — land on the server's home directory.
+      invoke("sftp_home_dir", { sessionId: t.sftpId })
+        .then((home) => explorerGo(home, t.sftpId))
+        .catch(() => explorerGo("/", t.sftpId));
+    }
+  } else {
+    if (!t.cwd) return;
+    // Skip the refetch when the explorer is already on this local folder.
+    if (currentSftpId == null && currentExplorerPath === t.cwd) return;
+    explorerGo(t.cwd, null);
+  }
 }
 
 // Inline-rename a session (pane). WebView2 has no window.prompt, so edit in place.
@@ -7890,15 +8114,9 @@ function hideAutocomplete() {
 // ═══════════════════════════════════════════════
 
 function syncExplorerOnCd(input, ptyId) {
-  // Only sync if local terminal and local explorer mode
-  if (currentSftpId) return;
   const tInfo = terminals.get(ptyId);
   if (!tInfo || tInfo.type === "ssh") return;
-
-  // Only sync when there's a single pane in the active tab
-  if (activeTabIdx == null) return;
-  const tab = tabs.get(activeTabIdx);
-  if (!tab || tab.panes.length !== 1) return;
+  const baseCwd = tInfo.cwd || currentExplorerPath;
 
   let targetPath = null;
 
@@ -7916,7 +8134,7 @@ function syncExplorerOnCd(input, ptyId) {
 
   // Detect: cd .. or cd .
   if (input === "cd ..") {
-    const parent = currentExplorerPath.replace(/[\\/]+$/, "");
+    const parent = baseCwd.replace(/[\\/]+$/, "");
     const idx = Math.max(parent.lastIndexOf("\\"), parent.lastIndexOf("/"));
     if (idx > 0) targetPath = parent.substring(0, idx);
     else if (idx === 0) targetPath = "/";
@@ -7926,7 +8144,7 @@ function syncExplorerOnCd(input, ptyId) {
   if (input === "cd" || input === "cd ~" || input === "cd $HOME" || input === "cd %USERPROFILE%") {
     // Go home
     invoke("explorer_home_dir").then((home) => {
-      explorerGo(home);
+      explorerGo(home, null);
       setPaneCwd(ptyId, home);
     });
     return;
@@ -7937,7 +8155,7 @@ function syncExplorerOnCd(input, ptyId) {
   // Resolve relative paths
   if (!targetPath.match(/^[a-zA-Z]:/) && !targetPath.startsWith("/") && !targetPath.startsWith("\\")) {
     // Relative path — join with current explorer path
-    targetPath = currentExplorerPath.replace(/[\\/]+$/, "") + "\\" + targetPath;
+    targetPath = baseCwd.replace(/[\\/]+$/, "") + "\\" + targetPath;
   }
 
   // Normalize
@@ -7971,15 +8189,26 @@ window.addEventListener("DOMContentLoaded", () => {
     const btn = document.getElementById("btn-update");
     if (!btn) return;
 
-    let newVersion = null;
+    let updateInfo = null;
     try {
-      newVersion = await inv("update_check");
+      updateInfo = await inv("update_check");
     } catch (err) {
       // Network/endpoint errors are non-fatal — just stay hidden.
       console.warn("update_check failed:", err);
       return;
     }
-    if (!newVersion) return; // already up to date
+    if (!updateInfo) return; // already up to date
+
+    // Older backends return only a version string; newer ones may also return
+    // release notes from the updater manifest.
+    const newVersion = typeof updateInfo === "string" ? updateInfo : updateInfo.version;
+    const releaseNotes = typeof updateInfo === "object" && updateInfo.body
+      ? String(updateInfo.body)
+      : "세션 레이아웃과 안정성 개선, 사용성 업데이트가 포함되어 있습니다.";
+    const versionEl = document.getElementById("update-modal-version");
+    const notesEl = document.getElementById("update-modal-notes");
+    if (versionEl) versionEl.textContent = `새 버전: v${newVersion}`;
+    if (notesEl) notesEl.textContent = releaseNotes;
 
     btn.title = `New version ${newVersion} — click to update`;
     btn.classList.remove("hidden");
@@ -7990,6 +8219,12 @@ window.addEventListener("DOMContentLoaded", () => {
       const original = btn.textContent;
       btn.textContent = "Updating…";
       try {
+        // Remember what this update ships so the relaunched (new) version can
+        // show the release notes in the post-update "수정사항" modal.
+        try {
+          localStorage.setItem("mymuxPendingUpdateNotes",
+            JSON.stringify({ version: newVersion, body: releaseNotes }));
+        } catch {}
         // Downloads, installs, and relaunches into the new version.
         await inv("update_install");
       } catch (err) {
@@ -8003,6 +8238,7 @@ window.addEventListener("DOMContentLoaded", () => {
     const modal = document.getElementById("update-modal");
     const modalOk = document.getElementById("update-modal-ok");
     const modalCancel = document.getElementById("update-modal-cancel");
+    const modalClose = document.getElementById("update-modal-close");
     const closeUpdateModal = () => {
       if (modal) modal.classList.add("hidden");
       // Restore the native browser overlay only if we're still on the browser view.
@@ -8010,6 +8246,7 @@ window.addEventListener("DOMContentLoaded", () => {
     };
     if (modalOk) modalOk.addEventListener("click", () => { closeUpdateModal(); runInstall(); });
     if (modalCancel) modalCancel.addEventListener("click", closeUpdateModal);
+    if (modalClose) modalClose.addEventListener("click", closeUpdateModal);
     if (modal) {
       modal.addEventListener("click", (e) => { if (e.target === modal) closeUpdateModal(); });
       modal.addEventListener("keydown", (e) => { if (e.key === "Escape") closeUpdateModal(); });
@@ -8018,7 +8255,13 @@ window.addEventListener("DOMContentLoaded", () => {
     btn.addEventListener("click", () => {
       if (btn.disabled) return;
       // With open sessions, confirm first — updating closes every session.
-      if (terminals.size > 0 && modal) {
+      if (modal) {
+        const warning = modal.querySelector(".update-session-warning");
+        if (warning) {
+          warning.textContent = terminals.size > 0
+            ? "업데이트를 진행하면 열려 있는 모든 세션(창)이 닫히고 앱이 재시작됩니다. 계속하시겠습니까?"
+            : "업데이트를 진행하면 앱이 재시작됩니다. 계속하시겠습니까?";
+        }
         // The native browser overlay floats above all HTML; hide it so the modal shows.
         if (browserTabActive && browserMode === "native") invoke("browser_pane_hide").catch(() => {});
         modal.classList.remove("hidden");

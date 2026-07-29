@@ -32,6 +32,8 @@ fn main() {
             commands::read_text_file,
             commands::write_text_file,
             commands::codex_rollout_tail,
+            commands::codex_reset_credits,
+            commands::codex_consume_reset_credit,
             commands::claude_account_usage,
             commands::open_external,
             commands::window_attention,

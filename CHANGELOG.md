@@ -8,6 +8,53 @@ For installers, see the [GitHub Releases](https://github.com/ChoiGyber/Mymux/rel
 
 ---
 
+## v0.1.44 — 2026-07-29
+
+### Added / 새 기능
+- **Equalize split sizes.** Two new toolbar buttons make every column the same
+  width and every pane in each column the same height. Nested splits are
+  weighted by pane count, so three or more columns come out truly even, and
+  each column's stack is equalized independently.
+- **분할 크기 균등화.** 툴바의 새 버튼 두 개로 모든 세로줄(컬럼)의 너비를
+  똑같이, 그리고 각 세로줄 안의 패인 높이를 똑같이 맞춥니다. 중첩 분할도
+  패인 수 기준으로 가중치를 줘서 3열 이상도 정확히 균등해지고, 세로줄마다
+  독립적으로 높이가 정리됩니다.
+- **Post-update changelog modal.** After an update, the first launch of the new
+  version shows a "What's new / 수정사항" modal with the release notes. The
+  pre-update confirmation now also shows the incoming version and notes.
+- **업데이트 후 수정사항 모달.** 업데이트가 끝나고 새 버전을 처음 실행하면
+  수정사항 모달로 변경 내용을 보여줍니다. 업데이트 전 확인 창에도 새 버전과
+  릴리즈 노트가 표시됩니다.
+- **Session restore prompt.** On launch, Mymux now asks whether to reopen the
+  previous session layout ("복원하기") or start fresh ("새로 시작") instead of
+  silently reconnecting everything.
+- **이전 세션 복원 선택.** 시작 시 이전 세션 구성을 복원할지 새로 시작할지
+  물어봅니다. 조용히 전부 다시 여는 대신 선택할 수 있습니다.
+- **Codex reset credits.** The CX badge's `R-n` counter now shows your actual
+  available Codex rate-limit reset credits (read via `codex app-server`), and
+  clicking it consumes one credit after confirmation.
+- **Codex 리셋권.** CX 배지의 `R-n`이 실제 사용 가능한 Codex 리셋권 개수를
+  표시하고, 클릭하면 확인 후 리셋권 1개를 사용합니다.
+- **Explorer follows the focused session.** Clicking a session focuses the
+  explorer on that pane's working directory (SSH sessions jump to their SFTP
+  path), and `cd` sync now works with multiple panes open.
+- **탐색기가 포커스된 세션을 따라갑니다.** 세션을 클릭하면 그 패인의 작업
+  디렉토리(SSH는 SFTP 경로)로 탐색기가 이동하고, 패인이 여러 개여도 `cd`
+  동기화가 동작합니다.
+- **SFTP drop-upload confirmation.** Dropping files onto a remote explorer now
+  confirms the target and file list before uploading, and unsafe file names are
+  rejected server-side.
+- **SFTP 드롭 업로드 확인.** 원격 탐색기에 파일을 끌어다 놓으면 업로드 전에
+  대상과 파일 목록을 확인하며, 위험한 파일 이름은 업로드하지 않습니다.
+
+### Fixed / 버그 수정
+- **Uniform toolbar icon heights.** The bell (notification settings) and other
+  icon buttons now share one fixed height with the text buttons.
+- **툴바 아이콘 높이 통일.** 알림 설정(종) 아이콘 등 툴바 버튼들의 높이가
+  텍스트 버튼과 똑같이 맞춰졌습니다.
+
+---
+
 ## v0.1.43 — 2026-07-29
 
 ### Added

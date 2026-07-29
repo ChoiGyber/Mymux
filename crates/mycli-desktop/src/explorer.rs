@@ -485,6 +485,7 @@ pub fn sftp_upload_path(
             .ok_or("Invalid local path")?
             .to_string_lossy()
             .to_string();
+        validate_upload_name(&name)?;
         let remote_path = remote_join(&remote_dir, &name);
         upload_local_entry(&session.sftp, &source, &remote_path, metadata.is_dir()).await
     })
@@ -497,6 +498,13 @@ fn remote_join(dir: &str, name: &str) -> String {
     } else {
         format!("{base}/{name}")
     }
+}
+
+fn validate_upload_name(name: &str) -> Result<(), String> {
+    if name.is_empty() || name == "." || name == ".." || name.contains('/') || name.contains('\\') {
+        return Err(format!("Unsafe upload name rejected: {name:?}"));
+    }
+    Ok(())
 }
 
 fn upload_local_entry<'a>(

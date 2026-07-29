@@ -33,6 +33,8 @@
       <button id="btn-track-inc" title="Wider letter spacing">A B</button>
       <button id="btn-split-h" title="Split focused pane horizontally (Ctrl+Shift+D)">&#8596;</button>
       <button id="btn-split-v" title="Split focused pane vertically (Ctrl+Shift+E)">&#8597;</button>
+      <button id="btn-equal-width" aria-label="Equalize widths / 가로 분할 너비 동일하게" title="Equalize widths in horizontal splits / 가로 분할 너비 동일하게"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="5" width="5" height="14" rx="1"/><rect x="10" y="5" width="5" height="14" rx="1"/><rect x="17" y="5" width="4" height="14" rx="1"/></svg></button>
+      <button id="btn-equal-height" aria-label="Equalize heights / 세로 분할 높이 동일하게" title="Equalize heights in vertical splits / 세로 분할 높이 동일하게"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="5" y="3" width="14" height="5" rx="1"/><rect x="5" y="10" width="14" height="5" rx="1"/><rect x="5" y="17" width="14" height="4" rx="1"/></svg></button>
       <button id="btn-broadcast" title="Broadcast typing to every pane in this tab (Ctrl+Shift+B)">&#8649;</button>
       <button id="btn-shortcuts" title="Keyboard shortcuts / 단축키 안내">&#9000; Keys</button>
       <span id="accent-swatches" title="Accent color">
@@ -469,11 +471,39 @@
   <!-- Update confirmation: warn that all open sessions will close -->
   <div id="update-modal" class="hidden">
     <div class="modal-box">
+      <button id="update-modal-close" class="modal-close" type="button" aria-label="Close">×</button>
       <h2>Update</h2>
-      <p>업데이트를 진행하면 열려 있는 모든 세션(창)이 닫히고 앱이 재시작됩니다.<br />계속하시겠습니까?</p>
+      <p id="update-modal-version"></p>
+      <div id="update-modal-notes" class="update-notes"></div>
+      <p class="update-session-warning">업데이트를 진행하면 앱이 재시작됩니다. 계속하시겠습니까?</p>
       <div class="modal-actions">
         <button id="update-modal-cancel" class="secondary">취소</button>
         <button id="update-modal-ok">업데이트</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Post-update changelog: shown once on first launch of a new version -->
+  <div id="whatsnew-modal" class="hidden">
+    <div class="modal-box">
+      <button id="whatsnew-close" class="modal-close" type="button" aria-label="Close">×</button>
+      <h2>업데이트 완료 — 수정사항</h2>
+      <p id="whatsnew-version"></p>
+      <div id="whatsnew-notes" class="update-notes"></div>
+      <div class="modal-actions">
+        <button id="whatsnew-ok">확인</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="restore-session-modal" class="hidden">
+    <div class="modal-box">
+      <button id="restore-session-close" class="modal-close" type="button" aria-label="Close">×</button>
+      <h2>이전 세션 복원</h2>
+      <p>이전에 접속했던 세션과 창 구성을 다시 열까요?</p>
+      <div class="modal-actions">
+        <button id="restore-session-no" class="secondary">새로 시작</button>
+        <button id="restore-session-yes">복원하기</button>
       </div>
     </div>
   </div>

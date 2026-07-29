@@ -178,6 +178,14 @@ header h1 .byline {
 #usage-global .usage-div { opacity: 0.3; }
 #usage-global .usage-age { opacity: 0.5; font-size: 0.85em; margin-left: 2px; font-style: italic; }
 #toolbar-actions button {
+  /* One fixed height for every toolbar button: text glyphs, <sup> markers and
+     SVG icons all produce different natural line boxes, so without this the
+     bell (SVG) button renders shorter than its neighbours. */
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 26px;
+  box-sizing: border-box;
   padding: 4px 10px;
   border: 1px solid var(--border);
   border-radius: var(--radius);
@@ -187,6 +195,8 @@ header h1 .byline {
   cursor: pointer;
   transition: all 0.12s;
 }
+/* Keep superscripts (A⁺ font buttons) visually raised inside the flex row. */
+#toolbar-actions button sup { align-self: flex-start; line-height: 1; }
 #toolbar-actions #btn-notify-settings svg { display: block; }
 
 /* Alias badge on saved commands (Commands panel + autocomplete popup) */
@@ -1502,7 +1512,7 @@ html[data-theme="light"] #toolbar-actions #btn-update:hover {
 .cmd-item.is-fav { border-left: 2px solid var(--accent); }
 
 /* Generic centered modal (close prompt, ssh password prompt) */
-#close-modal, #sshpw-modal, #ssh-modal, #update-modal, #notify-modal, #replay-modal {
+#close-modal, #sshpw-modal, #ssh-modal, #update-modal, #whatsnew-modal, #restore-session-modal, #notify-modal, #replay-modal {
   position: fixed;
   inset: 0;
   background: rgba(0, 0, 0, 0.55);
@@ -1512,6 +1522,7 @@ html[data-theme="light"] #toolbar-actions #btn-update:hover {
   z-index: 2000;
 }
 .modal-box {
+  position: relative;
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--radius);
@@ -1519,6 +1530,31 @@ html[data-theme="light"] #toolbar-actions #btn-update:hover {
   width: 400px;
   max-width: 90%;
   box-shadow: 0 12px 40px rgba(0, 0, 0, 0.4);
+}
+.modal-close {
+  position: absolute;
+  top: 8px;
+  right: 10px;
+  border: 0;
+  background: transparent;
+  color: var(--text-dim);
+  font-size: 22px;
+  line-height: 1;
+  cursor: pointer;
+}
+.modal-close:hover { color: var(--text); }
+.update-notes {
+  max-height: 180px;
+  overflow: auto;
+  margin: 0 0 16px;
+  padding: 9px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg);
+  color: var(--text-dim);
+  font-size: 12px;
+  line-height: 1.6;
+  white-space: pre-wrap;
 }
 .modal-box h2 { font-size: 15px; margin-bottom: 10px; color: var(--text); }
 .modal-box p { font-size: 13px; color: var(--text-dim); margin-bottom: 14px; line-height: 1.6; }
@@ -2730,3 +2766,10 @@ html[data-theme="light"] .xterm-viewport::-webkit-scrollbar-thumb:hover { backgr
 ::-webkit-scrollbar { width: 6px; }
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+#btn-shortcuts { order: 100; }
+.toolbar-font-picker { order: 101; }
+#accent-swatches { order: 102; }
+#btn-theme { order: 103; }
+#default-shell { order: 104; }
+#btn-new-terminal { order: 105; }
+#btn-ssh { order: 106; }

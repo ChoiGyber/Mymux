@@ -1,5 +1,8 @@
 use mycli_core::{CommandStore, SavedCommand};
 use serde::Serialize;
+use serde_json::Value;
+use std::io::{BufRead, BufReader, Write};
+use std::process::{Child, ChildStdin, Command, Stdio};
 
 #[derive(Serialize)]
 pub struct CommandDto {
@@ -299,6 +302,117 @@ pub fn codex_rollout_tail(max_bytes: Option<u64>) -> Result<String, String> {
     let mut buf = Vec::new();
     f.read_to_end(&mut buf).map_err(|e| e.to_string())?;
     Ok(String::from_utf8_lossy(&buf).to_string())
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CodexResetCredits {
+    pub available_count: u64,
+    pub credits: Vec<CodexResetCredit>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CodexResetCredit {
+    pub id: Option<String>,
+    pub title: Option<String>,
+    pub description: Option<String>,
+    pub expires_at: Option<i64>,
+}
+
+fn app_server_request(
+    _child: &mut Child,
+    stdin: &mut ChildStdin,
+    reader: &mut BufReader<std::process::ChildStdout>,
+    id: u64,
+    method: &str,
+    params: Option<Value>,
+) -> Result<Value, String> {
+    let request = serde_json::json!({
+        "method": method,
+        "id": id,
+        "params": params.unwrap_or_else(|| serde_json::json!({})),
+    });
+    writeln!(stdin, "{}", request).map_err(|e| format!("Codex app-server write failed: {e}"))?;
+    stdin.flush().map_err(|e| format!("Codex app-server flush failed: {e}"))?;
+    let mut line = String::new();
+    loop {
+        line.clear();
+        let n = reader.read_line(&mut line).map_err(|e| format!("Codex app-server read failed: {e}"))?;
+        if n == 0 { return Err("Codex app-server closed before replying".to_string()); }
+        let value: Value = match serde_json::from_str(line.trim()) {
+            Ok(v) => v,
+            Err(_) => continue,
+        };
+        if value.get("id").and_then(Value::as_u64) != Some(id) { continue; }
+        if let Some(error) = value.get("error") { return Err(format!("Codex app-server error: {error}")); }
+        return Ok(value.get("result").cloned().unwrap_or(Value::Null));
+    }
+}
+
+fn start_codex_app_server() -> Result<(Child, ChildStdin, BufReader<std::process::ChildStdout>), String> {
+    let mut child = Command::new("codex")
+        .args(["app-server", "--stdio"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .map_err(|e| format!("Cannot start Codex app-server: {e}"))?;
+    let stdin = child.stdin.take().ok_or("Codex app-server stdin unavailable")?;
+    let stdout = child.stdout.take().ok_or("Codex app-server stdout unavailable")?;
+    Ok((child, stdin, BufReader::new(stdout)))
+}
+
+fn initialize_codex_app_server(
+    child: &mut Child,
+    stdin: &mut ChildStdin,
+    reader: &mut BufReader<std::process::ChildStdout>,
+) -> Result<(), String> {
+    app_server_request(child, stdin, reader, 1, "initialize", Some(serde_json::json!({
+        "clientInfo": { "name": "mymux", "title": "Mymux", "version": env!("CARGO_PKG_VERSION") },
+        "capabilities": { "experimentalApi": true }
+    })))?;
+    writeln!(stdin, "{}", serde_json::json!({"method":"initialized","params":{}}))
+        .map_err(|e| format!("Codex app-server initialized failed: {e}"))?;
+    stdin.flush().map_err(|e| format!("Codex app-server flush failed: {e}"))?;
+    Ok(())
+}
+
+#[tauri::command]
+pub fn codex_reset_credits() -> Result<CodexResetCredits, String> {
+    let (mut child, mut stdin, mut reader) = start_codex_app_server()?;
+    let result = (|| {
+        initialize_codex_app_server(&mut child, &mut stdin, &mut reader)?;
+        let result = app_server_request(&mut child, &mut stdin, &mut reader, 2, "account/rateLimits/read", None)?;
+        let credits = result.get("rateLimitResetCredits");
+        let rows = credits.and_then(|v| v.get("credits")).and_then(Value::as_array)
+            .map(|items| items.iter().map(|item| CodexResetCredit {
+                id: item.get("id").and_then(Value::as_str).map(str::to_string),
+                title: item.get("title").and_then(Value::as_str).map(str::to_string),
+                description: item.get("description").and_then(Value::as_str).map(str::to_string),
+                expires_at: item.get("expiresAt").and_then(Value::as_i64),
+            }).collect()).unwrap_or_default();
+        Ok(CodexResetCredits {
+            available_count: credits.and_then(|v| v.get("availableCount")).and_then(Value::as_u64).unwrap_or(0),
+            credits: rows,
+        })
+    })();
+    let _ = child.kill();
+    result
+}
+
+#[tauri::command]
+pub fn codex_consume_reset_credit(credit_id: Option<String>) -> Result<String, String> {
+    let (mut child, mut stdin, mut reader) = start_codex_app_server()?;
+    let result = (|| {
+        initialize_codex_app_server(&mut child, &mut stdin, &mut reader)?;
+        let mut params = serde_json::json!({ "idempotencyKey": uuid::Uuid::new_v4().to_string() });
+        if let Some(id) = credit_id.filter(|s| !s.trim().is_empty()) { params["creditId"] = Value::String(id); }
+        let result = app_server_request(&mut child, &mut stdin, &mut reader, 3, "account/rateLimitResetCredit/consume", Some(params))?;
+        Ok(result.get("outcome").and_then(Value::as_str).unwrap_or("unknown").to_string())
+    })();
+    let _ = child.kill();
+    result
 }
 
 /// Account-wide Claude usage (5-hour + weekly rate-limit utilization) fetched
