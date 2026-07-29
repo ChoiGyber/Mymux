@@ -8,6 +8,17 @@ For installers, see the [GitHub Releases](https://github.com/ChoiGyber/Mymux/rel
 
 ---
 
+## v0.1.46 — 2026-07-30
+
+### Fixed
+- **Hidden Codex background checks on Windows.** The periodic Codex app-server
+  usage check no longer opens a console window or steals terminal input.
+- **SFTP upload verification.** The release includes the loopback SFTP E2E
+  coverage for password authentication, exact content, no-overwrite publishing,
+  and cleanup after failed uploads.
+
+---
+
 ## v0.1.45 — 2026-07-30
 
 ### Added

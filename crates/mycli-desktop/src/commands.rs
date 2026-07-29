@@ -532,11 +532,22 @@ fn app_server_request(
 }
 
 fn start_codex_app_server() -> Result<(Child, ChildStdin, BufReader<std::process::ChildStdout>), String> {
-    let mut child = Command::new("codex")
+    let mut command = Command::new("codex");
+    command
         .args(["app-server", "--stdio"])
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
-        .stderr(Stdio::null())
+        .stderr(Stdio::null());
+
+    // CREATE_NO_WINDOW prevents the periodically polled app-server process
+    // from flashing a console window and interrupting terminal input.
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        command.creation_flags(0x0800_0000);
+    }
+
+    let mut child = command
         .spawn()
         .map_err(|e| format!("Cannot start Codex app-server: {e}"))?;
     let stdin = child.stdin.take().ok_or("Codex app-server stdin unavailable")?;
