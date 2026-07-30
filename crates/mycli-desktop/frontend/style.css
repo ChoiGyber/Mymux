@@ -914,6 +914,10 @@ html[data-theme="light"] #toolbar-actions #btn-update:hover {
   outline: 1px dashed var(--accent);
   outline-offset: -2px;
 }
+.voice-popover { position:fixed; z-index:50; right:12px; top:48px; width:280px; padding:12px; background:var(--panel-bg,#1e232b); border:1px solid var(--border); border-radius:8px; box-shadow:0 8px 25px #0008; display:grid; gap:8px; font-size:12px; }
+.voice-popover.hidden { display:none; }
+.voice-popover label { display:grid; gap:3px; }
+.voice-popover input,.voice-popover select { min-width:0; background:var(--input-bg,#11151b); color:var(--text); border:1px solid var(--border); padding:4px; }
 .pane-leaf.file-drop-active {
   border-color: var(--accent);
   box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--accent) 55%, transparent);

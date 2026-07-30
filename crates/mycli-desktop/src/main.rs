@@ -7,6 +7,7 @@ mod session;
 mod terminal;
 mod tools;
 mod update;
+mod voice;
 
 use browser::BrowserManager;
 use explorer::ExplorerManager;
@@ -91,6 +92,9 @@ fn main() {
             update::update_check,
             update::update_install,
             tools::tool_installed,
+            voice::voice_store_deepgram_key,
+            voice::voice_deepgram_token,
+            voice::voice_transcribe_local,
         ])
         .setup(|_app| {
             #[cfg(debug_assertions)]

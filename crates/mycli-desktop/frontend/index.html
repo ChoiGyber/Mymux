@@ -15,6 +15,7 @@
     <!-- Account-wide usage (Claude 5h/wk rate limits + Codex plan window) -->
     <span id="usage-global"></span>
     <div id="toolbar-actions">
+<button id="btn-voice-input" title="Voice input (hold Ctrl+Space)" aria-label="Voice input (hold Ctrl+Space)">🎙</button>
       <button id="btn-update" class="hidden" title="A new version is available — click to update">⬆ Update</button>
       <button id="btn-notify-settings" title="Task-done flash settings / 작업 완료 알림 설정"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.7 21a2 2 0 0 1-3.4 0"/></svg></button>
       <button id="btn-toggle-browser" title="Show / hide the browser tab">🌐</button>
@@ -53,6 +54,7 @@
     </div>
   </header>
 
+  <div id="voice-popover" class="voice-popover hidden" role="dialog" aria-label="Voice input settings"><label>Provider <select id="voice-provider"><option value="deepgram">Deepgram cloud</option><option value="faster-whisper">Local faster-whisper</option></select></label><label id="voice-key-row">Deepgram API key <input id="voice-api-key" type="password" autocomplete="off"></label><button id="voice-save-key" type="button">Save encrypted key</button><label id="voice-command-row" class="hidden">Whisper command <input id="voice-command" placeholder="python faster_whisper_cli.py"></label><button id="voice-record" type="button">Hold to talk</button><span id="voice-status" aria-live="polite"></span></div>
   <div id="main-layout">
     <!-- ── Sidebar ── -->
     <aside id="sidebar">

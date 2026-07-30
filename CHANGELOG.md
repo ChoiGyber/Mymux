@@ -1127,3 +1127,8 @@ For installers, see the [GitHub Releases](https://github.com/ChoiGyber/Mymux/rel
 See the commit history and [GitHub Releases](https://github.com/ChoiGyber/Mymux/releases)
 for v0.1.8 and earlier.
 v0.1.8 이하의 변경 내역은 커밋 기록과 GitHub Releases를 참고하세요.
+## v0.1.47 — 2026-07-30
+
+- Add selectable Deepgram and local faster-whisper voice input.
+- Store Deepgram API keys with Windows DPAPI and use short-lived tokens.
+- Add microphone icon and Ctrl+Space push-to-talk input.

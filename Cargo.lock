@@ -3109,7 +3109,7 @@ dependencies = [
 
 [[package]]
 name = "mycli-desktop"
-version = "0.1.46"
+version = "0.1.47"
 dependencies = [
  "async-trait",
  "cap-fs-ext",
@@ -6240,6 +6240,7 @@ dependencies = [
  "libc",
  "mio",
  "pin-project-lite",
+ "signal-hook-registry",
  "socket2",
  "tokio-macros",
  "windows-sys 0.61.2",
