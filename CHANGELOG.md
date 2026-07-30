@@ -8,6 +8,27 @@ For installers, see the [GitHub Releases](https://github.com/ChoiGyber/Mymux/rel
 
 ---
 
+## v0.1.49 — 2026-07-30
+
+### Fixed
+- **Session-list usage shows the percentage only.** The sidebar session pill
+  again shows just the context usage percentage; the full "model | reasoning |
+  usage" readout stays in the hover tooltip and the pane's top-right badge.
+- **세션 목록 사용량은 퍼센트만 표시.** 사이드바 세션 pill이 다시 컨텍스트 사용량
+  퍼센트만 보여줍니다. 전체 "모델 | 추론 | 사용량"은 hover 툴팁과 패인 우상단
+  배지에만 나옵니다.
+
+### Added / Changed
+- **Command-history toggle in the Commands panel.** A new switch turns
+  command-history suggestions on or off — when off, typed commands are no longer
+  recorded and history entries stop appearing in autocomplete (saved history is
+  kept). Also enlarged the voice-input microphone button for readability.
+- **Commands 패널에 명령 히스토리 토글 추가.** 명령 히스토리 제안을 껐다 켤 수
+  있습니다 — 끄면 입력한 명령을 기록하지 않고 자동완성에도 히스토리를 제안하지
+  않습니다(저장된 기록은 유지). 음성 입력 마이크 버튼도 더 크게 키웠습니다.
+
+---
+
 ## v0.1.48 — 2026-07-30
 
 ### Fixed

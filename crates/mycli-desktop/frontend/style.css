@@ -198,6 +198,9 @@ header h1 .byline {
 /* Keep superscripts (A⁺ font buttons) visually raised inside the flex row. */
 #toolbar-actions button sup { align-self: flex-start; line-height: 1; }
 #toolbar-actions #btn-notify-settings svg { display: block; }
+/* Larger microphone glyph so the voice-input button reads clearly. The 26px
+   button height is unchanged, so it stays aligned with its neighbours. */
+#toolbar-actions #btn-voice-input { font-size: 18px; line-height: 1; padding: 4px 8px; }
 
 /* Alias badge on saved commands (Commands panel + autocomplete popup) */
 .cmd-alias {
@@ -773,6 +776,19 @@ html[data-theme="light"] #toolbar-actions #btn-update:hover {
   box-sizing: border-box;
 }
 #cmd-search:focus { outline: none; border-color: var(--accent); }
+.cmd-history-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0 6px 4px;
+  padding: 3px 4px;
+  font-size: 11px;
+  color: var(--text-dim);
+  cursor: pointer;
+  flex-shrink: 0;
+  user-select: none;
+}
+.cmd-history-toggle input { margin: 0; cursor: pointer; }
 #command-list {
   list-style: none;
   overflow-y: auto;

@@ -151,8 +151,18 @@ function effectiveLetterSpacing() {
 let savedCmds = [];
 let currentInput = "";
 const COMMAND_HISTORY_KEY = "mymux.commandHistory.v1";
+const COMMAND_HISTORY_ENABLED_KEY = "mymux.commandHistory.enabled";
 const COMMAND_HISTORY_LIMIT = 200;
 let commandHistory = loadCommandHistory();
+// When off, typed commands are no longer recorded and history entries stop
+// appearing in the autocomplete popup. Stored history is kept so flipping it
+// back on restores past suggestions. Default on. Toggle lives in the Commands panel.
+let commandHistoryEnabled = localStorage.getItem(COMMAND_HISTORY_ENABLED_KEY) !== "0";
+function setCommandHistoryEnabled(on) {
+  commandHistoryEnabled = !!on;
+  try { localStorage.setItem(COMMAND_HISTORY_ENABLED_KEY, on ? "1" : "0"); } catch {}
+  if (!on) hideAutocomplete();
+}
 let acSelectedIdx = -1;
 let currentExplorerPath = "";
 let currentSftpId = null;
@@ -496,6 +506,11 @@ async function setupListeners() {
   const cmdSearch = document.getElementById("cmd-search");
   if (cmdSearch) cmdSearch.addEventListener("input", () => renderCmdList(savedCmds));
   wireSearchClear(cmdSearch);
+  const cmdHistToggle = document.getElementById("cmd-history-toggle");
+  if (cmdHistToggle) {
+    cmdHistToggle.checked = commandHistoryEnabled;
+    cmdHistToggle.addEventListener("change", () => setCommandHistoryEnabled(cmdHistToggle.checked));
+  }
   btnCancel.addEventListener("click", closeModal);
   modalOverlay.addEventListener("click", (e) => { if (e.target === modalOverlay) closeModal(); });
   form.addEventListener("submit", handleSave);
@@ -3839,9 +3854,11 @@ function updateCtxUi(id, t) {
       const nameEl = li.querySelector(".session-name");
       if (nameEl) nameEl.after(se); else li.appendChild(se);
     }
-    const sessionText = ctxBadgeText(t);
-    se.textContent = sessionText;
-    se.title = sessionText;
+    // Session-list pill shows JUST the percentage (em dash while unknown) to
+    // keep the sidebar compact; the full "model | effort | ctx" stays on hover.
+    // The pane's top-right badge keeps the complete text.
+    se.textContent = t.ctxPct == null ? "—" : t.ctxPct + "%";
+    se.title = ctxBadgeText(t);
     se.style.color = color;
     se.style.borderColor = color;
     se.classList.toggle("stale", stale);
@@ -8622,6 +8639,7 @@ function saveCommandHistory() {
 }
 
 function rememberCommand(command) {
+  if (!commandHistoryEnabled) return;
   const normalized = String(command || "").trim();
   if (!normalized || normalized.length < 2) return;
   if (/^(cls|clear|exit)$/i.test(normalized)) return;
@@ -8746,7 +8764,7 @@ function showAutocomplete(input, ptyId) {
     ((b.alias && b.alias.toLowerCase().startsWith(lower)) ? 1 : 0) -
     ((a.alias && a.alias.toLowerCase().startsWith(lower)) ? 1 : 0));
   const existingCommands = new Set(matches.map((c) => commandComboLine(c, paneShellKind(terminals.get(ptyId)))));
-  const historyMatches = commandHistory
+  const historyMatches = (commandHistoryEnabled ? commandHistory : [])
     .filter((h) => h.command.toLowerCase().includes(lower) && !existingCommands.has(h.command))
     .sort((a, b) => {
       const aPrefix = a.command.toLowerCase().startsWith(lower) ? 1 : 0;
