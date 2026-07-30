@@ -8,6 +8,19 @@ For installers, see the [GitHub Releases](https://github.com/ChoiGyber/Mymux/rel
 
 ---
 
+## v0.1.48 — 2026-07-30
+
+### Fixed
+- **Clearer Deepgram voice-token errors.** When requesting a temporary Deepgram
+  token fails, voice input now explains the cause instead of showing a bare
+  status code: a 403 means the API key lacks the required "Member" permission,
+  and a 401 means the key is invalid or expired.
+- **음성 입력 Deepgram 토큰 오류 안내 개선.** Deepgram 임시 토큰 발급이 실패하면
+  상태 코드만 보여주지 않고 원인을 안내합니다 — 403은 API 키에 "Member" 권한이
+  없다는 뜻이고, 401은 키가 유효하지 않거나 만료됐다는 뜻입니다.
+
+---
+
 ## v0.1.46 — 2026-07-30
 
 ### Fixed

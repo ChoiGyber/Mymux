@@ -58,7 +58,16 @@ pub async fn voice_deepgram_token() -> Result<String, String> {
         .header("Authorization", format!("Token {key}"))
         .json(&serde_json::json!({"ttl_seconds": 30}))
         .send().await.map_err(|e| e.to_string())?;
-    if !response.status().is_success() { return Err(format!("Deepgram token request failed ({})", response.status())); }
+    if !response.status().is_success() {
+        let code = response.status().as_u16();
+        let hint = match code {
+            // /v1/auth/grant needs the API key to have at least Member permission.
+            403 => " — 이 Deepgram API 키에 임시 토큰 발급 권한이 없습니다. 콘솔에서 키를 'Member' 이상 권한으로 다시 만들어 주세요.",
+            401 => " — Deepgram API 키가 유효하지 않습니다(오타/만료). 콘솔에서 키를 다시 복사해 저장해 주세요.",
+            _ => "",
+        };
+        return Err(format!("Deepgram token request failed ({code}){hint}"));
+    }
     #[derive(Deserialize)] struct Grant { access_token: String }
     let token = response.json::<Grant>().await.map_err(|e| e.to_string())?.access_token;
     if token.is_empty() { return Err("Deepgram returned an empty token".into()); }
