@@ -17,3 +17,7 @@ release/
 *.key.pub
 mymux_updater.key*
 /target-rel/
+
+# PyInstaller build artifacts for the local faster-whisper voice runner
+/build/
+faster-whisper.spec
