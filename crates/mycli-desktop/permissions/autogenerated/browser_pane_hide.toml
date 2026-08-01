@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-browser-pane-hide"
+description = "Enables the browser_pane_hide command without any pre-configured scope."
+commands.allow = ["browser_pane_hide"]
+
+[[permission]]
+identifier = "deny-browser-pane-hide"
+description = "Denies the browser_pane_hide command without any pre-configured scope."
+commands.deny = ["browser_pane_hide"]

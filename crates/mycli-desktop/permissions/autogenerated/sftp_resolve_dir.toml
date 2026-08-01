@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-sftp-resolve-dir"
+description = "Enables the sftp_resolve_dir command without any pre-configured scope."
+commands.allow = ["sftp_resolve_dir"]
+
+[[permission]]
+identifier = "deny-sftp-resolve-dir"
+description = "Denies the sftp_resolve_dir command without any pre-configured scope."
+commands.deny = ["sftp_resolve_dir"]

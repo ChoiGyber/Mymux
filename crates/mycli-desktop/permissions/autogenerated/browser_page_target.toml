@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-browser-page-target"
+description = "Enables the browser_page_target command without any pre-configured scope."
+commands.allow = ["browser_page_target"]
+
+[[permission]]
+identifier = "deny-browser-page-target"
+description = "Denies the browser_page_target command without any pre-configured scope."
+commands.deny = ["browser_page_target"]

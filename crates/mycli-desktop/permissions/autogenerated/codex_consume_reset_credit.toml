@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-codex-consume-reset-credit"
+description = "Enables the codex_consume_reset_credit command without any pre-configured scope."
+commands.allow = ["codex_consume_reset_credit"]
+
+[[permission]]
+identifier = "deny-codex-consume-reset-credit"
+description = "Denies the codex_consume_reset_credit command without any pre-configured scope."
+commands.deny = ["codex_consume_reset_credit"]

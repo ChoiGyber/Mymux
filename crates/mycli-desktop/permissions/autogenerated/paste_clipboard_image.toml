@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-paste-clipboard-image"
+description = "Enables the paste_clipboard_image command without any pre-configured scope."
+commands.allow = ["paste_clipboard_image"]
+
+[[permission]]
+identifier = "deny-paste-clipboard-image"
+description = "Denies the paste_clipboard_image command without any pre-configured scope."
+commands.deny = ["paste_clipboard_image"]

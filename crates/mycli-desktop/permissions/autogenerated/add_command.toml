@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-add-command"
+description = "Enables the add_command command without any pre-configured scope."
+commands.allow = ["add_command"]
+
+[[permission]]
+identifier = "deny-add-command"
+description = "Denies the add_command command without any pre-configured scope."
+commands.deny = ["add_command"]

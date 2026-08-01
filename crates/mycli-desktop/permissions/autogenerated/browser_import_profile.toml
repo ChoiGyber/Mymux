@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-browser-import-profile"
+description = "Enables the browser_import_profile command without any pre-configured scope."
+commands.allow = ["browser_import_profile"]
+
+[[permission]]
+identifier = "deny-browser-import-profile"
+description = "Denies the browser_import_profile command without any pre-configured scope."
+commands.deny = ["browser_import_profile"]

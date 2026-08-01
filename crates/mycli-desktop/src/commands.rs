@@ -977,20 +977,3 @@ pub fn fs_create_dir(dir: String, name: String) -> Result<String, String> {
     std::fs::create_dir(&target).map_err(|e| e.to_string())?;
     Ok(target.to_string_lossy().to_string())
 }
-
-#[tauri::command]
-pub fn execute_command(command_text: String) -> Result<String, String> {
-    let output = mycli_core::executor::run(&command_text).map_err(|e| e.to_string())?;
-    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
-    let stderr = String::from_utf8_lossy(&output.stderr).to_string();
-
-    if !stderr.is_empty() && !output.status.success() {
-        return Err(stderr);
-    }
-
-    let mut result = stdout;
-    if !stderr.is_empty() {
-        result.push_str(&stderr);
-    }
-    Ok(result)
-}

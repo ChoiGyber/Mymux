@@ -1,7 +1,87 @@
 fn main() {
     copy_conpty_sideload();
-    tauri_build::build();
+    tauri_build::try_build(
+        tauri_build::Attributes::new()
+            .app_manifest(tauri_build::AppManifest::new().commands(APP_COMMANDS)),
+    )
+    .expect("failed to build Mymux");
 }
+
+// Keep custom commands behind Tauri's ACL. The explicit manifest lets
+// capabilities grant them only to trusted local webviews; the remote
+// `browser-pane` gets no privileged IPC.
+const APP_COMMANDS: &[&str] = &[
+    "list_commands",
+    "add_command",
+    "update_command",
+    "delete_command",
+    "set_favorite",
+    "read_text_file",
+    "write_text_file",
+    "codex_rollout_tail",
+    "codex_reset_credits",
+    "codex_consume_reset_credit",
+    "claude_account_usage",
+    "open_external",
+    "window_attention",
+    "buddy_overlay_show",
+    "buddy_overlay_hide",
+    "buddy_overlay_focus_main",
+    "pick_key_file",
+    "fs_copy_path",
+    "fs_move_path",
+    "fs_create_dir",
+    "paste_clipboard_image",
+    "session_save",
+    "session_load",
+    "session_clear",
+    "pty_spawn",
+    "pty_read",
+    "pty_write",
+    "pty_resize",
+    "pty_close",
+    "explorer_list_local",
+    "explorer_home_dir",
+    "explorer_parent_dir",
+    "explorer_list_drives",
+    "sftp_connect",
+    "sftp_list_dir",
+    "sftp_home_dir",
+    "sftp_resolve_dir",
+    "sftp_read_text_file",
+    "sftp_write_text_file",
+    "sftp_upload_size",
+    "sftp_begin_upload",
+    "sftp_cancel_upload",
+    "sftp_finish_upload",
+    "sftp_upload_path",
+    "sftp_disconnect",
+    "browser_launch",
+    "browser_profiles",
+    "browser_import_profile",
+    "browser_status",
+    "browser_close",
+    "browser_page_target",
+    "browser_page_targets",
+    "browser_new_tab",
+    "browser_close_tab",
+    "browser_pane_open",
+    "browser_pane_set_bounds",
+    "browser_pane_navigate",
+    "browser_pane_back",
+    "browser_pane_forward",
+    "browser_pane_reload",
+    "browser_pane_show",
+    "browser_pane_hide",
+    "browser_pane_close",
+    "browser_pane_url",
+    "update_check",
+    "update_install",
+    "tool_installed",
+    "voice_store_deepgram_key",
+    "voice_deepgram_token",
+    "voice_transcribe_local",
+];
 
 /// Copy the sideloaded ConPTY host (`conpty.dll` + `OpenConsole.exe`) next to
 /// the freshly built executable.

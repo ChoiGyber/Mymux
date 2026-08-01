@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-sftp-upload-path"
+description = "Enables the sftp_upload_path command without any pre-configured scope."
+commands.allow = ["sftp_upload_path"]
+
+[[permission]]
+identifier = "deny-sftp-upload-path"
+description = "Denies the sftp_upload_path command without any pre-configured scope."
+commands.deny = ["sftp_upload_path"]

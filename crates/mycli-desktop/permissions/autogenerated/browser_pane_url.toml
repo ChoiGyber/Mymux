@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-browser-pane-url"
+description = "Enables the browser_pane_url command without any pre-configured scope."
+commands.allow = ["browser_pane_url"]
+
+[[permission]]
+identifier = "deny-browser-pane-url"
+description = "Denies the browser_pane_url command without any pre-configured scope."
+commands.deny = ["browser_pane_url"]

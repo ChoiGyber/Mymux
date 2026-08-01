@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-session-load"
+description = "Enables the session_load command without any pre-configured scope."
+commands.allow = ["session_load"]
+
+[[permission]]
+identifier = "deny-session-load"
+description = "Denies the session_load command without any pre-configured scope."
+commands.deny = ["session_load"]

@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-explorer-list-local"
+description = "Enables the explorer_list_local command without any pre-configured scope."
+commands.allow = ["explorer_list_local"]
+
+[[permission]]
+identifier = "deny-explorer-list-local"
+description = "Denies the explorer_list_local command without any pre-configured scope."
+commands.deny = ["explorer_list_local"]

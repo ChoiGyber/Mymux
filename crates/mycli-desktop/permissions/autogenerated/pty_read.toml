@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-pty-read"
+description = "Enables the pty_read command without any pre-configured scope."
+commands.allow = ["pty_read"]
+
+[[permission]]
+identifier = "deny-pty-read"
+description = "Denies the pty_read command without any pre-configured scope."
+commands.deny = ["pty_read"]

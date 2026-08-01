@@ -1,6 +1,6 @@
 [package]
 name = "mycli-desktop"
-version = "0.1.49"
+version = "0.1.50"
 edition = "2024"
 
 # The executable (and therefore the OS process / Task Manager name) is "Mymux".
@@ -11,7 +11,7 @@ path = "src/main.rs"
 
 [dependencies]
 mycli-core = { path = "../mycli-core" }
-tauri = { version = "2", features = ["tray-icon", "unstable", "macos-private-api"] }
+tauri = { version = "2.11.5", features = ["tray-icon", "unstable", "macos-private-api"] }
 tauri-plugin-shell = "2"
 tauri-plugin-clipboard-manager = "2"
 tauri-plugin-updater = "2"
@@ -39,4 +39,4 @@ reqwest = { version = "0.13", default-features = false, features = ["json", "rus
 windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_UI_WindowsAndMessaging", "Win32_Storage_FileSystem", "Win32_Security_Cryptography"] }
 
 [build-dependencies]
-tauri-build = { version = "2", features = [] }
+tauri-build = { version = "2.6.3", features = [] }

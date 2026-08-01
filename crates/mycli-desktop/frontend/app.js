@@ -2619,7 +2619,7 @@ async function createPane(parentEl, shell, args, cwd) {
   statusBar.innerHTML = `
     <span class="pane-grip" title="Drag to move pane">&#10287;</span>
     <span class="pane-label">${esc(sessionLabel)}</span>
-    ${shell !== "ssh" ? `<span class="pane-cwd" title="${esc(cwd || "")}">${esc(cwdText)}</span>` : ""}
+    ${shell !== "ssh" ? `<span class="pane-cwd">${esc(cwdText)}</span>` : ""}
     <span class="pane-actions">
       <button class="pane-btn split-h" title="Split horizontally (Ctrl+Shift+D)">&#8596;</button>
       <button class="pane-btn split-v" title="Split vertically (Ctrl+Shift+E)">&#8597;</button>
@@ -2627,6 +2627,8 @@ async function createPane(parentEl, shell, args, cwd) {
       <button class="pane-btn close" title="Close pane (Ctrl+Shift+W)">&times;</button>
     </span>
   `;
+  const paneCwd = statusBar.querySelector(".pane-cwd");
+  if (paneCwd) paneCwd.title = cwd || "";
   statusBar.querySelector(".split-h").addEventListener("click", (e) => { e.stopPropagation(); setFocusedPane(id); splitPane("horizontal"); });
   statusBar.querySelector(".split-v").addEventListener("click", (e) => { e.stopPropagation(); setFocusedPane(id); splitPane("vertical"); });
   statusBar.querySelector(".flip").addEventListener("click", (e) => { e.stopPropagation(); setFocusedPane(id); flipSplitDirection(); });
@@ -8445,7 +8447,7 @@ function renderCmdList(cmds) {
       <button class="cmd-x" title="Delete (no confirm)">&times;</button>
       <div class="cmd-name">${esc(cmd.name)}</div>
       <div class="cmd-row">
-        <span class="cmd-text" title="${esc(cmd.cwd ? "in " + cmd.cwd : "")}">${cmd.alias ? `<span class="cmd-alias">${esc(cmd.alias)}</span>` : ""}${cmd.cwd ? `<span class="cmd-cwd" title="${esc(cmd.cwd)}">📁</span>` : ""}${esc(cmd.command)}</span>
+        <span class="cmd-text">${cmd.alias ? `<span class="cmd-alias">${esc(cmd.alias)}</span>` : ""}${cmd.cwd ? `<span class="cmd-cwd">📁</span>` : ""}${esc(cmd.command)}</span>
         <span class="cmd-actions">
           <span class="favorite-mode-toggles" role="group" aria-label="바로가기 표시 모드">
             <button class="favorite-mode-toggle shell" type="button">쉘</button>
@@ -8458,6 +8460,9 @@ function renderCmdList(cmds) {
       </div>
       ${cmd.description ? `<div class="cmd-desc">${esc(cmd.description)}</div>` : ""}
     `;
+    li.querySelector(".cmd-text").title = cmd.cwd ? "in " + cmd.cwd : "";
+    const cwdIcon = li.querySelector(".cmd-cwd");
+    if (cwdIcon) cwdIcon.title = cmd.cwd;
     li.querySelector(".send-btn").addEventListener("click", (e) => { e.stopPropagation(); runCommandCombo(cmd); });
     const shellToggle = li.querySelector(".favorite-mode-toggle.shell");
     const aiToggle = li.querySelector(".favorite-mode-toggle.ai");
@@ -8805,8 +8810,9 @@ function showAutocomplete(input, ptyId) {
     const meta = cmd.isHistory ? ` <span class="ac-meta">${cmd.historyCount}x</span>` : "";
     li.innerHTML = `
       <span class="ac-name">${cmd.alias ? `<span class="cmd-alias">${esc(cmd.alias)}</span>` : ""}${esc(cmd.name)}${meta}</span>
-      <span class="ac-cmd" title="${esc(preview)}">${esc(preview)}</span>
+      <span class="ac-cmd">${esc(preview)}</span>
     `;
+    li.querySelector(".ac-cmd").title = preview;
     li.addEventListener("click", () => {
       const line = commandComboLine(cmd, paneShellKind(terminals.get(ptyId)));
       const current = terminals.get(ptyId)?.acInput ?? currentInput;

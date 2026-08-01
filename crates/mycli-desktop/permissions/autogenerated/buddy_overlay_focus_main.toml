@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-buddy-overlay-focus-main"
+description = "Enables the buddy_overlay_focus_main command without any pre-configured scope."
+commands.allow = ["buddy_overlay_focus_main"]
+
+[[permission]]
+identifier = "deny-buddy-overlay-focus-main"
+description = "Denies the buddy_overlay_focus_main command without any pre-configured scope."
+commands.deny = ["buddy_overlay_focus_main"]

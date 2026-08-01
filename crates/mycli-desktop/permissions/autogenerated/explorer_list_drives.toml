@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-explorer-list-drives"
+description = "Enables the explorer_list_drives command without any pre-configured scope."
+commands.allow = ["explorer_list_drives"]
+
+[[permission]]
+identifier = "deny-explorer-list-drives"
+description = "Denies the explorer_list_drives command without any pre-configured scope."
+commands.deny = ["explorer_list_drives"]

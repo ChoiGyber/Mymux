@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-session-save"
+description = "Enables the session_save command without any pre-configured scope."
+commands.allow = ["session_save"]
+
+[[permission]]
+identifier = "deny-session-save"
+description = "Denies the session_save command without any pre-configured scope."
+commands.deny = ["session_save"]

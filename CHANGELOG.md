@@ -8,6 +8,22 @@ For installers, see the [GitHub Releases](https://github.com/ChoiGyber/Mymux/rel
 
 ---
 
+## v0.1.50 — 2026-08-02
+
+### Security
+- **Emergency Tauri IPC hardening.** Updated Tauri to 2.11.5, which includes
+  the remote-origin custom-command ACL fix introduced in 2.11.1. Mymux now
+  declares every custom command in an AppManifest and grants those commands
+  only to the trusted local `main` and `buddy-overlay` webviews; the remote
+  Native Browser pane has no privileged IPC capability.
+- **Removed the unused arbitrary command IPC.** The unreferenced
+  `execute_command` endpoint is no longer compiled or registered.
+- **Stored-XSS hardening.** User-controlled command, history, and working
+  directory values are assigned to tooltip DOM properties instead of being
+  interpolated into HTML attributes.
+
+---
+
 ## v0.1.49 — 2026-07-30
 
 ### Fixed

@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-claude-account-usage"
+description = "Enables the claude_account_usage command without any pre-configured scope."
+commands.allow = ["claude_account_usage"]
+
+[[permission]]
+identifier = "deny-claude-account-usage"
+description = "Denies the claude_account_usage command without any pre-configured scope."
+commands.deny = ["claude_account_usage"]

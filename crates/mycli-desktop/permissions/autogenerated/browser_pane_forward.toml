@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-browser-pane-forward"
+description = "Enables the browser_pane_forward command without any pre-configured scope."
+commands.allow = ["browser_pane_forward"]
+
+[[permission]]
+identifier = "deny-browser-pane-forward"
+description = "Denies the browser_pane_forward command without any pre-configured scope."
+commands.deny = ["browser_pane_forward"]

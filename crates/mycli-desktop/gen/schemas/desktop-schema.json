@@ -387,6 +387,846 @@
       "description": "Permission identifier",
       "oneOf": [
         {
+          "description": "Enables the add_command command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-add-command",
+          "markdownDescription": "Enables the add_command command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the browser_close command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-browser-close",
+          "markdownDescription": "Enables the browser_close command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the browser_close_tab command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-browser-close-tab",
+          "markdownDescription": "Enables the browser_close_tab command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the browser_import_profile command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-browser-import-profile",
+          "markdownDescription": "Enables the browser_import_profile command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the browser_launch command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-browser-launch",
+          "markdownDescription": "Enables the browser_launch command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the browser_new_tab command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-browser-new-tab",
+          "markdownDescription": "Enables the browser_new_tab command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the browser_page_target command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-browser-page-target",
+          "markdownDescription": "Enables the browser_page_target command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the browser_page_targets command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-browser-page-targets",
+          "markdownDescription": "Enables the browser_page_targets command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the browser_pane_back command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-browser-pane-back",
+          "markdownDescription": "Enables the browser_pane_back command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the browser_pane_close command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-browser-pane-close",
+          "markdownDescription": "Enables the browser_pane_close command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the browser_pane_forward command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-browser-pane-forward",
+          "markdownDescription": "Enables the browser_pane_forward command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the browser_pane_hide command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-browser-pane-hide",
+          "markdownDescription": "Enables the browser_pane_hide command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the browser_pane_navigate command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-browser-pane-navigate",
+          "markdownDescription": "Enables the browser_pane_navigate command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the browser_pane_open command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-browser-pane-open",
+          "markdownDescription": "Enables the browser_pane_open command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the browser_pane_reload command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-browser-pane-reload",
+          "markdownDescription": "Enables the browser_pane_reload command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the browser_pane_set_bounds command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-browser-pane-set-bounds",
+          "markdownDescription": "Enables the browser_pane_set_bounds command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the browser_pane_show command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-browser-pane-show",
+          "markdownDescription": "Enables the browser_pane_show command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the browser_pane_url command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-browser-pane-url",
+          "markdownDescription": "Enables the browser_pane_url command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the browser_profiles command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-browser-profiles",
+          "markdownDescription": "Enables the browser_profiles command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the browser_status command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-browser-status",
+          "markdownDescription": "Enables the browser_status command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the buddy_overlay_focus_main command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-buddy-overlay-focus-main",
+          "markdownDescription": "Enables the buddy_overlay_focus_main command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the buddy_overlay_hide command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-buddy-overlay-hide",
+          "markdownDescription": "Enables the buddy_overlay_hide command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the buddy_overlay_show command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-buddy-overlay-show",
+          "markdownDescription": "Enables the buddy_overlay_show command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the claude_account_usage command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-claude-account-usage",
+          "markdownDescription": "Enables the claude_account_usage command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the codex_consume_reset_credit command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-codex-consume-reset-credit",
+          "markdownDescription": "Enables the codex_consume_reset_credit command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the codex_reset_credits command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-codex-reset-credits",
+          "markdownDescription": "Enables the codex_reset_credits command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the codex_rollout_tail command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-codex-rollout-tail",
+          "markdownDescription": "Enables the codex_rollout_tail command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the delete_command command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-delete-command",
+          "markdownDescription": "Enables the delete_command command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the explorer_home_dir command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-explorer-home-dir",
+          "markdownDescription": "Enables the explorer_home_dir command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the explorer_list_drives command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-explorer-list-drives",
+          "markdownDescription": "Enables the explorer_list_drives command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the explorer_list_local command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-explorer-list-local",
+          "markdownDescription": "Enables the explorer_list_local command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the explorer_parent_dir command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-explorer-parent-dir",
+          "markdownDescription": "Enables the explorer_parent_dir command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the fs_copy_path command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-fs-copy-path",
+          "markdownDescription": "Enables the fs_copy_path command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the fs_create_dir command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-fs-create-dir",
+          "markdownDescription": "Enables the fs_create_dir command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the fs_move_path command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-fs-move-path",
+          "markdownDescription": "Enables the fs_move_path command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the list_commands command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-list-commands",
+          "markdownDescription": "Enables the list_commands command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the open_external command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-open-external",
+          "markdownDescription": "Enables the open_external command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the paste_clipboard_image command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-paste-clipboard-image",
+          "markdownDescription": "Enables the paste_clipboard_image command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the pick_key_file command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-pick-key-file",
+          "markdownDescription": "Enables the pick_key_file command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the pty_close command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-pty-close",
+          "markdownDescription": "Enables the pty_close command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the pty_read command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-pty-read",
+          "markdownDescription": "Enables the pty_read command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the pty_resize command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-pty-resize",
+          "markdownDescription": "Enables the pty_resize command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the pty_spawn command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-pty-spawn",
+          "markdownDescription": "Enables the pty_spawn command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the pty_write command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-pty-write",
+          "markdownDescription": "Enables the pty_write command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the read_text_file command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-read-text-file",
+          "markdownDescription": "Enables the read_text_file command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the session_clear command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-session-clear",
+          "markdownDescription": "Enables the session_clear command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the session_load command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-session-load",
+          "markdownDescription": "Enables the session_load command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the session_save command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-session-save",
+          "markdownDescription": "Enables the session_save command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the set_favorite command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-set-favorite",
+          "markdownDescription": "Enables the set_favorite command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the sftp_begin_upload command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-sftp-begin-upload",
+          "markdownDescription": "Enables the sftp_begin_upload command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the sftp_cancel_upload command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-sftp-cancel-upload",
+          "markdownDescription": "Enables the sftp_cancel_upload command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the sftp_connect command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-sftp-connect",
+          "markdownDescription": "Enables the sftp_connect command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the sftp_disconnect command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-sftp-disconnect",
+          "markdownDescription": "Enables the sftp_disconnect command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the sftp_finish_upload command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-sftp-finish-upload",
+          "markdownDescription": "Enables the sftp_finish_upload command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the sftp_home_dir command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-sftp-home-dir",
+          "markdownDescription": "Enables the sftp_home_dir command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the sftp_list_dir command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-sftp-list-dir",
+          "markdownDescription": "Enables the sftp_list_dir command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the sftp_read_text_file command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-sftp-read-text-file",
+          "markdownDescription": "Enables the sftp_read_text_file command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the sftp_resolve_dir command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-sftp-resolve-dir",
+          "markdownDescription": "Enables the sftp_resolve_dir command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the sftp_upload_path command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-sftp-upload-path",
+          "markdownDescription": "Enables the sftp_upload_path command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the sftp_upload_size command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-sftp-upload-size",
+          "markdownDescription": "Enables the sftp_upload_size command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the sftp_write_text_file command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-sftp-write-text-file",
+          "markdownDescription": "Enables the sftp_write_text_file command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the tool_installed command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-tool-installed",
+          "markdownDescription": "Enables the tool_installed command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the update_check command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-update-check",
+          "markdownDescription": "Enables the update_check command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the update_command command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-update-command",
+          "markdownDescription": "Enables the update_command command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the update_install command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-update-install",
+          "markdownDescription": "Enables the update_install command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the voice_deepgram_token command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-voice-deepgram-token",
+          "markdownDescription": "Enables the voice_deepgram_token command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the voice_store_deepgram_key command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-voice-store-deepgram-key",
+          "markdownDescription": "Enables the voice_store_deepgram_key command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the voice_transcribe_local command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-voice-transcribe-local",
+          "markdownDescription": "Enables the voice_transcribe_local command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the window_attention command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-window-attention",
+          "markdownDescription": "Enables the window_attention command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the write_text_file command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-write-text-file",
+          "markdownDescription": "Enables the write_text_file command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the add_command command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-add-command",
+          "markdownDescription": "Denies the add_command command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the browser_close command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-browser-close",
+          "markdownDescription": "Denies the browser_close command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the browser_close_tab command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-browser-close-tab",
+          "markdownDescription": "Denies the browser_close_tab command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the browser_import_profile command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-browser-import-profile",
+          "markdownDescription": "Denies the browser_import_profile command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the browser_launch command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-browser-launch",
+          "markdownDescription": "Denies the browser_launch command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the browser_new_tab command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-browser-new-tab",
+          "markdownDescription": "Denies the browser_new_tab command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the browser_page_target command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-browser-page-target",
+          "markdownDescription": "Denies the browser_page_target command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the browser_page_targets command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-browser-page-targets",
+          "markdownDescription": "Denies the browser_page_targets command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the browser_pane_back command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-browser-pane-back",
+          "markdownDescription": "Denies the browser_pane_back command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the browser_pane_close command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-browser-pane-close",
+          "markdownDescription": "Denies the browser_pane_close command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the browser_pane_forward command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-browser-pane-forward",
+          "markdownDescription": "Denies the browser_pane_forward command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the browser_pane_hide command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-browser-pane-hide",
+          "markdownDescription": "Denies the browser_pane_hide command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the browser_pane_navigate command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-browser-pane-navigate",
+          "markdownDescription": "Denies the browser_pane_navigate command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the browser_pane_open command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-browser-pane-open",
+          "markdownDescription": "Denies the browser_pane_open command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the browser_pane_reload command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-browser-pane-reload",
+          "markdownDescription": "Denies the browser_pane_reload command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the browser_pane_set_bounds command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-browser-pane-set-bounds",
+          "markdownDescription": "Denies the browser_pane_set_bounds command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the browser_pane_show command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-browser-pane-show",
+          "markdownDescription": "Denies the browser_pane_show command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the browser_pane_url command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-browser-pane-url",
+          "markdownDescription": "Denies the browser_pane_url command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the browser_profiles command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-browser-profiles",
+          "markdownDescription": "Denies the browser_profiles command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the browser_status command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-browser-status",
+          "markdownDescription": "Denies the browser_status command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the buddy_overlay_focus_main command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-buddy-overlay-focus-main",
+          "markdownDescription": "Denies the buddy_overlay_focus_main command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the buddy_overlay_hide command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-buddy-overlay-hide",
+          "markdownDescription": "Denies the buddy_overlay_hide command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the buddy_overlay_show command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-buddy-overlay-show",
+          "markdownDescription": "Denies the buddy_overlay_show command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the claude_account_usage command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-claude-account-usage",
+          "markdownDescription": "Denies the claude_account_usage command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the codex_consume_reset_credit command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-codex-consume-reset-credit",
+          "markdownDescription": "Denies the codex_consume_reset_credit command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the codex_reset_credits command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-codex-reset-credits",
+          "markdownDescription": "Denies the codex_reset_credits command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the codex_rollout_tail command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-codex-rollout-tail",
+          "markdownDescription": "Denies the codex_rollout_tail command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the delete_command command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-delete-command",
+          "markdownDescription": "Denies the delete_command command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the explorer_home_dir command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-explorer-home-dir",
+          "markdownDescription": "Denies the explorer_home_dir command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the explorer_list_drives command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-explorer-list-drives",
+          "markdownDescription": "Denies the explorer_list_drives command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the explorer_list_local command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-explorer-list-local",
+          "markdownDescription": "Denies the explorer_list_local command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the explorer_parent_dir command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-explorer-parent-dir",
+          "markdownDescription": "Denies the explorer_parent_dir command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the fs_copy_path command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-fs-copy-path",
+          "markdownDescription": "Denies the fs_copy_path command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the fs_create_dir command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-fs-create-dir",
+          "markdownDescription": "Denies the fs_create_dir command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the fs_move_path command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-fs-move-path",
+          "markdownDescription": "Denies the fs_move_path command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the list_commands command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-list-commands",
+          "markdownDescription": "Denies the list_commands command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the open_external command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-open-external",
+          "markdownDescription": "Denies the open_external command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the paste_clipboard_image command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-paste-clipboard-image",
+          "markdownDescription": "Denies the paste_clipboard_image command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the pick_key_file command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-pick-key-file",
+          "markdownDescription": "Denies the pick_key_file command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the pty_close command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-pty-close",
+          "markdownDescription": "Denies the pty_close command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the pty_read command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-pty-read",
+          "markdownDescription": "Denies the pty_read command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the pty_resize command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-pty-resize",
+          "markdownDescription": "Denies the pty_resize command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the pty_spawn command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-pty-spawn",
+          "markdownDescription": "Denies the pty_spawn command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the pty_write command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-pty-write",
+          "markdownDescription": "Denies the pty_write command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the read_text_file command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-read-text-file",
+          "markdownDescription": "Denies the read_text_file command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the session_clear command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-session-clear",
+          "markdownDescription": "Denies the session_clear command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the session_load command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-session-load",
+          "markdownDescription": "Denies the session_load command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the session_save command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-session-save",
+          "markdownDescription": "Denies the session_save command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the set_favorite command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-set-favorite",
+          "markdownDescription": "Denies the set_favorite command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the sftp_begin_upload command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-sftp-begin-upload",
+          "markdownDescription": "Denies the sftp_begin_upload command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the sftp_cancel_upload command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-sftp-cancel-upload",
+          "markdownDescription": "Denies the sftp_cancel_upload command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the sftp_connect command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-sftp-connect",
+          "markdownDescription": "Denies the sftp_connect command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the sftp_disconnect command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-sftp-disconnect",
+          "markdownDescription": "Denies the sftp_disconnect command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the sftp_finish_upload command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-sftp-finish-upload",
+          "markdownDescription": "Denies the sftp_finish_upload command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the sftp_home_dir command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-sftp-home-dir",
+          "markdownDescription": "Denies the sftp_home_dir command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the sftp_list_dir command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-sftp-list-dir",
+          "markdownDescription": "Denies the sftp_list_dir command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the sftp_read_text_file command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-sftp-read-text-file",
+          "markdownDescription": "Denies the sftp_read_text_file command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the sftp_resolve_dir command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-sftp-resolve-dir",
+          "markdownDescription": "Denies the sftp_resolve_dir command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the sftp_upload_path command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-sftp-upload-path",
+          "markdownDescription": "Denies the sftp_upload_path command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the sftp_upload_size command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-sftp-upload-size",
+          "markdownDescription": "Denies the sftp_upload_size command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the sftp_write_text_file command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-sftp-write-text-file",
+          "markdownDescription": "Denies the sftp_write_text_file command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the tool_installed command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-tool-installed",
+          "markdownDescription": "Denies the tool_installed command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the update_check command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-update-check",
+          "markdownDescription": "Denies the update_check command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the update_command command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-update-command",
+          "markdownDescription": "Denies the update_command command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the update_install command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-update-install",
+          "markdownDescription": "Denies the update_install command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the voice_deepgram_token command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-voice-deepgram-token",
+          "markdownDescription": "Denies the voice_deepgram_token command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the voice_store_deepgram_key command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-voice-store-deepgram-key",
+          "markdownDescription": "Denies the voice_store_deepgram_key command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the voice_transcribe_local command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-voice-transcribe-local",
+          "markdownDescription": "Denies the voice_transcribe_local command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the window_attention command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-window-attention",
+          "markdownDescription": "Denies the window_attention command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the write_text_file command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-write-text-file",
+          "markdownDescription": "Denies the write_text_file command without any pre-configured scope."
+        },
+        {
           "description": "No features are enabled by default, as we believe\nthe clipboard can be inherently dangerous and it is \napplication specific if read and/or write access is needed.\n\nClipboard interaction needs to be explicitly enabled.\n",
           "type": "string",
           "const": "clipboard-manager:default",
@@ -471,10 +1311,10 @@
           "markdownDescription": "Default core plugins set.\n#### This default permission set includes:\n\n- `core:path:default`\n- `core:event:default`\n- `core:window:default`\n- `core:webview:default`\n- `core:app:default`\n- `core:image:default`\n- `core:resources:default`\n- `core:menu:default`\n- `core:tray:default`"
         },
         {
-          "description": "Default permissions for the plugin.\n#### This default permission set includes:\n\n- `allow-version`\n- `allow-name`\n- `allow-tauri-version`\n- `allow-identifier`\n- `allow-bundle-type`\n- `allow-register-listener`\n- `allow-remove-listener`",
+          "description": "Default permissions for the plugin.\n#### This default permission set includes:\n\n- `allow-version`\n- `allow-name`\n- `allow-tauri-version`\n- `allow-identifier`\n- `allow-bundle-type`\n- `allow-register-listener`\n- `allow-remove-listener`\n- `allow-supports-multiple-windows`",
           "type": "string",
           "const": "core:app:default",
-          "markdownDescription": "Default permissions for the plugin.\n#### This default permission set includes:\n\n- `allow-version`\n- `allow-name`\n- `allow-tauri-version`\n- `allow-identifier`\n- `allow-bundle-type`\n- `allow-register-listener`\n- `allow-remove-listener`"
+          "markdownDescription": "Default permissions for the plugin.\n#### This default permission set includes:\n\n- `allow-version`\n- `allow-name`\n- `allow-tauri-version`\n- `allow-identifier`\n- `allow-bundle-type`\n- `allow-register-listener`\n- `allow-remove-listener`\n- `allow-supports-multiple-windows`"
         },
         {
           "description": "Enables the app_hide command without any pre-configured scope.",
@@ -547,6 +1387,12 @@
           "type": "string",
           "const": "core:app:allow-set-dock-visibility",
           "markdownDescription": "Enables the set_dock_visibility command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the supports_multiple_windows command without any pre-configured scope.",
+          "type": "string",
+          "const": "core:app:allow-supports-multiple-windows",
+          "markdownDescription": "Enables the supports_multiple_windows command without any pre-configured scope."
         },
         {
           "description": "Enables the tauri_version command without any pre-configured scope.",
@@ -631,6 +1477,12 @@
           "type": "string",
           "const": "core:app:deny-set-dock-visibility",
           "markdownDescription": "Denies the set_dock_visibility command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the supports_multiple_windows command without any pre-configured scope.",
+          "type": "string",
+          "const": "core:app:deny-supports-multiple-windows",
+          "markdownDescription": "Denies the supports_multiple_windows command without any pre-configured scope."
         },
         {
           "description": "Denies the tauri_version command without any pre-configured scope.",
@@ -1155,10 +2007,10 @@
           "markdownDescription": "Denies the close command without any pre-configured scope."
         },
         {
-          "description": "Default permissions for the plugin, which enables all commands.\n#### This default permission set includes:\n\n- `allow-new`\n- `allow-get-by-id`\n- `allow-remove-by-id`\n- `allow-set-icon`\n- `allow-set-menu`\n- `allow-set-tooltip`\n- `allow-set-title`\n- `allow-set-visible`\n- `allow-set-temp-dir-path`\n- `allow-set-icon-as-template`\n- `allow-set-show-menu-on-left-click`",
+          "description": "Default permissions for the plugin, which enables all commands.\n#### This default permission set includes:\n\n- `allow-new`\n- `allow-get-by-id`\n- `allow-remove-by-id`\n- `allow-set-icon`\n- `allow-set-menu`\n- `allow-set-tooltip`\n- `allow-set-title`\n- `allow-set-visible`\n- `allow-set-temp-dir-path`\n- `allow-set-icon-as-template`\n- `allow-set-icon-with-as-template`\n- `allow-set-show-menu-on-left-click`",
           "type": "string",
           "const": "core:tray:default",
-          "markdownDescription": "Default permissions for the plugin, which enables all commands.\n#### This default permission set includes:\n\n- `allow-new`\n- `allow-get-by-id`\n- `allow-remove-by-id`\n- `allow-set-icon`\n- `allow-set-menu`\n- `allow-set-tooltip`\n- `allow-set-title`\n- `allow-set-visible`\n- `allow-set-temp-dir-path`\n- `allow-set-icon-as-template`\n- `allow-set-show-menu-on-left-click`"
+          "markdownDescription": "Default permissions for the plugin, which enables all commands.\n#### This default permission set includes:\n\n- `allow-new`\n- `allow-get-by-id`\n- `allow-remove-by-id`\n- `allow-set-icon`\n- `allow-set-menu`\n- `allow-set-tooltip`\n- `allow-set-title`\n- `allow-set-visible`\n- `allow-set-temp-dir-path`\n- `allow-set-icon-as-template`\n- `allow-set-icon-with-as-template`\n- `allow-set-show-menu-on-left-click`"
         },
         {
           "description": "Enables the get_by_id command without any pre-configured scope.",
@@ -1189,6 +2041,12 @@
           "type": "string",
           "const": "core:tray:allow-set-icon-as-template",
           "markdownDescription": "Enables the set_icon_as_template command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the set_icon_with_as_template command without any pre-configured scope.",
+          "type": "string",
+          "const": "core:tray:allow-set-icon-with-as-template",
+          "markdownDescription": "Enables the set_icon_with_as_template command without any pre-configured scope."
         },
         {
           "description": "Enables the set_menu command without any pre-configured scope.",
@@ -1255,6 +2113,12 @@
           "type": "string",
           "const": "core:tray:deny-set-icon-as-template",
           "markdownDescription": "Denies the set_icon_as_template command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the set_icon_with_as_template command without any pre-configured scope.",
+          "type": "string",
+          "const": "core:tray:deny-set-icon-with-as-template",
+          "markdownDescription": "Denies the set_icon_with_as_template command without any pre-configured scope."
         },
         {
           "description": "Denies the set_menu command without any pre-configured scope.",
@@ -1515,10 +2379,16 @@
           "markdownDescription": "Denies the webview_size command without any pre-configured scope."
         },
         {
-          "description": "Default permissions for the plugin.\n#### This default permission set includes:\n\n- `allow-get-all-windows`\n- `allow-scale-factor`\n- `allow-inner-position`\n- `allow-outer-position`\n- `allow-inner-size`\n- `allow-outer-size`\n- `allow-is-fullscreen`\n- `allow-is-minimized`\n- `allow-is-maximized`\n- `allow-is-focused`\n- `allow-is-decorated`\n- `allow-is-resizable`\n- `allow-is-maximizable`\n- `allow-is-minimizable`\n- `allow-is-closable`\n- `allow-is-visible`\n- `allow-is-enabled`\n- `allow-title`\n- `allow-current-monitor`\n- `allow-primary-monitor`\n- `allow-monitor-from-point`\n- `allow-available-monitors`\n- `allow-cursor-position`\n- `allow-theme`\n- `allow-is-always-on-top`\n- `allow-internal-toggle-maximize`",
+          "description": "Default permissions for the plugin.\n#### This default permission set includes:\n\n- `allow-get-all-windows`\n- `allow-scale-factor`\n- `allow-inner-position`\n- `allow-outer-position`\n- `allow-inner-size`\n- `allow-outer-size`\n- `allow-is-fullscreen`\n- `allow-is-minimized`\n- `allow-is-maximized`\n- `allow-is-focused`\n- `allow-is-decorated`\n- `allow-is-resizable`\n- `allow-is-maximizable`\n- `allow-is-minimizable`\n- `allow-is-closable`\n- `allow-is-visible`\n- `allow-is-enabled`\n- `allow-title`\n- `allow-current-monitor`\n- `allow-primary-monitor`\n- `allow-monitor-from-point`\n- `allow-available-monitors`\n- `allow-cursor-position`\n- `allow-theme`\n- `allow-is-always-on-top`\n- `allow-activity-name`\n- `allow-scene-identifier`\n- `allow-internal-toggle-maximize`",
           "type": "string",
           "const": "core:window:default",
-          "markdownDescription": "Default permissions for the plugin.\n#### This default permission set includes:\n\n- `allow-get-all-windows`\n- `allow-scale-factor`\n- `allow-inner-position`\n- `allow-outer-position`\n- `allow-inner-size`\n- `allow-outer-size`\n- `allow-is-fullscreen`\n- `allow-is-minimized`\n- `allow-is-maximized`\n- `allow-is-focused`\n- `allow-is-decorated`\n- `allow-is-resizable`\n- `allow-is-maximizable`\n- `allow-is-minimizable`\n- `allow-is-closable`\n- `allow-is-visible`\n- `allow-is-enabled`\n- `allow-title`\n- `allow-current-monitor`\n- `allow-primary-monitor`\n- `allow-monitor-from-point`\n- `allow-available-monitors`\n- `allow-cursor-position`\n- `allow-theme`\n- `allow-is-always-on-top`\n- `allow-internal-toggle-maximize`"
+          "markdownDescription": "Default permissions for the plugin.\n#### This default permission set includes:\n\n- `allow-get-all-windows`\n- `allow-scale-factor`\n- `allow-inner-position`\n- `allow-outer-position`\n- `allow-inner-size`\n- `allow-outer-size`\n- `allow-is-fullscreen`\n- `allow-is-minimized`\n- `allow-is-maximized`\n- `allow-is-focused`\n- `allow-is-decorated`\n- `allow-is-resizable`\n- `allow-is-maximizable`\n- `allow-is-minimizable`\n- `allow-is-closable`\n- `allow-is-visible`\n- `allow-is-enabled`\n- `allow-title`\n- `allow-current-monitor`\n- `allow-primary-monitor`\n- `allow-monitor-from-point`\n- `allow-available-monitors`\n- `allow-cursor-position`\n- `allow-theme`\n- `allow-is-always-on-top`\n- `allow-activity-name`\n- `allow-scene-identifier`\n- `allow-internal-toggle-maximize`"
+        },
+        {
+          "description": "Enables the activity_name command without any pre-configured scope.",
+          "type": "string",
+          "const": "core:window:allow-activity-name",
+          "markdownDescription": "Enables the activity_name command without any pre-configured scope."
         },
         {
           "description": "Enables the available_monitors command without any pre-configured scope.",
@@ -1711,6 +2581,12 @@
           "type": "string",
           "const": "core:window:allow-scale-factor",
           "markdownDescription": "Enables the scale_factor command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the scene_identifier command without any pre-configured scope.",
+          "type": "string",
+          "const": "core:window:allow-scene-identifier",
+          "markdownDescription": "Enables the scene_identifier command without any pre-configured scope."
         },
         {
           "description": "Enables the set_always_on_bottom command without any pre-configured scope.",
@@ -1977,6 +2853,12 @@
           "markdownDescription": "Enables the unminimize command without any pre-configured scope."
         },
         {
+          "description": "Denies the activity_name command without any pre-configured scope.",
+          "type": "string",
+          "const": "core:window:deny-activity-name",
+          "markdownDescription": "Denies the activity_name command without any pre-configured scope."
+        },
+        {
           "description": "Denies the available_monitors command without any pre-configured scope.",
           "type": "string",
           "const": "core:window:deny-available-monitors",
@@ -2167,6 +3049,12 @@
           "type": "string",
           "const": "core:window:deny-scale-factor",
           "markdownDescription": "Denies the scale_factor command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the scene_identifier command without any pre-configured scope.",
+          "type": "string",
+          "const": "core:window:deny-scene-identifier",
+          "markdownDescription": "Denies the scene_identifier command without any pre-configured scope."
         },
         {
           "description": "Denies the set_always_on_bottom command without any pre-configured scope.",

@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-sftp-begin-upload"
+description = "Enables the sftp_begin_upload command without any pre-configured scope."
+commands.allow = ["sftp_begin_upload"]
+
+[[permission]]
+identifier = "deny-sftp-begin-upload"
+description = "Denies the sftp_begin_upload command without any pre-configured scope."
+commands.deny = ["sftp_begin_upload"]

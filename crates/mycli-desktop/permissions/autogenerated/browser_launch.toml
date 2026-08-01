@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-browser-launch"
+description = "Enables the browser_launch command without any pre-configured scope."
+commands.allow = ["browser_launch"]
+
+[[permission]]
+identifier = "deny-browser-launch"
+description = "Denies the browser_launch command without any pre-configured scope."
+commands.deny = ["browser_launch"]

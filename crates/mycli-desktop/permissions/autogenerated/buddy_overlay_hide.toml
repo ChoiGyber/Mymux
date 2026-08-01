@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-buddy-overlay-hide"
+description = "Enables the buddy_overlay_hide command without any pre-configured scope."
+commands.allow = ["buddy_overlay_hide"]
+
+[[permission]]
+identifier = "deny-buddy-overlay-hide"
+description = "Denies the buddy_overlay_hide command without any pre-configured scope."
+commands.deny = ["buddy_overlay_hide"]

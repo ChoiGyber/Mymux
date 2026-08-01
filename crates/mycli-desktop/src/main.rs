@@ -28,7 +28,6 @@ fn main() {
             commands::add_command,
             commands::update_command,
             commands::delete_command,
-            commands::execute_command,
             commands::set_favorite,
             commands::read_text_file,
             commands::write_text_file,
@@ -156,4 +155,102 @@ fn main() {
         })
         .run(tauri::generate_context!())
         .expect("error while running Mymux");
+}
+
+#[cfg(test)]
+mod security_regression_tests {
+    use std::collections::BTreeSet;
+
+    fn registered_commands() -> BTreeSet<String> {
+        let source = include_str!("main.rs");
+        let body = source
+            .split_once(".invoke_handler(tauri::generate_handler![")
+            .expect("invoke handler must exist")
+            .1
+            .split_once("])")
+            .expect("invoke handler must terminate")
+            .0;
+        body.lines()
+            .filter_map(|line| {
+                let command = line.trim().trim_end_matches(',');
+                command.rsplit_once("::").map(|(_, name)| name.to_string())
+            })
+            .collect()
+    }
+
+    fn manifest_commands() -> BTreeSet<String> {
+        let source = include_str!("../build.rs");
+        let body = source
+            .split_once("const APP_COMMANDS: &[&str] = &[")
+            .expect("AppManifest command list must exist")
+            .1
+            .split_once("];")
+            .expect("AppManifest command list must terminate")
+            .0;
+        body.lines()
+            .map(|line| line.trim().trim_matches(&['"', ','][..]))
+            .filter(|line| !line.is_empty())
+            .map(str::to_string)
+            .collect()
+    }
+
+    #[test]
+    fn app_manifest_covers_every_registered_custom_command() {
+        let registered = registered_commands();
+        let manifest = manifest_commands();
+        assert_eq!(manifest, registered);
+        assert!(!registered.contains("execute_command"));
+    }
+
+    #[test]
+    fn main_capability_is_local_and_excludes_remote_browser_pane() {
+        let capability: serde_json::Value =
+            serde_json::from_str(include_str!("../capabilities/default.json")).unwrap();
+        assert_eq!(capability["local"], true);
+        assert_eq!(capability["webviews"], serde_json::json!(["main"]));
+        assert!(capability.get("windows").is_none());
+        assert!(capability.get("remote").is_none());
+
+        let permissions: BTreeSet<&str> = capability["permissions"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|permission| permission.as_str())
+            .collect();
+        for command in manifest_commands() {
+            let permission = format!("allow-{}", command.replace('_', "-"));
+            assert!(
+                permissions.contains(permission.as_str()),
+                "missing {permission}"
+            );
+        }
+        assert!(!permissions.contains("allow-execute-command"));
+    }
+
+    #[test]
+    fn buddy_overlay_capability_stays_least_privilege() {
+        let capability: serde_json::Value =
+            serde_json::from_str(include_str!("../capabilities/buddy-overlay.json")).unwrap();
+        assert_eq!(capability["local"], true);
+        assert_eq!(
+            capability["webviews"],
+            serde_json::json!(["buddy-overlay"])
+        );
+        assert!(capability.get("windows").is_none());
+        assert!(capability.get("remote").is_none());
+        assert_eq!(
+            capability["permissions"],
+            serde_json::json!([
+                "core:event:allow-listen",
+                "allow-buddy-overlay-hide",
+                "allow-buddy-overlay-focus-main"
+            ])
+        );
+    }
+
+    #[test]
+    fn dynamic_tooltips_are_not_interpolated_into_html_attributes() {
+        let frontend = include_str!("../frontend/app.js");
+        assert!(!frontend.contains("title=\"${esc("));
+    }
 }

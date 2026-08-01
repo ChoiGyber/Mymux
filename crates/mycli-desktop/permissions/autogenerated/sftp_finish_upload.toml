@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-sftp-finish-upload"
+description = "Enables the sftp_finish_upload command without any pre-configured scope."
+commands.allow = ["sftp_finish_upload"]
+
+[[permission]]
+identifier = "deny-sftp-finish-upload"
+description = "Denies the sftp_finish_upload command without any pre-configured scope."
+commands.deny = ["sftp_finish_upload"]

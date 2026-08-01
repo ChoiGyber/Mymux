@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-codex-rollout-tail"
+description = "Enables the codex_rollout_tail command without any pre-configured scope."
+commands.allow = ["codex_rollout_tail"]
+
+[[permission]]
+identifier = "deny-codex-rollout-tail"
+description = "Denies the codex_rollout_tail command without any pre-configured scope."
+commands.deny = ["codex_rollout_tail"]
