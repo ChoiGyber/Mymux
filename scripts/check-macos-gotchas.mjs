@@ -20,6 +20,9 @@ const FILES = {
   commands: "crates/mycli-desktop/src/commands.rs",
   caps: "crates/mycli-desktop/capabilities/default.json",
   conf: "crates/mycli-desktop/tauri.conf.json",
+  indexHtml: "crates/mycli-desktop/frontend/index.html",
+  xterm: "crates/mycli-desktop/frontend/vendor/xterm.min.js",
+  canvas: "crates/mycli-desktop/frontend/vendor/addon-canvas.min.js",
 };
 
 const srcs = {};
@@ -71,6 +74,30 @@ const checks = [
     file: "app",
     ok: (s) => /effectiveLetterSpacing[\s\S]{0,200}?IS_MAC \? 0/.test(s),
     hint: "effectiveLetterSpacing() 의 `IS_MAC ? 0` 이 사라짐. WebKit 은 letter-spacing 을 셀 폭에 안 접어 커서가 어긋난다.",
+  },
+  {
+    id: "§4.1 xterm 코어 5.x 고정 (6.x 금지 — Canvas 렌더러 삭제됨)",
+    file: "xterm",
+    ok: (s) => s.includes("@xterm/xterm@5.") && !/@xterm\/xterm@[6-9]\d*\./.test(s),
+    hint: "vendor/xterm.min.js 가 5.x 가 아니다. xterm 6.0.0 은 Canvas 렌더러를 삭제(PR #5105)해 macOS 입력 드리프트(§4.1)를 못 고친다. 5.5.0 + addon-canvas 0.7.0 으로 되돌려라.",
+  },
+  {
+    id: "§4.1 Canvas 렌더러 애드온 존재",
+    file: "canvas",
+    ok: (s) => s.includes("CanvasAddon") || s.includes("@xterm/addon-canvas"),
+    hint: "vendor/addon-canvas.min.js 가 비었거나 다른 파일로 교체됨. Canvas 렌더러가 로드되지 않는다.",
+  },
+  {
+    id: "§4.1 index.html 이 addon-canvas.min.js 로드",
+    file: "indexHtml",
+    ok: (s) => s.includes("vendor/addon-canvas.min.js"),
+    hint: "index.html 의 addon-canvas.min.js <script> 가 빠짐. DOM 렌더러 드리프트로 되돌아간다.",
+  },
+  {
+    id: "§4.1 app.js 가 Canvas 렌더러 loadAddon",
+    file: "app",
+    ok: (s) => /loadAddon\(\s*new CanvasAddon\.CanvasAddon\(\)/.test(s),
+    hint: "createPane() 의 term.loadAddon(new CanvasAddon.CanvasAddon()) 가 사라짐. macOS 입력 드리프트가 재발한다.",
   },
   {
     id: "§4 macOS 폰트 체인 SF Mono 우선",

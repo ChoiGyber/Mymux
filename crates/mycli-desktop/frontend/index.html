@@ -625,6 +625,11 @@
   <script src="vendor/addon-fit.min.js"></script>
   <script src="vendor/addon-search.min.js"></script>
   <script src="vendor/addon-web-links.min.js"></script>
+  <!-- Canvas renderer: draws each cell at an exact integer pixel position so
+       xterm columns can't drift on macOS/WebKit (see createPane in app.js).
+       REQUIRES xterm 5.x — xterm 6.0.0 removed the Canvas renderer entirely
+       (PR #5105). Do NOT bump xterm past 5.5.0; see docs/macos-webkit-gotchas.md §4. -->
+  <script src="vendor/addon-canvas.min.js"></script>
   <script src="app.js"></script>
 </body>
 </html>

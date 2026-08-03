@@ -2557,6 +2557,26 @@ async function createPane(parentEl, shell, args, cwd) {
   }));
   term.open(termWrap);
 
+  // Renderer: xterm's DEFAULT DOM renderer lays out each row's glyphs via the
+  // browser's own text layout, so on macOS/WebKit any gap between the font's
+  // rendered advance width and xterm's integer cell grid drifts every glyph a
+  // fraction of a cell to the right. Past ~a line the cursor column desyncs from
+  // the shell's ZLE model — typed characters land in the wrong column and zsh's
+  // erase-by-`\b \b` paints its space at the visible cursor (Backspace looks
+  // like it types a space). Forcing letterSpacing 0 only shrank the drift, it
+  // didn't remove it. The Canvas renderer draws EVERY cell at an exact integer
+  // pixel position, so column drift is impossible regardless of font metrics —
+  // this is the real fix for the three linked symptoms (column drift + Backspace
+  // -as-space + off-looking layout). Must load after open() (needs the screen
+  // element); fall back to the DOM renderer if the 2D context can't be created.
+  // NOTE: needs xterm 5.x — xterm 6.0.0 removed the Canvas renderer (PR #5105),
+  // so do NOT bump xterm past 5.5.0 (docs/macos-webkit-gotchas.md §4).
+  try {
+    term.loadAddon(new CanvasAddon.CanvasAddon());
+  } catch (e) {
+    console.warn("Canvas renderer unavailable; falling back to DOM renderer", e);
+  }
+
   await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
   fitAddon.fit();
 
