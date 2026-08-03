@@ -8,6 +8,19 @@ For installers, see the [GitHub Releases](https://github.com/ChoiGyber/Mymux/rel
 
 ---
 
+## v0.1.52 — 2026-08-03
+
+### Fixed
+- **Vertical split layout stability.** Strengthened zero-basis flex sizing and
+  minimum-size constraints across the terminal layout, restored sessions, and
+  re-tiled panes so the existing session keeps its full area and remains
+  clickable when opening a session below it.
+- **Post-split terminal measurement.** Refit panes across the first layout
+  frames after creating a split so a newly mounted terminal cannot cover its
+  sibling while xterm is measuring.
+
+---
+
 ## v0.1.51 — 2026-08-03
 
 ### Fixed

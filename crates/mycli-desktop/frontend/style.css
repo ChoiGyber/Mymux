@@ -361,7 +361,9 @@ html[data-theme="light"] #toolbar-actions #btn-update:hover {
 /* ── Main layout ── */
 #main-layout {
   display: flex;
-  flex: 1;
+  flex: 1 1 0;
+  min-width: 0;
+  min-height: 0;
   overflow: hidden;
 }
 
@@ -900,7 +902,9 @@ html[data-theme="light"] #toolbar-actions #btn-update:hover {
 
 /* ── Terminal area ── */
 #terminal-area {
-  flex: 1;
+  flex: 1 1 0;
+  min-width: 0;
+  min-height: 0;
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -1116,7 +1120,9 @@ html[data-theme="light"] #toolbar-actions #btn-update:hover {
 #tab-close-modal.hidden { display: none; }
 
 #terminal-container {
-  flex: 1;
+  flex: 1 1 0;
+  min-width: 0;
+  min-height: 0;
   position: relative;
   overflow: hidden;
 }
@@ -1830,6 +1836,10 @@ html[data-theme="light"] #toolbar-actions #btn-update:hover {
 .terminal-instance {
   position: absolute;
   inset: 0;
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
   display: none;
 }
 .terminal-instance.active { display: flex; }
@@ -1840,6 +1850,10 @@ html[data-theme="light"] #toolbar-actions #btn-update:hover {
   flex: 1 1 0;
   min-width: 0;
   min-height: 0;
+  width: 100%;
+  height: 100%;
+  max-width: 100%;
+  max-height: 100%;
   overflow: hidden;
   position: relative;
 }

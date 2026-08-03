@@ -4858,7 +4858,7 @@ async function spawnTerminal(shell, cwd) {
 
   const rootContainer = document.createElement("div");
   rootContainer.className = "pane-container horizontal";
-  rootContainer.style.cssText = "flex:1;";
+  rootContainer.style.cssText = "flex:1 1 0;min-width:0;min-height:0;";
   tabEl.appendChild(rootContainer);
   terminalContainer.appendChild(tabEl);
 
@@ -4917,6 +4917,23 @@ function captureBottomPins() {
   };
 }
 
+// A pane can arrive here with an old flex value from a divider drag or a
+// re-tile. Normalize every new split branch before xterm measures it so the
+// branch cannot retain an intrinsic min-content width/height or cover its
+// sibling during the first layout pass.
+function normalizeSplitChildren(container) {
+  if (!container || !container.children) return;
+  container.style.flex = "1 1 0";
+  container.style.minWidth = "0";
+  container.style.minHeight = "0";
+  for (const child of [...container.children]) {
+    if (child.classList.contains("pane-divider")) continue;
+    child.style.flex = "1 1 0";
+    child.style.minWidth = "0";
+    child.style.minHeight = "0";
+  }
+}
+
 // Split the focused pane
 async function splitPane(direction, cwd) {
   if (!focusedPaneId) return;
@@ -4955,9 +4972,7 @@ async function splitPane(direction, cwd) {
     // Keep both branches shrinkable while the new xterm is being measured.
     // Without an explicit zero basis, its intrinsic viewport can temporarily
     // cover the existing branch during the first layout pass.
-    for (const child of [...splitContainer.children]) {
-      if (!child.classList.contains("pane-divider")) child.style.flex = "1 1 0";
-    }
+    normalizeSplitChildren(splitContainer);
     currentTab.panes.push(newPtyId);
     const nti = terminals.get(newPtyId);
     if (nti) nti.session = { kind: "local", shell: splitShell || null, cwd: cwd || null };
@@ -4965,9 +4980,11 @@ async function splitPane(direction, cwd) {
 
     // Refit all panes in this tab, then re-assert the bottom pin — the spawn
     // spans several frames, past the repin scheduled at the DOM move.
-    await new Promise((r) => requestAnimationFrame(r));
+    await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
     refitAllPanes();
     repin();
+    await new Promise((r) => requestAnimationFrame(r));
+    refitAllPanes();
     return newPtyId;
   } catch (err) {
     toast("Split failed: " + err, true);
@@ -5139,7 +5156,7 @@ function closePane(ptyId) {
   const remaining = splitContainer.children[0];
   if (remaining && splitContainer.parentElement) {
     splitContainer.parentElement.replaceChild(remaining, splitContainer);
-    if (remaining.style) remaining.style.flex = "1";
+    if (remaining.style) remaining.style.cssText = "flex:1 1 0;min-width:0;min-height:0;";
   }
 
   // Focus another pane
@@ -5482,19 +5499,20 @@ function movePane(srcId, targetId, position) {
 
   const split = document.createElement("div");
   split.className = `pane-container ${vertical ? "vertical" : "horizontal"}`;
-  split.style.cssText = "flex:1;";
+  split.style.cssText = "flex:1 1 0;min-width:0;min-height:0;";
   parent.replaceChild(split, targetLeaf);
 
   const divider = document.createElement("div");
   divider.className = "pane-divider";
-  srcLeaf.style.flex = "1";
-  targetLeaf.style.flex = "1";
+  srcLeaf.style.flex = "1 1 0";
+  targetLeaf.style.flex = "1 1 0";
 
   if (before) {
     split.append(srcLeaf, divider, targetLeaf);
   } else {
     split.append(targetLeaf, divider, srcLeaf);
   }
+  normalizeSplitChildren(split);
   setupDividerDrag(divider, split, vertical ? "vertical" : "horizontal");
   repin();
 
@@ -5857,7 +5875,7 @@ async function doSshConnect(opts) {
   tabEl.className = "terminal-instance active";
   const rootContainer = document.createElement("div");
   rootContainer.className = "pane-container horizontal";
-  rootContainer.style.cssText = "flex:1;";
+  rootContainer.style.cssText = "flex:1 1 0;min-width:0;min-height:0;";
   tabEl.appendChild(rootContainer);
   terminalContainer.appendChild(tabEl);
 
@@ -6569,7 +6587,7 @@ async function buildPaneNode(parentEl, node) {
   const dir = node && node.dir === "vertical" ? "vertical" : "horizontal";
   const container = document.createElement("div");
   container.className = "pane-container " + dir;
-  container.style.cssText = "flex:1;";
+  container.style.cssText = "flex:1 1 0;min-width:0;min-height:0;";
   parentEl.appendChild(container);
   const kids = (node && node.children) || [];
   for (let i = 0; i < kids.length; i++) {
@@ -9197,7 +9215,7 @@ async function openStartupGuide(showClaude, showCodex) {
 
   const rootContainer = document.createElement("div");
   rootContainer.className = "pane-container horizontal";
-  rootContainer.style.cssText = "flex:1;";
+  rootContainer.style.cssText = "flex:1 1 0;min-width:0;min-height:0;";
   tabEl.appendChild(rootContainer);
   terminalContainer.appendChild(tabEl);
 
