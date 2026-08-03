@@ -21,3 +21,7 @@ mymux_updater.key*
 # PyInstaller build artifacts for the local faster-whisper voice runner
 /build/
 faster-whisper.spec
+
+# macOS Finder metadata
+.DS_Store
+**/.DS_Store
