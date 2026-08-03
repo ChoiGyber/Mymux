@@ -2523,7 +2523,7 @@ async function createPane(parentEl, shell, args, cwd) {
   const paneEl = document.createElement("div");
   paneEl.className = "pane-leaf";
   const termWrap = document.createElement("div");
-  termWrap.style.cssText = "flex:1;overflow:hidden;";
+  termWrap.style.cssText = "flex:1 1 0;min-width:0;min-height:0;overflow:hidden;";
   const statusBar = document.createElement("div");
   statusBar.className = "pane-statusbar";
   paneEl.style.display = "flex";
@@ -2864,7 +2864,7 @@ async function createPane(parentEl, shell, args, cwd) {
   // focus back within a second ("click twice to enter a pane"). Track the
   // switch on mousedown in the capture phase (runs before xterm can swallow
   // it), plus a DOM focus listener on the helper textarea (the element that
-  // actually receives focus; xterm 5.5 has no term.onFocus event) so state
+  // actually receives focus; xterm has no term.onFocus event) so state
   // syncs whenever xterm focuses itself.
   if (term.textarea) {
     term.textarea.addEventListener("focus", () => { if (focusedPaneId !== id) setFocusedPane(id); });
@@ -2874,13 +2874,29 @@ async function createPane(parentEl, shell, args, cwd) {
     // window. Track composition so restore() leaves an actively-composing textarea
     // alone, and cancel the pending post-return refocus retries the moment the
     // user starts composing (composition proves input focus is alive).
+    const noteImeActivity = () => {
+      const ti = terminals.get(id);
+      if (ti) ti.imeRestoreBlockedUntil = performance.now() + 350;
+      cancelFocusReturnRetries();
+    };
+    const isImeInputSignal = (e) => e.isComposing ||
+      e.inputType === "insertCompositionText" || e.inputType === "insertFromComposition" ||
+      (typeof e.data === "string" && /[^\x00-\x7F]/.test(e.data));
     term.textarea.addEventListener("compositionstart", () => {
       const ti = terminals.get(id); if (ti) ti.imeComposing = true;
-      cancelFocusReturnRetries();
-    });
+      noteImeActivity();
+    }, true);
+    term.textarea.addEventListener("compositionupdate", noteImeActivity, true);
+    term.textarea.addEventListener("beforeinput", (e) => {
+      if (isImeInputSignal(e)) noteImeActivity();
+    }, true);
+    term.textarea.addEventListener("input", (e) => {
+      if (isImeInputSignal(e)) noteImeActivity();
+    }, true);
     term.textarea.addEventListener("compositionend", () => {
       const ti = terminals.get(id); if (ti) ti.imeComposing = false;
-    });
+      noteImeActivity();
+    }, true);
 
     // ── macOS WKWebView Korean/CJK IME fix ────────────────────────────────────
     // macOS-only. On WebKit (WKWebView) the very FIRST character of a typing run
@@ -2975,9 +2991,13 @@ async function createPane(parentEl, shell, args, cwd) {
   const helperTa = term.element && term.element.querySelector(".xterm-helper-textarea");
   if (helperTa) {
     helperTa.addEventListener("blur", () => {
+      const composingAtBlur = !!terminals.get(id)?.imeComposing;
       setTimeout(() => {
+        if (composingAtBlur || !document.hasFocus()) return;
         if (focusedPaneId !== id) return;              // only the active pane
         if (browserTabActive || viewerActive) return;  // not in terminal mode
+        const ti = terminals.get(id);
+        if (ti && (ti.imeComposing || performance.now() < (ti.imeRestoreBlockedUntil || 0))) return;
         const el = term.element;
         if (!el || el.classList.contains("focus")) return; // xterm already focused
         // Leave it only if focus genuinely moved to another input/pane (rename
@@ -3069,7 +3089,7 @@ function startFocusKeeper() {
     if (tab && tab.panes.length && !tab.panes.includes(pid)) pid = tab.panes[0];
     if (pid == null || !terminals.has(pid)) return;
     const t = terminals.get(pid);
-    if (t.imeComposing) return; // mid-Hangul composition — blur/refocus here double-types & breaks the IME
+    if (t.imeComposing || performance.now() < (t.imeRestoreBlockedUntil || 0)) return;
     const el = t.term.element;
     if (!el || !el.offsetParent) return; // not visible → leave it
     const ta = el.querySelector(".xterm-helper-textarea");
@@ -3131,9 +3151,9 @@ function startFocusKeeper() {
     restore(true);
     forceRepaintVisiblePanes(); // wake xterm's rAF renderer so buffered echo paints now, not in a burst
     returnRetries = [
-      setTimeout(() => restore(true), 80),
-      setTimeout(() => restore(true), 220),
-      setTimeout(() => restore(true), 500),
+      setTimeout(() => restore(false), 80),
+      setTimeout(() => restore(false), 220),
+      setTimeout(() => restore(false), 500),
     ];
   };
   window.addEventListener("focus", (e) => {
@@ -4913,7 +4933,7 @@ async function splitPane(direction, cwd) {
   // Create a new split container
   const splitContainer = document.createElement("div");
   splitContainer.className = `pane-container ${direction}`;
-  splitContainer.style.cssText = "flex:1;";
+  splitContainer.style.cssText = "flex:1 1 0;min-width:0;min-height:0;";
 
   // Move existing pane into split (scroll pin captured first — see
   // captureBottomPins for why reparenting breaks bottom-follow).
@@ -4932,6 +4952,12 @@ async function splitPane(direction, cwd) {
   try {
     const splitShell = getDefaultShellId();
     const newPtyId = await createPane(splitContainer, splitShell, null, cwd);
+    // Keep both branches shrinkable while the new xterm is being measured.
+    // Without an explicit zero basis, its intrinsic viewport can temporarily
+    // cover the existing branch during the first layout pass.
+    for (const child of [...splitContainer.children]) {
+      if (!child.classList.contains("pane-divider")) child.style.flex = "1 1 0";
+    }
     currentTab.panes.push(newPtyId);
     const nti = terminals.get(newPtyId);
     if (nti) nti.session = { kind: "local", shell: splitShell || null, cwd: cwd || null };

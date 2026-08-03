@@ -284,6 +284,79 @@ fn login_shell(shell: std::path::PathBuf) -> CommandBuilder {
     c
 }
 
+/// macOS's default zsh prompt can wrap a long cwd in a narrow split pane.
+/// zsh then keeps its logical cursor on the wrapped line while xterm paints
+/// the next input against a different visual column; Backspace consequently
+/// looks like it inserts a space or moves like Tab.  Use a small ZDOTDIR
+/// wrapper that sources the user's normal .zshrc first, then installs the same
+/// one-line prompt contract as the Windows shells.
+#[cfg(not(windows))]
+fn mymux_zsh_dir() -> Option<std::path::PathBuf> {
+    let home = dirs::home_dir()?;
+    let dir = home.join(".mycli").join("zsh");
+    std::fs::create_dir_all(&dir).ok()?;
+    let content = r#"# Mymux zsh init: preserve the user's config, then keep the prompt on one row.
+if [[ -n "${MYMUX_USER_ZDOTDIR:-}" && -r "$MYMUX_USER_ZDOTDIR/.zshrc" ]]; then
+  source "$MYMUX_USER_ZDOTDIR/.zshrc"
+elif [[ -r "$HOME/.zshrc" ]]; then
+  source "$HOME/.zshrc"
+fi
+
+setopt prompt_subst
+__mymux_prompt() {
+  local p="${PWD/#$HOME/~}" cols=${COLUMNS:-80} out= part i
+  if (( cols < 12 )); then
+    __mymux_p=""
+    return
+  fi
+  if (( ${#p} + 4 > cols )); then
+    local -a parts
+    parts=("${(@s:/:)p}")
+    for (( i = 1; i < $#parts; i++ )); do
+      [[ -n "${parts[i]}" ]] && out+="${parts[i][1]}/"
+    done
+    out+="${parts[-1]}"
+    p="$out"
+    if (( ${#p} + 4 > cols )); then
+      local keep=$(( cols - 8 ))
+      (( keep < 1 )) && keep=1
+      p="...${p: -keep}"
+    fi
+  fi
+  __mymux_p="$p"
+}
+precmd_functions=(${precmd_functions:#__mymux_prompt} __mymux_prompt)
+PROMPT=$'%{\e]133;A\e\\%}%F{cyan}${__mymux_p}%f $ %{\e]133;B\e\\%}'
+"#;
+    // ZDOTDIR also redirects zsh's login startup files, so proxy the user's
+    // .zshenv and .zprofile as well as .zshrc before applying our prompt.
+    std::fs::write(
+        dir.join(".zshenv"),
+        "[[ -r \"$HOME/.zshenv\" ]] && source \"$HOME/.zshenv\"\n",
+    )
+    .ok()?;
+    std::fs::write(
+        dir.join(".zprofile"),
+        "[[ -r \"$HOME/.zprofile\" ]] && source \"$HOME/.zprofile\"\n",
+    )
+    .ok()?;
+    std::fs::write(dir.join(".zshrc"), content).ok()?;
+    Some(dir)
+}
+
+#[cfg(not(windows))]
+fn zsh_login_shell(shell: std::path::PathBuf) -> CommandBuilder {
+    let mut c = login_shell(shell);
+    if let Some(dir) = mymux_zsh_dir() {
+        let user_zdotdir = std::env::var_os("ZDOTDIR")
+            .and_then(|v| std::path::PathBuf::from(v).to_str().map(str::to_owned))
+            .unwrap_or_default();
+        c.env("ZDOTDIR", dir);
+        c.env("MYMUX_USER_ZDOTDIR", user_zdotdir);
+    }
+    c
+}
+
 /// Default shell. On Windows prefer Git Bash (clean, no product banner); if it
 /// isn't installed, fall back to PowerShell with `-NoLogo` so the startup
 /// banner is suppressed. On Unix (macOS/Linux) spawn the user's `$SHELL` as a
@@ -316,7 +389,11 @@ fn default_shell_builder() -> CommandBuilder {
         let shell = std::env::var("SHELL")
             .map(std::path::PathBuf::from)
             .unwrap_or_else(|_| "/bin/sh".into());
-        login_shell(shell)
+        if shell.file_name().and_then(|n| n.to_str()) == Some("zsh") {
+            zsh_login_shell(shell)
+        } else {
+            login_shell(shell)
+        }
     }
 }
 
@@ -379,7 +456,7 @@ fn build_command(shell: Option<&str>, args: Option<&Vec<String>>) -> CommandBuil
                 return login_shell(find_in_path("bash").unwrap_or_else(|| "/bin/bash".into()));
             }
             "zsh" => {
-                return login_shell(find_in_path("zsh").unwrap_or_else(|| "/bin/zsh".into()));
+                return zsh_login_shell(find_in_path("zsh").unwrap_or_else(|| "/bin/zsh".into()));
             }
             _ => {}
         }

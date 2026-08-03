@@ -8,6 +8,21 @@ For installers, see the [GitHub Releases](https://github.com/ChoiGyber/Mymux/rel
 
 ---
 
+## v0.1.51 — 2026-08-03
+
+### Fixed
+- **Vertical split pane visibility.** Prevented terminal panes and nested split
+  containers from retaining an intrinsic minimum size that could cover the
+  existing tmux pane and leave it black or unclickable after adding/removing a
+  session.
+- **macOS zsh input alignment.** Added a managed zsh startup wrapper with a
+  compact prompt and terminal prompt markers so long directories do not make
+  typed text, Backspace, or the cursor appear offset.
+- **Terminal focus and IME handling.** Updated the bundled xterm.js assets and
+  focus restoration guards used during pane/window changes.
+
+---
+
 ## v0.1.50 — 2026-08-02
 
 ### Security

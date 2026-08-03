@@ -1837,15 +1837,31 @@ html[data-theme="light"] #toolbar-actions #btn-update:hover {
 /* ── Split panes ── */
 .pane-container {
   display: flex;
-  flex: 1;
+  flex: 1 1 0;
+  min-width: 0;
+  min-height: 0;
   overflow: hidden;
   position: relative;
 }
 .pane-container.horizontal { flex-direction: row; }
 .pane-container.vertical { flex-direction: column; }
 
+/* Flex items otherwise keep their min-content size.  An xterm viewport has
+   an intrinsic scrollback height, so a vertical split can let the newly
+   mounted terminal paint over its sibling instead of shrinking into its own
+   half.  The resulting black layer also wins hit-testing, making the older
+   pane look both invisible and unclickable. */
+.pane-container > .pane-leaf,
+.pane-container > .pane-container {
+  min-width: 0;
+  min-height: 0;
+  flex-basis: 0;
+}
+
 .pane-leaf {
-  flex: 1;
+  flex: 1 1 0;
+  min-width: 0;
+  min-height: 0;
   overflow: hidden;
   position: relative;
   padding: 2px;
@@ -2912,7 +2928,12 @@ html[data-theme="dark"] .pane-command-shortcut {
 .replay-list code { color: var(--accent); word-break: break-all; }
 
 /* ── xterm ── */
-.xterm { height: 100%; }
+.xterm {
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+}
 /* Scrollback scrollbar — wider + higher-contrast so it's actually noticeable
    when content scrolls above the command line (appears only when there IS
    scrollback to scroll). */

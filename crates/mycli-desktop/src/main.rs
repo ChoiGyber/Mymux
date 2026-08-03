@@ -253,4 +253,56 @@ mod security_regression_tests {
         let frontend = include_str!("../frontend/app.js");
         assert!(!frontend.contains("title=\"${esc("));
     }
+
+    #[test]
+    fn focus_restore_does_not_interrupt_ime_input() {
+        let frontend = include_str!("../frontend/app.js");
+        for signal in [
+            "compositionstart",
+            "compositionupdate",
+            "beforeinput",
+            "input",
+            "compositionend",
+        ] {
+            assert!(
+                frontend.contains(signal),
+                "missing IME signal guard: {signal}"
+            );
+        }
+        assert!(frontend.contains("composingAtBlur || !document.hasFocus()"));
+        assert!(frontend.contains("imeRestoreBlockedUntil"));
+        for delay in [80, 220, 500] {
+            assert!(frontend.contains(&format!("setTimeout(() => restore(false), {delay})")));
+        }
+        assert!(!frontend.contains("setTimeout(() => restore(true)"));
+    }
+
+    #[test]
+    fn bundled_xterm_assets_are_the_ime_fixed_release() {
+        let assets = [
+            (
+                include_str!("../frontend/vendor/xterm.min.js"),
+                "@xterm/xterm@6.0.0",
+            ),
+            (
+                include_str!("../frontend/vendor/xterm.min.css"),
+                "@xterm/xterm@6.0.0",
+            ),
+            (
+                include_str!("../frontend/vendor/addon-fit.min.js"),
+                "@xterm/addon-fit@0.11.0",
+            ),
+            (
+                include_str!("../frontend/vendor/addon-search.min.js"),
+                "@xterm/addon-search@0.16.0",
+            ),
+            (
+                include_str!("../frontend/vendor/addon-web-links.min.js"),
+                "@xterm/addon-web-links@0.12.0",
+            ),
+        ];
+        for (asset, version) in assets {
+            assert!(asset.contains(version), "vendor asset is not {version}");
+        }
+    }
 }
