@@ -8,6 +8,30 @@ For installers, see the [GitHub Releases](https://github.com/ChoiGyber/Mymux/rel
 
 ---
 
+## v0.1.55 — 2026-08-11
+
+### Fixed
+- **New panes no longer inherit a stale account pin.** Mymux is a long-running
+  parent process, so a multi-account proxy pin that was set when the app started
+  (`TC_ACCT`, or an account-scoped `ANTHROPIC_BASE_URL` such as
+  `http://localhost:3456/tc-acct/<account>`) was handed to every pane opened
+  afterwards — including panes opened long after that account had been removed
+  or the Claude login changed, because neither touches the environment of a
+  process that is already running. Those panes kept asking for an account that
+  no longer existed and every call failed with `404 Unknown account pin` instead
+  of falling back to the proxy's account rotation. The pin is now cleared at the
+  single point where a pane is spawned, so it applies to PowerShell, Git Bash,
+  CMD, SSH and custom shells alike. A real endpoint, a company gateway, the
+  proxy's own root URL and an account-scoped address on a remote host are all
+  left untouched, and a pin you export yourself inside a pane still works
+  there. / 앱 실행 중에 계정을 삭제하거나 로그인을 바꿔도 새 패인이 예전 계정
+  pin을 그대로 물려받아 `404 Unknown account pin`이 반복되던 문제를
+  수정했습니다. 이제 패인이 시작하는 환경에서만 pin을 정리하므로 모든 셸에
+  동일하게 적용되고, 일반 주소나 패인 안에서 직접 설정한 pin은 그대로
+  유지됩니다.
+
+---
+
 ## v0.1.54 — 2026-08-11
 
 ### Added
