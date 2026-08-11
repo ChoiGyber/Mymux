@@ -471,6 +471,80 @@ fn build_command(shell: Option<&str>, args: Option<&Vec<String>>) -> CommandBuil
     c
 }
 
+// ── Account pin sanitation (see `pane_command`) ─────────────────────────────
+
+/// Proxies that multiplex several Claude accounts pin a shell to one of them
+/// through these. `TC_ACCT` names the account; `ANTHROPIC_BASE_URL` carries the
+/// same choice in its path when the proxy is account-scoped.
+const ACCOUNT_PIN_VAR: &str = "TC_ACCT";
+const ANTHROPIC_BASE_URL_VAR: &str = "ANTHROPIC_BASE_URL";
+const ACCOUNT_SCOPED_PATH: &str = "/tc-acct/";
+
+/// The proxy root behind an account-scoped local URL, e.g.
+/// `http://127.0.0.1:3456/tc-acct/someone` → `http://127.0.0.1:3456`.
+///
+/// Returns `None` — meaning "leave this alone" — for everything else: the
+/// proxy's own root URL, `api.anthropic.com`, a company gateway, and an
+/// account-scoped path on a REMOTE host, which is somebody else's routing and
+/// not ours to rewrite.
+fn account_scoped_proxy_root(url: &str) -> Option<String> {
+    let parsed = reqwest::Url::parse(url.trim()).ok()?;
+    if !matches!(parsed.scheme(), "http" | "https") {
+        return None;
+    }
+    if !parsed.path().starts_with(ACCOUNT_SCOPED_PATH) {
+        return None;
+    }
+    // Only a proxy running on this machine is ours to normalize. `host_str`
+    // brackets IPv6 literals, so strip those before parsing the address.
+    let host = parsed.host_str()?;
+    let bare = host.trim_start_matches('[').trim_end_matches(']');
+    let loopback = bare.eq_ignore_ascii_case("localhost")
+        || bare
+            .parse::<std::net::IpAddr>()
+            .map(|ip| ip.is_loopback())
+            .unwrap_or(false);
+    if !loopback {
+        return None;
+    }
+    // Serialized by the URL crate so the port and any IPv6 brackets come back
+    // in their canonical form; path, query and fragment are dropped with it.
+    Some(parsed.origin().ascii_serialization())
+}
+
+/// Drop an inherited account pin from the environment a new shell will start
+/// with.
+///
+/// Mymux is a long-running parent process, so whatever pin existed when the app
+/// was launched is inherited by every pane opened afterwards — including panes
+/// opened long after that account was removed from the proxy or the Claude
+/// login was changed. Neither of those touches an already-running process, so
+/// the pane keeps requesting an account that no longer exists and every call
+/// fails with `Unknown account pin` (404) instead of falling back to the
+/// proxy's account rotation. See issue #4.
+///
+/// This edits only the environment a shell is *started* with. A pin the user
+/// exports inside a pane is deliberate and stays in effect there.
+fn sanitize_account_pin(cmd: &mut CommandBuilder) {
+    cmd.env_remove(ACCOUNT_PIN_VAR);
+    let root = cmd
+        .get_env(ANTHROPIC_BASE_URL_VAR)
+        .and_then(|value| value.to_str())
+        .and_then(account_scoped_proxy_root);
+    if let Some(root) = root {
+        cmd.env(ANTHROPIC_BASE_URL_VAR, root);
+    }
+}
+
+/// The command a new pane is spawned with. Every pane goes through here —
+/// default shell, PowerShell, Git Bash, CMD, SSH, a custom executable — so the
+/// account-pin sanitation above cannot be missed by a shell-specific builder.
+fn pane_command(shell: Option<&str>, args: Option<&Vec<String>>) -> CommandBuilder {
+    let mut cmd = build_command(shell, args);
+    sanitize_account_pin(&mut cmd);
+    cmd
+}
+
 /// Streaming UTF-8 decode: append `incoming` to `pending`, return the decoded
 /// complete prefix, and leave an incomplete trailing sequence (≤3 bytes) in
 /// `pending` for the next read. PTY reads are raw byte chunks, so a multi-byte
@@ -526,7 +600,7 @@ pub fn pty_spawn(
         .filter(|p| p.is_dir())
         .unwrap_or_else(|| dirs::home_dir().unwrap_or_else(|| ".".into()));
 
-    let mut cmd = build_command(shell.as_deref(), args.as_ref());
+    let mut cmd = pane_command(shell.as_deref(), args.as_ref());
     cmd.cwd(&work_dir);
 
     let mut child = pair.slave.spawn_command(cmd).map_err(|e| e.to_string())?;
@@ -694,6 +768,138 @@ mod utf8_stream_tests {
         let s = decode_utf8_stream(&mut pending, &[b'a', 0xFF, b'b']);
         assert_eq!(s, "a\u{FFFD}b");
         assert!(pending.is_empty());
+    }
+}
+
+/// Issue #4: a stale account pin inherited from the Mymux process pinned every
+/// new pane to a deleted account, and every request 404'd with no fallback.
+#[cfg(test)]
+mod account_pin_tests {
+    use super::*;
+
+    const SCOPED: &str = "http://localhost:3456/tc-acct/deleted-account";
+
+    #[test]
+    fn account_scoped_local_urls_normalize_to_the_proxy_root() {
+        for (url, root) in [
+            (SCOPED, "http://localhost:3456"),
+            ("http://127.0.0.1:3456/tc-acct/someone", "http://127.0.0.1:3456"),
+            ("https://127.0.0.1:8443/tc-acct/someone", "https://127.0.0.1:8443"),
+            ("http://[::1]:3456/tc-acct/someone", "http://[::1]:3456"),
+            // Trailing segments, a query and a fragment all go with the path.
+            ("http://localhost:3456/tc-acct/someone/v1/messages?beta=1#x", "http://localhost:3456"),
+            // No explicit port — the default one stays implicit.
+            ("http://localhost/tc-acct/someone", "http://localhost"),
+        ] {
+            assert_eq!(account_scoped_proxy_root(url).as_deref(), Some(root), "{url}");
+        }
+    }
+
+    #[test]
+    fn everything_else_is_left_alone() {
+        for url in [
+            // The proxy's own root — already what we would normalize to.
+            "http://localhost:3456",
+            "http://localhost:3456/",
+            // A real endpoint and a company gateway.
+            "https://api.anthropic.com",
+            "https://gateway.example.com/v1",
+            // Account-scoped, but on someone else's host: not our routing.
+            "https://proxy.example.com:3456/tc-acct/someone",
+            // Not a URL at all.
+            "",
+            "not a url",
+        ] {
+            assert_eq!(account_scoped_proxy_root(url), None, "{url}");
+        }
+    }
+
+    #[test]
+    fn an_inherited_pin_is_dropped_before_the_shell_starts() {
+        // CommandBuilder seeds itself from the parent environment, so setting
+        // these is exactly the shape an inherited pin arrives in.
+        let mut cmd = CommandBuilder::new("test-shell");
+        cmd.env(ACCOUNT_PIN_VAR, "deleted-account");
+        cmd.env(ANTHROPIC_BASE_URL_VAR, SCOPED);
+
+        sanitize_account_pin(&mut cmd);
+
+        assert_eq!(cmd.get_env(ACCOUNT_PIN_VAR), None);
+        assert_eq!(
+            cmd.get_env(ANTHROPIC_BASE_URL_VAR).and_then(|v| v.to_str()),
+            Some("http://localhost:3456"),
+        );
+    }
+
+    #[test]
+    fn a_normal_base_url_and_unrelated_vars_survive() {
+        let mut cmd = CommandBuilder::new("test-shell");
+        cmd.env(ANTHROPIC_BASE_URL_VAR, "https://api.anthropic.com");
+        cmd.env("ANTHROPIC_API_KEY", "keep-me");
+
+        sanitize_account_pin(&mut cmd);
+
+        assert_eq!(
+            cmd.get_env(ANTHROPIC_BASE_URL_VAR).and_then(|v| v.to_str()),
+            Some("https://api.anthropic.com"),
+        );
+        assert_eq!(cmd.get_env("ANTHROPIC_API_KEY").and_then(|v| v.to_str()), Some("keep-me"));
+    }
+
+    /// Every shell the UI can ask for, not just the default one — a
+    /// shell-specific builder must not be able to carry the pin through.
+    #[test]
+    fn every_shell_kind_is_sanitized() {
+        let shells = [
+            None,
+            Some("powershell"),
+            Some("pwsh"),
+            Some("powershell.exe"),
+            Some("bash"),
+            Some("git-bash"),
+            Some("cmd"),
+            Some("zsh"),
+            Some("some-custom-shell"),
+        ];
+        for shell in shells {
+            let mut cmd = build_command(shell, None);
+            cmd.env(ACCOUNT_PIN_VAR, "deleted-account");
+            cmd.env(ANTHROPIC_BASE_URL_VAR, SCOPED);
+
+            sanitize_account_pin(&mut cmd);
+
+            let label = shell.unwrap_or("<default>");
+            assert_eq!(cmd.get_env(ACCOUNT_PIN_VAR), None, "{label}");
+            assert_eq!(
+                cmd.get_env(ANTHROPIC_BASE_URL_VAR).and_then(|v| v.to_str()),
+                Some("http://localhost:3456"),
+                "{label}",
+            );
+        }
+    }
+
+    /// The sanitation is only guaranteed for every pane while the spawn path
+    /// goes through `pane_command`. Guard that structurally so a later edit
+    /// cannot quietly reintroduce a raw `build_command` spawn.
+    #[test]
+    fn panes_are_spawned_through_the_sanitizing_builder() {
+        let source = include_str!("terminal.rs");
+        let spawn_site = source
+            .split_once("pub fn pty_spawn(")
+            .expect("pty_spawn must exist")
+            .1;
+        let body = spawn_site
+            .split_once("spawn_command(")
+            .expect("pty_spawn must spawn the command")
+            .0;
+        assert!(
+            body.contains("pane_command("),
+            "pty_spawn must build its command with pane_command so the account pin is sanitized",
+        );
+        assert!(
+            !body.contains("build_command("),
+            "pty_spawn must not call build_command directly — that skips sanitize_account_pin",
+        );
     }
 }
 
