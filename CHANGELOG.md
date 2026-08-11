@@ -8,6 +8,31 @@ For installers, see the [GitHub Releases](https://github.com/ChoiGyber/Mymux/rel
 
 ---
 
+## v0.1.54 — 2026-08-11
+
+### Added
+- **Per-session usage without oh-my-claudecode.** The pane badge and the
+  session-list `%` are read from `ctx:NN%` printed into the pane, and Claude
+  Code hands those context-window numbers to its statusline command only — so a
+  PC with no statusline set up showed the toolbar's account usage while every
+  session stayed blank. Mymux can now be that statusline: the 🔔 settings modal
+  gained a row to switch it on. It writes `settings.json` only when no
+  statusline is configured, leaves another tool's statusline (OMC HUD and the
+  like) untouched, backs the file up first, and can be switched back off. /
+  OMC 없이도 세션별 사용량이 표시되도록 Mymux가 Claude statusline 역할을
+  대신합니다 (🔔 설정에서 켜기·끄기).
+- **Usage source at a glance.** The same row reports Codex too. Codex has no
+  statusline — its per-session usage comes from the session rollout — so it
+  shows whether that data is available instead of offering an install.
+
+### Fixed
+- **Vendored xterm guard.** The test pinning the bundled xterm build still
+  asserted 6.0.0 after the macOS input-drift fix pinned it back to 5.5.0, so the
+  desktop test suite was failing. It now matches the pinned assets and covers
+  the canvas addon.
+
+---
+
 ## v0.1.53 — 2026-08-11
 
 ### Fixed
