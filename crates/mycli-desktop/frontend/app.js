@@ -355,10 +355,13 @@ async function setupListeners() {
       if (notifyDialect) notifyDialect.value = notifyFlashPrefs.dialect;
       if (notifyChkCtxBadge) notifyChkCtxBadge.checked = notifyFlashPrefs.ctxBadge;
       if (notifyChkCtxVoice) notifyChkCtxVoice.checked = notifyFlashPrefs.ctxVoice;
+      refreshStatuslineRow();
       // The native browser overlay floats above all HTML; hide it so the modal shows.
       if (browserTabActive && browserMode === "native") invoke("browser_pane_hide").catch(() => {});
       notifyModal.classList.remove("hidden");
     });
+    const btnStatusline = document.getElementById("btn-statusline");
+    if (btnStatusline) btnStatusline.addEventListener("click", () => toggleStatusline());
     document.getElementById("notify-modal-close").addEventListener("click", closeNotifyModal);
     notifyModal.addEventListener("click", (e) => { if (e.target === notifyModal) closeNotifyModal(); });
     notifyModal.addEventListener("keydown", (e) => { if (e.key === "Escape") closeNotifyModal(); });
@@ -3905,6 +3908,95 @@ function updateCtxUi(id, t) {
     se.style.borderColor = color;
     se.classList.toggle("stale", stale);
   }
+}
+
+// ── Claude statusline hookup (the source of the per-session %) ──────────────
+// The pane badge and the session-list % are scraped from `ctx:NN%` in a pane's
+// output, and Claude Code hands those numbers to its statusline command only —
+// they are not in the transcript, and the toolbar's CL readout is account-wide.
+// So on a PC with no statusline set up the toolbar shows usage while every
+// session stays blank. Mymux can install itself as that statusline.
+let statuslineState = null;
+
+async function refreshStatuslineRow() {
+  const label = document.getElementById("statusline-state");
+  const btn = document.getElementById("btn-statusline");
+  if (!label || !btn) return;
+  btn.disabled = true;
+  btn.textContent = "확인 중…";
+  label.className = "statusline-state";
+  refreshCodexUsageRow();
+  try {
+    statuslineState = await invoke("claude_statusline_status");
+  } catch (e) {
+    statuslineState = null;
+    label.textContent = "Claude Code: 설정을 읽지 못했습니다 — " + e;
+    label.classList.add("warn");
+    btn.textContent = "켜기";
+    return;
+  }
+  switch (statuslineState.state) {
+    case "mymux":
+      label.textContent = "Claude Code: 켜짐 — Mymux가 사용량을 제공합니다. / On";
+      label.classList.add("on");
+      btn.textContent = "끄기";
+      btn.disabled = false;
+      break;
+    case "other":
+      // Someone else's statusline (OMC HUD and the like) is never replaced. If
+      // it prints ctx% the badges already work, so nothing is broken here.
+      label.textContent = "Claude Code: 다른 statusline 사용 중이라 건드리지 않습니다 (OMC HUD 등).";
+      btn.textContent = "사용 중";
+      break;
+    case "none":
+      label.textContent = "Claude Code: 꺼짐 — 패인 배지와 세션 목록 % 가 안 나옵니다. / Off";
+      label.classList.add("warn");
+      btn.textContent = "켜기";
+      btn.disabled = false;
+      break;
+    default:
+      label.textContent = "Claude Code: " + statuslineState.path + " 를 JSON으로 읽을 수 없습니다.";
+      label.classList.add("warn");
+      btn.textContent = "켜기";
+  }
+}
+
+// Codex has no statusline to install — its per-session usage is read back from
+// the session rollout (`~/.codex/sessions/**/rollout-*.jsonl`, token_count
+// events). Nothing to configure, so just report whether that data is there:
+// on a PC where Codex has never run there is no rollout and hence no %.
+async function refreshCodexUsageRow() {
+  const el = document.getElementById("codexusage-state");
+  if (!el) return;
+  el.className = "statusline-state";
+  try {
+    const tail = await invoke("codex_rollout_tail", { maxBytes: 200_000 });
+    if (tail && tail.indexOf('"type":"token_count"') >= 0) {
+      el.textContent = "Codex: 사용 가능 — 세션 기록에서 사용량을 읽습니다. / Ready";
+      el.classList.add("on");
+    } else {
+      el.textContent = "Codex: 세션 기록에 사용량이 아직 없습니다 — Codex로 한 번 대화하면 잡힙니다.";
+      el.classList.add("warn");
+    }
+  } catch {
+    el.textContent = "Codex: 세션 기록이 없습니다 — Codex를 한 번 실행하면 사용량이 표시됩니다.";
+    el.classList.add("warn");
+  }
+}
+
+async function toggleStatusline() {
+  const remove = !!statuslineState && statuslineState.state === "mymux";
+  try {
+    statuslineState = await invoke(remove ? "claude_statusline_remove" : "claude_statusline_install");
+    // Claude Code reads settings.json at launch, so panes already running keep
+    // the old statusline until they are restarted.
+    toast(remove
+      ? "Mymux statusline을 제거했습니다 — 실행 중인 Claude 세션은 다시 시작해야 반영됩니다."
+      : "Mymux statusline을 설정했습니다 — Claude 세션을 다시 시작하면 사용량이 표시됩니다.");
+  } catch (e) {
+    toast(String(e), true);
+  }
+  refreshStatuslineRow();
 }
 
 // Buddy speaks when usage first crosses 50/70/85% — once per crossing. A real

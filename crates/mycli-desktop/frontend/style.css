@@ -1738,6 +1738,35 @@ html[data-theme="light"] #toolbar-actions #btn-update:hover {
   margin-bottom: 16px;
   cursor: pointer;
 }
+/* Statusline install row in the 🔔 modal — a status line of text plus one
+   action button, so it needs more room than the checkbox rows around it. */
+.modal-box .statusline-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  margin: 0 0 16px;
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg);
+}
+.modal-box .statusline-info { flex: 1; min-width: 0; }
+.modal-box .statusline-title { font-size: 12px; color: var(--text); margin-bottom: 3px; }
+.modal-box .statusline-state { font-size: 11px; color: var(--text-dim); line-height: 1.5; }
+.modal-box .statusline-state.on { color: #3fb950; }
+.modal-box .statusline-state.warn { color: #d29922; }
+.modal-box .statusline-row button {
+  flex: 0 0 auto;
+  padding: 5px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--text);
+  font-size: 12px;
+  cursor: pointer;
+}
+.modal-box .statusline-row button:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
+.modal-box .statusline-row button:disabled { opacity: 0.5; cursor: default; }
 .modal-box input[type="password"],
 .modal-box input[type="text"],
 .modal-box input[type="number"] {

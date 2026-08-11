@@ -4,6 +4,7 @@ mod browser;
 mod commands;
 mod explorer;
 mod session;
+mod statusline;
 mod terminal;
 mod tools;
 mod update;
@@ -15,6 +16,13 @@ use std::sync::Arc;
 use terminal::TerminalManager;
 
 fn main() {
+    // Claude Code runs its statusline command on every render. Answer that and
+    // exit before Tauri starts, so no window is ever created for it.
+    if std::env::args().any(|a| a == statusline::STATUSLINE_ARG) {
+        statusline::run_statusline();
+        return;
+    }
+
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_clipboard_manager::init())
@@ -35,6 +43,9 @@ fn main() {
             commands::codex_reset_credits,
             commands::codex_consume_reset_credit,
             commands::claude_account_usage,
+            statusline::claude_statusline_status,
+            statusline::claude_statusline_install,
+            statusline::claude_statusline_remove,
             commands::open_external,
             commands::window_attention,
             commands::buddy_overlay_show,
@@ -277,32 +288,43 @@ mod security_regression_tests {
         assert!(!frontend.contains("setTimeout(() => restore(true)"));
     }
 
+    /// The vendored xterm build is pinned deliberately: 5.5.0 + the Canvas
+    /// renderer is the combination that keeps macOS input from drifting. Guard
+    /// the pin so a routine "update the vendor files" never silently undoes it.
+    ///
+    /// Two of the addons ship without the jsdelivr version banner, so they are
+    /// matched on their export name instead — enough to catch a wrong or
+    /// truncated asset, which is what this guard is really for.
     #[test]
-    fn bundled_xterm_assets_are_the_ime_fixed_release() {
+    fn bundled_xterm_assets_are_the_pinned_release() {
         let assets = [
             (
                 include_str!("../frontend/vendor/xterm.min.js"),
-                "@xterm/xterm@6.0.0",
+                "@xterm/xterm@5.5.0",
             ),
             (
                 include_str!("../frontend/vendor/xterm.min.css"),
-                "@xterm/xterm@6.0.0",
+                "@xterm/xterm@5.5.0",
             ),
             (
                 include_str!("../frontend/vendor/addon-fit.min.js"),
-                "@xterm/addon-fit@0.11.0",
+                "@xterm/addon-fit@0.10.0",
+            ),
+            (
+                include_str!("../frontend/vendor/addon-canvas.min.js"),
+                "@xterm/addon-canvas@0.7.0",
             ),
             (
                 include_str!("../frontend/vendor/addon-search.min.js"),
-                "@xterm/addon-search@0.16.0",
+                "exports.SearchAddon",
             ),
             (
                 include_str!("../frontend/vendor/addon-web-links.min.js"),
-                "@xterm/addon-web-links@0.12.0",
+                "exports.WebLinksAddon",
             ),
         ];
-        for (asset, version) in assets {
-            assert!(asset.contains(version), "vendor asset is not {version}");
+        for (asset, marker) in assets {
+            assert!(asset.contains(marker), "vendor asset does not contain {marker}");
         }
     }
 }

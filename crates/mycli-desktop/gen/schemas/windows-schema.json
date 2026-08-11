@@ -531,6 +531,24 @@
           "markdownDescription": "Enables the claude_account_usage command without any pre-configured scope."
         },
         {
+          "description": "Enables the claude_statusline_install command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-claude-statusline-install",
+          "markdownDescription": "Enables the claude_statusline_install command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the claude_statusline_remove command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-claude-statusline-remove",
+          "markdownDescription": "Enables the claude_statusline_remove command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the claude_statusline_status command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-claude-statusline-status",
+          "markdownDescription": "Enables the claude_statusline_status command without any pre-configured scope."
+        },
+        {
           "description": "Enables the codex_consume_reset_credit command without any pre-configured scope.",
           "type": "string",
           "const": "allow-codex-consume-reset-credit",
@@ -949,6 +967,24 @@
           "type": "string",
           "const": "deny-claude-account-usage",
           "markdownDescription": "Denies the claude_account_usage command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the claude_statusline_install command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-claude-statusline-install",
+          "markdownDescription": "Denies the claude_statusline_install command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the claude_statusline_remove command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-claude-statusline-remove",
+          "markdownDescription": "Denies the claude_statusline_remove command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the claude_statusline_status command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-claude-statusline-status",
+          "markdownDescription": "Denies the claude_statusline_status command without any pre-configured scope."
         },
         {
           "description": "Denies the codex_consume_reset_credit command without any pre-configured scope.",
