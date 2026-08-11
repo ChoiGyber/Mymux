@@ -71,9 +71,14 @@ jobs:
       - name: Build workspace
         run: cargo build --workspace
 
-      # Logic tests live in mycli-core / mycli-tui (fuzzy match, params, etc.).
-      - name: Test (core + tui)
-        run: cargo test -p mycli-core -p mycli-tui
+      # Every crate, not just core/tui. mycli-desktop owns the security
+      # regression guards (ACL manifest coverage, capability scope, the pinned
+      # xterm bundle) plus the PTY/SFTP/statusline logic, and while those were
+      # excluded here a guard sat broken on main for a week without anything
+      # noticing. The workspace is already built above, so this only links and
+      # runs the test binaries.
+      - name: Test workspace
+        run: cargo test --workspace
 
       - name: Clippy (core + tui)
         run: cargo clippy -p mycli-core -p mycli-tui
