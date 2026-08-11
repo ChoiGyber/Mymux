@@ -7,6 +7,10 @@ Planned work, in order. Shipped items move to [CHANGELOG.md](CHANGELOG.md).
 _(empty — propose the next batch here)_
 
 Ideas parked for later / 후보:
+- **Beginner harness bootstrap** — a first-run, opt-in wizard that seeds Claude
+  Code agents/skills so a new user can start working immediately. Feasibility
+  review (도입 방식·위험도·안전 규칙):
+  [docs/superpowers/plans/2026-08-11-harness-agent-bootstrap-review.md](docs/superpowers/plans/2026-08-11-harness-agent-bootstrap-review.md).
 - **Command output blocks in a gutter** — clickable prompt marks in a left
   gutter (colored by exit code) instead of keyboard-only jump/copy.
 - **Session/scrollback persistence** across restarts (tmux-resurrect style).

@@ -2526,8 +2526,8 @@ async function createPane(parentEl, shell, args, cwd) {
   termWrap.style.cssText = "flex:1 1 0;min-width:0;min-height:0;overflow:hidden;";
   const statusBar = document.createElement("div");
   statusBar.className = "pane-statusbar";
-  paneEl.style.display = "flex";
-  paneEl.style.flexDirection = "column";
+  // NOTE: the leaf's flex-column layout now lives in the .pane-leaf rule, not
+  // inline — see the comment there.
   paneEl.appendChild(termWrap);
   paneEl.appendChild(statusBar);
   // Top-right usage badge (model | effort | ctx%) — filled by scanCtxUsage when
@@ -4954,6 +4954,56 @@ function normalizeSplitChildren(container) {
   }
 }
 
+// Give a pane (or subtree) back the full space of the split it just left.
+// Assigning `style.cssText` here would also wipe inline styles the element set
+// for ITSELF, so clear exactly the sizing that splitting/equalizing wrote and
+// nothing else.
+function resetSplitChildSizing(el) {
+  if (!el || !el.style) return;
+  el.style.flex = "1 1 0";
+  el.style.minWidth = "0";
+  el.style.minHeight = "0";
+  el.style.width = "";           // equalizeActiveTabSplits pins width/height
+  el.style.height = "";          // to 0 so flex-basis wins — undo that here
+  el.style.maxWidth = "";
+  el.style.maxHeight = "";
+}
+
+// Tidy the split container a pane was just removed from. Only DIRECT children
+// are touched: a `querySelector(".pane-divider")` lookup can match a nested
+// split's divider and strip the wrong one. With two or more panes left the
+// container stays and its dividers are re-laid; with exactly one left the
+// container is unwrapped — except when it is the tab root, which owns the
+// tab's layout and must not be replaced.
+function collapseSplitContainer(container, tab) {
+  if (!container) return;
+  const isDivider = (el) => el.classList && el.classList.contains("pane-divider");
+  for (const el of [...container.children]) if (isDivider(el)) el.remove();
+  const survivors = [...container.children];
+  if (!survivors.length) return;
+
+  if (survivors.length > 1) {
+    // Still a real split. A container can hold three or more panes (a
+    // drag-to-tab move appends into the root, and restored trees keep whatever
+    // was saved), and unwrapping one of those would drop every sibling but the
+    // first — their terminals would vanish from screen while still open.
+    const dir = container.classList.contains("vertical") ? "vertical" : "horizontal";
+    for (let i = survivors.length - 1; i > 0; i--) {
+      const divider = document.createElement("div");
+      divider.className = "pane-divider";
+      container.insertBefore(divider, survivors[i]);
+      setupDividerDrag(divider, container, dir);
+    }
+    return;
+  }
+
+  const remaining = survivors[0];
+  if (container.parentElement && container !== (tab && tab.rootEl)) {
+    container.parentElement.replaceChild(remaining, container);
+  }
+  resetSplitChildSizing(remaining);
+}
+
 // Split the focused pane
 async function splitPane(direction, cwd) {
   if (!focusedPaneId) return;
@@ -5167,17 +5217,10 @@ function closePane(ptyId) {
   terminals.delete(ptyId);
   tab.panes = tab.panes.filter((p) => p !== ptyId);
 
-  // If split container now has only one child (+ divider), unwrap it — a
-  // reparent of the surviving pane/subtree, so preserve its bottom pin.
+  // Collapse the split this pane left behind — that reparents the surviving
+  // pane/subtree, so preserve its bottom pin.
   const repin = captureBottomPins();
-  const divider = splitContainer.querySelector(".pane-divider");
-  if (divider) divider.remove();
-
-  const remaining = splitContainer.children[0];
-  if (remaining && splitContainer.parentElement) {
-    splitContainer.parentElement.replaceChild(remaining, splitContainer);
-    if (remaining.style) remaining.style.cssText = "flex:1 1 0;min-width:0;min-height:0;";
-  }
+  collapseSplitContainer(splitContainer, tab);
 
   // Focus another pane
   if (tab.panes.length > 0) {
@@ -5479,18 +5522,7 @@ function startPaneDrag(srcId, startEvent) {
 function detachAndCollapse(leaf, tab) {
   const container = leaf.parentElement;
   leaf.remove();
-  if (!container) return;
-  const divider = [...container.children].find(
-    (c) => c.classList && c.classList.contains("pane-divider")
-  );
-  if (divider) divider.remove();
-  const remaining = container.children[0];
-  if (remaining) {
-    if (container.parentElement && container !== tab.rootEl) {
-      container.parentElement.replaceChild(remaining, container);
-    }
-    if (remaining.style) remaining.style.flex = "1";
-  }
+  collapseSplitContainer(container, tab);
 }
 
 // Move `srcId` next to `targetId` on the given side (top/bottom/left/right),

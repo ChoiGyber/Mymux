@@ -1876,6 +1876,14 @@ html[data-theme="light"] #toolbar-actions #btn-update:hover {
   flex: 1 1 0;
   min-width: 0;
   min-height: 0;
+  /* Terminal on top, status bar underneath. This belongs to the class, NOT to
+     an inline style: layout code rewrites a surviving pane's inline styles
+     when a split collapses, and an inline display:flex got wiped there. The
+     leaf then fell back to block layout, where the terminal wrapper keeps its
+     old intrinsic height instead of growing — so closing one half of a
+     vertical split left the freed space blank below the survivor. */
+  display: flex;
+  flex-direction: column;
   overflow: hidden;
   position: relative;
   padding: 2px;

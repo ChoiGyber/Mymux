@@ -8,6 +8,27 @@ For installers, see the [GitHub Releases](https://github.com/ChoiGyber/Mymux/rel
 
 ---
 
+## v0.1.53 — 2026-08-11
+
+### Fixed
+- **Blank space after closing a stacked session.** Closing one half of a
+  vertical split left the freed area empty instead of letting the remaining
+  session grow into it. Collapsing the split overwrote the surviving pane's
+  whole inline style, which also erased its own flex-column layout; the pane
+  fell back to block layout and its terminal kept the old, shorter height.
+  Side-by-side splits were unaffected because block layout still fills the
+  width. / 세로로 나눈 세션 중 하나를 닫으면 그 자리가 빈 공간으로 남고 남은
+  세션이 채우지 못하던 문제를 수정했습니다.
+- **Panes disappearing when closing a sibling.** In a tab holding three or more
+  sessions side by side, closing one dropped every sibling but the first out of
+  the view while their terminals stayed open. Collapsing now only unwraps a
+  split that really has a single child, and re-lays the dividers otherwise.
+- **Split dividers and tab roots.** Collapsing a split no longer removes a
+  nested split's divider by mistake, and no longer detaches the tab's own root
+  container from the page.
+
+---
+
 ## v0.1.52 — 2026-08-03
 
 ### Fixed
