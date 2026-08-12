@@ -25,3 +25,11 @@ faster-whisper.spec
 # macOS Finder metadata
 .DS_Store
 **/.DS_Store
+
+# issue-* workspace — evidence only stays committed so issue comments render
+.issue/**
+!.issue/*/
+!.issue/*/evidence/
+!.issue/*/evidence/**
+.issue/**/.auth.json
+.issue/**/storage-state.json
