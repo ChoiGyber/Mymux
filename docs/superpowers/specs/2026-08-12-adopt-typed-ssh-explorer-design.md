@@ -19,39 +19,49 @@ SFTP를 붙이지만(`app.js` `doSshConnect`), 사용자가 패인에서 `ssh us
 | 종료 처리 | `exit`·Ctrl+D 감지 시 SFTP 해제하고 탐색기를 로컬로 되돌림 |
 | 원격 판정 | 흩어진 `t.type === "ssh"` 검사를 `isRemotePane(t)` 헬퍼로 모음 |
 
-## 감지 (프런트엔드)
+## 감지
 
 `handleTerminalInput` 의 Enter 처리 지점 — 이미 `syncExplorerOnCd(typed, ptyId)` 와
-alias 처리가 있는 그 자리 — 에 `ssh` 파싱을 추가한다. 새 입력 추적 장치는 필요 없다.
+alias 처리가 있는 그 자리 — 에서 걸러낸다. 새 입력 추적 장치는 필요 없다.
 
 ```js
-// typed 예: "ssh me@10.0.0.5 -p 2222", "ssh -i ~/.ssh/id_ed25519 me@host", "ssh 미니맥"
-parseSshCommand(typed) -> { alias } | { user, host, port, keyPath } | null
+// 값싼 사전 필터. 이걸 통과할 때만 백엔드를 부른다.
+if (/^ssh\s/.test(typed)) invoke("ssh_resolve_command", { command: typed })
 ```
 
-파싱 규칙:
+**파싱은 백엔드에 둔다.** 이 저장소에는 JS 테스트 인프라가 없고(`frontend/` 에
+`package.json` 이 없으며 CI 는 `cargo test --workspace` 만 돌린다), 파싱 규칙은
+회귀가 조용히 생기기 쉬운 종류다. Rust 에 두면 기존 테스트 인프라와 3-OS CI 가 그대로
+검증하고, 9,000줄이 넘는 `app.js` 도 더 커지지 않는다.
 
-- 첫 토큰이 정확히 `ssh` 일 때만 대상으로 본다. `sshpass`, `ssh-keygen` 등은 제외.
-- `-p <N>` → port, `-i <path>` → keyPath, `[user@]host` → user/host.
-- 그 외 옵션(`-t`, `-L` 등)은 무시하고 넘어간다.
-- 호스트 뒤에 원격 명령이 붙은 형태(`ssh host uptime`)는 셸이 열리지 않으므로 **제외한다.**
-- `@` 도 `.` 도 없는 단일 토큰은 별칭 후보로 보고 해석 단계로 넘긴다.
+## 파싱과 해석 (백엔드, 신규)
 
-## 해석 (백엔드, 신규)
-
-`~/.ssh/config` 파서는 현재 저장소에 없다. `crates/mycli-desktop/src/explorer.rs` 에 추가한다.
+`~/.ssh/config` 파서는 현재 저장소에 없다. `crates/mycli-desktop/src/explorer.rs` 에
+파싱과 해석을 합친 커맨드 하나를 추가한다.
 
 ```rust
 #[tauri::command]
-pub fn ssh_resolve_target(alias: String) -> Result<SshTarget, String>
+pub fn ssh_resolve_command(command: String) -> Option<SshTarget>
 // SshTarget { host, port, user, key_path }
 ```
+
+명령줄 파싱 규칙:
+
+- 첫 토큰이 정확히 `ssh` 일 때만 대상으로 본다. `sshpass`, `ssh-keygen` 등은 제외.
+- `-p <N>` → port, `-i <path>` → key_path, `[user@]host` → user/host.
+- 그 외 옵션(`-t`, `-L` 등)은 무시하고 넘어간다.
+- 호스트 뒤에 원격 명령이 붙은 형태(`ssh host uptime`)는 셸이 열리지 않으므로 **제외한다.**
+- `@` 도 `.` 도 없는 단일 토큰은 별칭으로 보고 `~/.ssh/config` 해석으로 넘긴다.
+
+`~/.ssh/config` 해석 규칙:
 
 - `Host <이름>` 블록에서 `HostName`·`User`·`Port`·`IdentityFile` 네 키만 읽는다.
 - 키 이름은 대소문자를 가리지 않는다(ssh 자체 동작과 동일).
 - `~` 는 홈 디렉터리로 펼친다.
 - **범위 밖:** `Include`, 와일드카드 `Host *`, `ProxyJump`, `Match`. 해당 블록에 걸리면
-  해석 실패로 반환하고 호출부는 조용히 포기한다.
+  `None` 을 반환하고 호출부는 조용히 포기한다.
+
+`user` 가 명령에도 config 에도 없으면 현재 OS 사용자명을 쓴다(ssh 기본 동작).
 
 ## 연결
 
@@ -106,13 +116,18 @@ function isRemotePane(t) {
 
 ## 테스트
 
-- `parseSshCommand` — 형태별 파싱(user@host, `-p`, `-i`, 별칭, 원격 명령 붙은 형태 제외,
-  `ssh-keygen` 같은 오탐 제외)
-- `ssh_resolve_target` — Rust 단위 테스트. 별칭 해석, 대소문자 무시, `~` 펼침,
-  와일드카드/Include 블록은 실패 반환
-- `isRemotePane` — 세 상태(로컬 / `type==="ssh"` / `adoptedSsh`)
+`cargo test` 로 도는 Rust 단위 테스트에 넣는다. JS 테스트 러너는 이 저장소에 없다.
+
+- 명령줄 파싱 — `user@host`, `-p`, `-i`, 옵션 순서 뒤섞임, 원격 명령이 붙은 형태 제외,
+  `ssh-keygen`·`sshpass` 오탐 제외
+- config 해석 — 별칭 해석, 키 이름 대소문자 무시, `~` 펼침, 없는 별칭,
+  와일드카드/`Include` 블록은 `None`
+- user 기본값 — 명령과 config 모두에 없으면 OS 사용자명
 
 실제 SFTP 연결은 `explorer.rs` 의 기존 e2e 테스트가 덮는다.
+
+`isRemotePane` 은 3줄짜리 JS 헬퍼라 단위 테스트를 두지 않는다. 사용처 6곳을 바꾼 뒤
+`+ SSH` 로 접속한 기존 세션이 그대로 동작하는지 확인하는 것이 실질적인 회귀 검증이다.
 
 ## 범위 밖
 
