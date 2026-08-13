@@ -8,6 +8,28 @@ For installers, see the [GitHub Releases](https://github.com/ChoiGyber/Mymux/rel
 
 ---
 
+## v0.1.56 — 2026-08-13
+
+### Fixed
+- **Splitting a pane no longer shrinks the existing pane to a sliver.** On some
+  PCs, adding a pane collapsed the pane you were working in to a barely visible
+  strip in the top-left corner while the new pane came up as a black, empty
+  area. WebView2 exposes the new flex tree over several layout frames while
+  fonts and the window scale are still settling, so xterm could measure a pane
+  that was momentarily 0×0 and hand that size straight to the PTY; a second
+  split starting before the first finished could land on the same half-built
+  tree. Splitting is now single-flight, the split container is normalized
+  before the new pane is created rather than only after, and the refit waits
+  (up to eight frames) until both branches actually have a rectangle. /
+  일부 PC에서 패인을 추가하면 작업 중이던 패인이 좌측 상단에 거의 보이지 않는
+  크기로 찌그러지고 새 패인은 검은 빈 화면으로 뜨던 문제를 수정했습니다.
+  WebView2가 글꼴과 창 배율이 자리 잡는 동안 새 레이아웃을 여러 프레임에 걸쳐
+  내놓기 때문에 크기가 아직 0인 패인을 그대로 측정하는 경로가 있었습니다. 이제
+  분할은 한 번에 하나만 진행되고, 양쪽 가지가 실제 크기를 가질 때까지 기다린
+  뒤에만 크기를 다시 맞춥니다. (#10)
+
+---
+
 ## v0.1.55 — 2026-08-11
 
 ### Fixed
