@@ -1,0 +1,13 @@
+target: root@<host>:22
+key   : C:\Users\ChoiGyber\.ssh\id_ed25519_clp
+
+1 client::connect           ok       0.06s
+2 load_secret_key           ok       0.00s
+3 authenticate_publickey    ok       0.12s
+   authenticated
+4 channel_open_session      ok       0.65s
+5 request_subsystem(sftp)   ok       0.00s
+6 SftpSession::new          ok       0.03s
+7 canonicalize(.)           ok       0.01s
+
+원격 홈: /root

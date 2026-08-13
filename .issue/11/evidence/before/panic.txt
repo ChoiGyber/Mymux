@@ -1,0 +1,6 @@
+
+thread 'tokio-rt-worker' (15928) panicked at C:\Users\ChoiGyber\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\tokio-1.50.0\src\runtime\scheduler\multi_thread\mod.rs:88:9:
+Cannot start a runtime from within a runtime. This happens because a function (like `block_on`) attempted to block the current thread while the thread is being used to drive asynchronous tasks.
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+thread 'tokio-rt-worker' (15928) panicked at C:\Users\ChoiGyber\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\tokio-1.50.0\src\runtime\scheduler\multi_thread\mod.rs:88:9:
