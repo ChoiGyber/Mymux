@@ -3053,7 +3053,7 @@ function setFocusedPane(ptyId) {
   updateSessionActive();
   showExplorerForSession(ptyId);
   if (t && t.type !== "ssh" && (t.codexDetected || t.ctxSource === "codex")) {
-    loadCodexLimits();
+    loadCodexLimits(ptyId);
   }
 }
 
@@ -4296,13 +4296,16 @@ function resetCodexSessionSnapshot() {
   codexSnapshotRequestGeneration++;
 }
 
-async function loadCodexLimits() {
+async function loadCodexLimits(paneId = null) {
   try {
     const requestGeneration = ++codexSnapshotRequestGeneration;
-    const ownerId = focusedPaneId;
+    // Callers that just started/selected a Codex pane pass its ID explicitly.
+    // This keeps a global usage refresh from losing the session-badge owner
+    // when focus changes while the rollout file is being read.
+    const ownerId = paneId == null ? focusedPaneId : paneId;
     const owner = ownerId == null ? null : terminals.get(ownerId);
     const localCodexOwner = owner && owner.type !== "ssh" &&
-      (owner.codexDetected || owner.ctxSource === "codex");
+      (owner.codexDetected || owner.ctxSource === "codex" || paneId != null);
     const snapshotPaneId = localCodexOwner ? ownerId : null;
     const cwd = localCodexOwner ? (owner.cwd || owner.session?.cwd || null) : null;
     // A real rollout can grow past 400 KB; 64 KB commonly contains only the
@@ -7330,7 +7333,7 @@ function presetCtxSourceFromCmd(ptyId, t, command) {
   if (source === "codex") {
     resetCodexSessionSnapshot();
     applyCodexSessionSnapshot();
-    loadCodexLimits();
+    loadCodexLimits(ptyId);
   }
   return true;
 }
