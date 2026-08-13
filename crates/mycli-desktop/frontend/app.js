@@ -4243,17 +4243,18 @@ function parseCodexTokenCountEvent(ev) {
 
   const info = payload.info || ev.info || {};
   // `total_token_usage` is cumulative for the rollout and can reach the
-  // context-window size even when the current turn is still small. The badge
-  // is a current-context indicator, so prefer the per-event last usage.
-  const usage = info.last_token_usage || payload.last_token_usage || ev.last_token_usage
-    || info.total_token_usage || payload.total_token_usage || ev.total_token_usage || {};
+  // context-window size even when the current turn is still small. Never use
+  // it as a fallback for the current-context badge: until a per-turn
+  // `last_token_usage` arrives the value is genuinely unknown.
+  const usage = info.last_token_usage || payload.last_token_usage || ev.last_token_usage;
+  if (!usage || typeof usage !== "object") return null;
   const inputTokens = numberValueDeep({ usage, info, payload, ev }, ["input_tokens", "inputTokens"]);
   const totalTokens = numberValueDeep({ usage, info, payload, ev }, ["total_tokens", "totalTokens"]);
   const windowTokens = numberValueDeep({ info, payload, ev }, ["model_context_window", "modelContextWindow", "context_window", "contextWindow"]);
   if (!windowTokens || windowTokens <= 0) return null;
 
   // Cached input is billed differently but still occupies the prompt context.
-  const used = inputTokens != null ? inputTokens : totalTokens;
+  const used = totalTokens != null ? totalTokens : inputTokens;
   if (used == null) return null;
   return Math.max(0, Math.min(100, Math.round((used / windowTokens) * 100)));
 }
@@ -4282,6 +4283,19 @@ function applyCodexSessionSnapshot() {
     if (changed || tt.ctxSource === "codex") updateCtxUi(pid, tt);
   }
 }
+
+// A new `codex` command starts a new context accounting stream. Do not let
+// the previous rollout snapshot flash in the new session while its first
+// token_count event is still pending.
+function resetCodexSessionSnapshot() {
+  codexSessionCtxPct = null;
+  codexSessionCtxAt = 0;
+  codexSessionModel = null;
+  codexSessionReasoningEffort = null;
+  codexSnapshotPaneId = null;
+  codexSnapshotRequestGeneration++;
+}
+
 async function loadCodexLimits() {
   try {
     const requestGeneration = ++codexSnapshotRequestGeneration;
@@ -5968,8 +5982,10 @@ async function attachSftpToPane(ptyId, credentials, announce = true) {
     live.sftpId = sftpId;
     live.sftpStatus = "connected";
     live.sftpError = null;
-    let initialPath = live.remotePath || live.session?.remotePath ||
-      live.cwd || live.session?.cwd || null;
+    // Never reuse the local SSH PTY cwd as a remote SFTP path. It can be a
+    // Windows path or a stale local restore value and makes the first listing
+    // fail even though SSH/SFTP itself connected successfully.
+    let initialPath = live.remotePath || live.session?.remotePath || null;
     if (initialPath) {
       try {
         initialPath = await invoke("sftp_resolve_dir", { sessionId: sftpId, path: initialPath });
@@ -7312,6 +7328,7 @@ function presetCtxSourceFromCmd(ptyId, t, command) {
   setPaneAiMode(t, true);
   updateCtxUi(ptyId, t);
   if (source === "codex") {
+    resetCodexSessionSnapshot();
     applyCodexSessionSnapshot();
     loadCodexLimits();
   }
@@ -8025,8 +8042,9 @@ function showExplorerForSession(ptyId) {
       if (t.session) t.session.remotePath = currentExplorerPath;
       return;
     }
-    const rememberedPath = t.remotePath || t.session?.remotePath ||
-      t.cwd || t.session?.cwd;
+    // `cwd` belongs to the local PTY process and is not a valid remote path.
+    // Until SFTP has resolved a remote path, ask the server for its home dir.
+    const rememberedPath = t.remotePath || t.session?.remotePath;
     if (rememberedPath) {
       explorerGo(rememberedPath, t.sftpId);
       return;
@@ -9084,7 +9102,7 @@ async function resolveRemotePaneDir(ptyId, rawPath) {
   } else if (path.startsWith("/")) {
     candidate = path;
   } else {
-    const base = t.remotePath || t.cwd ||
+    const base = t.remotePath ||
       await invoke("sftp_home_dir", { sessionId: sftpId });
     candidate = `${String(base).replace(/\/+$/, "")}/${path}`;
   }
