@@ -5992,6 +5992,72 @@ function isRemotePane(t) {
   return t?.type === "ssh" || t?.adoptedSsh != null;
 }
 
+// The user typed `ssh …` at a local prompt. Mymux did not open that session,
+// so nothing has attached SFTP to it and the Explorer is still showing the
+// local disk. Work out what the command connects to and open an SFTP session
+// beside it, exactly as `+ SSH` would have.
+//
+// This is not something the user asked for, so it stays quiet: a command we
+// cannot resolve, or a connection we cannot make, leaves the pane local.
+async function adoptTypedSsh(typed, ptyId) {
+  const t = terminals.get(ptyId);
+  if (!t || isRemotePane(t)) return; // already remote — nothing to adopt
+  let target = null;
+  try {
+    target = await invoke("ssh_resolve_command", { command: typed });
+  } catch {
+    return;
+  }
+  if (!target) return;
+  const live = terminals.get(ptyId);
+  if (!live || isRemotePane(live)) return; // the pane changed while we asked
+  live.adoptedSsh = target;
+  live.sshTarget = `${target.user}@${target.host}`;
+  // Remember where the local shell was. The remote cd sync overwrites `cwd`,
+  // so without this the Explorer would show a server path after `exit`.
+  live.localCwdBeforeSsh = live.cwd || null;
+  if (!target.keyPath) {
+    // Password auth: SFTP is a separate connection and cannot reuse whatever
+    // the terminal just authenticated with. Offer the connection instead.
+    live.sftpStatus = "needs-password";
+    if (focusedPaneId === ptyId) showExplorerBlockedForSession(ptyId, live);
+    return;
+  }
+  const sftpId = await attachSftpToPane(
+    ptyId,
+    { host: target.host, port: target.port, username: target.user, keyPath: target.keyPath },
+    false, // announce=false — the user did not ask for this
+  );
+  if (sftpId == null) {
+    // The key did not work, the host refused, the pane closed. Give the pane
+    // back to the local Explorer rather than leaving it on a blocked screen
+    // it never asked to see.
+    releaseTypedSsh(ptyId);
+    return;
+  }
+  if (focusedPaneId === ptyId) showExplorerForSession(ptyId);
+}
+
+// The adopted session ended. Drop the SFTP connection with it so the Explorer
+// goes back to the local disk instead of showing a server the shell already
+// left. A disconnect we miss (the server hanging up, say) is not fatal — the
+// Explorer's source dropdown still switches back by hand.
+function releaseTypedSsh(ptyId) {
+  const t = terminals.get(ptyId);
+  if (!t?.adoptedSsh) return;
+  t.adoptedSsh = null;
+  t.sshTarget = null;
+  t.sftpStatus = null;
+  t.remotePath = null;
+  if (t.localCwdBeforeSsh) {
+    t.cwd = t.localCwdBeforeSsh;
+    t.localCwdBeforeSsh = null;
+  }
+  if (t.session) t.session.remotePath = null;
+  detachPaneSftp(ptyId);
+  if (focusedPaneId === ptyId) showExplorerForSession(ptyId);
+}
+
 async function attachSftpToPane(ptyId, credentials, announce = true) {
   const t = terminals.get(ptyId);
   if (!t || !isRemotePane(t)) return null;
@@ -6045,8 +6111,13 @@ async function attachSftpToPane(ptyId, credentials, announce = true) {
     live.sftpStatus = isSftpUnsupportedError(error) ? "unsupported" : "error";
     live.sftpError = String(error);
     if (focusedPaneId === ptyId) showExplorerBlockedForSession(ptyId, live);
-    if (live.sftpStatus === "unsupported") showSftpUnsupportedModal();
-    else if (announce) toast("SSH opened. SFTP: " + error, true);
+    // `announce` also means "the user asked for this connection". An adopted
+    // session did not ask, so it must not raise a modal or a toast about a
+    // failure the user never initiated.
+    if (announce) {
+      if (live.sftpStatus === "unsupported") showSftpUnsupportedModal();
+      else toast("SSH opened. SFTP: " + error, true);
+    }
     return null;
   }
 }
@@ -8902,6 +8973,9 @@ function handleTerminalInput(data, ptyId) {
     currentInput = value;
     if (tInfo) tInfo.acInput = value;
   };
+  // Ctrl+D at an empty prompt ends the shell — for an adopted pane that means
+  // the ssh session is over and the Explorer belongs to the local disk again.
+  if (data === "\x04" && !getInput()) releaseTypedSsh(ptyId);
   // Track what user types to build current input line
   if (data === "\r" || data === "\n") {
     // Enter pressed — detect cd command and sync explorer
@@ -8909,6 +8983,10 @@ function handleTerminalInput(data, ptyId) {
     const typed = typedRaw.trim();
     presetCtxSourceFromCmd(ptyId, tInfo, typed);
     syncExplorerOnCd(typed, ptyId);
+    // `ssh …` typed at a local prompt — adopt it so the Explorer follows.
+    // `exit`/`logout` gives the pane back. Both are fire-and-forget.
+    if (/^ssh\s/.test(typed)) adoptTypedSsh(typed, ptyId);
+    else if (/^(exit|logout)$/i.test(typed)) releaseTypedSsh(ptyId);
     setInput("");
     hideAutocomplete();
     // Alias typed at the prompt: erase it and run the full combo instead
