@@ -59,6 +59,7 @@ const APP_COMMANDS: &[&str] = &[
     "sftp_finish_upload",
     "sftp_upload_path",
     "sftp_disconnect",
+    "ssh_resolve_command",
     "browser_launch",
     "browser_profiles",
     "browser_import_profile",

@@ -64,6 +64,7 @@
     "allow-sftp-finish-upload",
     "allow-sftp-upload-path",
     "allow-sftp-disconnect",
+    "allow-ssh-resolve-command",
     "allow-browser-launch",
     "allow-browser-profiles",
     "allow-browser-import-profile",
