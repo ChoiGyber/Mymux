@@ -5046,6 +5046,36 @@ function normalizeSplitChildren(container) {
   }
 }
 
+function splitChildrenHaveSpace(container) {
+  if (!container || !container.isConnected) return false;
+  const containerRect = container.getBoundingClientRect();
+  if (containerRect.width <= 1 || containerRect.height <= 1) return false;
+  const axis = container.classList.contains("vertical") ? "height" : "width";
+  const children = [...container.children].filter((child) =>
+    !child.classList.contains("pane-divider"));
+  return children.length >= 2 && children.every((child) =>
+    child.getBoundingClientRect()[axis] > 1);
+}
+
+// WebView2 can expose the new flex tree over several layout frames while
+// fonts and the window/DPI scale are settling. Refit only after both branches
+// have a real rectangle, so xterm never measures a transient 0x0 pane.
+function settleSplitLayout(container) {
+  return new Promise((resolve) => {
+    let attempts = 0;
+    const settle = () => {
+      normalizeSplitChildren(container);
+      if (splitChildrenHaveSpace(container) || attempts++ >= 8) {
+        refitAllPanes(true);
+        resolve();
+        return;
+      }
+      requestAnimationFrame(settle);
+    };
+    requestAnimationFrame(settle);
+  });
+}
+
 // Give a pane (or subtree) back the full space of the split it just left.
 // Assigning `style.cssText` here would also wipe inline styles the element set
 // for ITSELF, so clear exactly the sizing that splitting/equalizing wrote and
@@ -5097,14 +5127,17 @@ function collapseSplitContainer(container, tab) {
 }
 
 // Split the focused pane
+let splitInProgress = false;
+
 async function splitPane(direction, cwd) {
-  if (!focusedPaneId) return;
+  if (!focusedPaneId || splitInProgress) return;
+  splitInProgress = true;
   clearPaneZoom(); // layout is about to change — drop any zoom overlay first
   const tInfo = terminals.get(focusedPaneId);
-  if (!tInfo) return;
+  if (!tInfo) { splitInProgress = false; return; }
 
   const currentTab = findTabForPane(focusedPaneId);
-  if (!currentTab) return;
+  if (!currentTab) { splitInProgress = false; return; }
 
   const paneEl = tInfo.paneEl;
   const parent = paneEl.parentElement;
@@ -5126,6 +5159,9 @@ async function splitPane(direction, cwd) {
   divider.className = "pane-divider";
   splitContainer.appendChild(divider);
   setupDividerDrag(divider, splitContainer, direction);
+  // Normalize before async pane creation starts; otherwise a stale divider
+  // ratio can collapse the existing pane while the new pane is measured.
+  normalizeSplitChildren(splitContainer);
 
   // Create new pane
   try {
@@ -5134,7 +5170,7 @@ async function splitPane(direction, cwd) {
     // Keep both branches shrinkable while the new xterm is being measured.
     // Without an explicit zero basis, its intrinsic viewport can temporarily
     // cover the existing branch during the first layout pass.
-    normalizeSplitChildren(splitContainer);
+    await settleSplitLayout(splitContainer);
     currentTab.panes.push(newPtyId);
     const nti = terminals.get(newPtyId);
     if (nti) nti.session = { kind: "local", shell: splitShell || null, cwd: cwd || null };
@@ -5142,14 +5178,12 @@ async function splitPane(direction, cwd) {
 
     // Refit all panes in this tab, then re-assert the bottom pin — the spawn
     // spans several frames, past the repin scheduled at the DOM move.
-    await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
-    refitAllPanes();
     repin();
-    await new Promise((r) => requestAnimationFrame(r));
-    refitAllPanes();
     return newPtyId;
   } catch (err) {
     toast("Split failed: " + err, true);
+  } finally {
+    splitInProgress = false;
   }
 }
 
