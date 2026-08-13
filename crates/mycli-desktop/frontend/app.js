@@ -3999,6 +3999,23 @@ async function toggleStatusline() {
   refreshStatuslineRow();
 }
 
+// Claude only sends per-session context data to its configured statusline
+// command. Use Mymux's own command when no statusline exists, while leaving
+// OMC or any other user-selected statusline untouched.
+async function ensureMymuxStatusline() {
+  try {
+    const current = await invoke("claude_statusline_status");
+    if (current?.state !== "none") return;
+    await invoke("claude_statusline_install");
+    statuslineState = await invoke("claude_statusline_status");
+  } catch (e) {
+    // Statusline setup is an optional integration. Existing panes and the
+    // global usage readout must keep working if Claude is not installed or its
+    // settings file is not writable.
+    console.warn("Mymux statusline setup skipped", e);
+  }
+}
+
 // Buddy speaks when usage first crosses 50/70/85% — once per crossing. A real
 // drop (compact/clear) re-arms the level so the next climb announces again.
 function maybeAnnounceCtx(id, t) {
@@ -4445,6 +4462,7 @@ async function loadCodexModelSetting() {
 }
 
 function initCtxUsage() {
+  ensureMymuxStatusline();
   loadClaudeEffort();
   setInterval(loadClaudeEffort, 60_000);
   loadCodexModelSetting();
