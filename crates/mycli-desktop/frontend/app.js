@@ -6060,6 +6060,9 @@ async function adoptTypedSsh(typed, ptyId) {
   // Remember where the local shell was. The remote cd sync overwrites `cwd`,
   // so without this the Explorer would show a server path after `exit`.
   live.localCwdBeforeSsh = live.cwd || null;
+  // The row's globe icon and its `SSH: …` label both read the state we just
+  // changed, so the list has to be redrawn to show them.
+  refreshSessionList();
   if (!target.keyPath) {
     // Password auth: SFTP is a separate connection and cannot reuse whatever
     // the terminal just authenticated with. Offer the connection instead.
@@ -6099,6 +6102,7 @@ function releaseTypedSsh(ptyId) {
   }
   if (t.session) t.session.remotePath = null;
   detachPaneSftp(ptyId);
+  refreshSessionList(); // drop the globe icon and the `SSH: …` label again
   if (focusedPaneId === ptyId) showExplorerForSession(ptyId);
 }
 
