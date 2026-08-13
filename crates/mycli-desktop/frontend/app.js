@@ -849,7 +849,7 @@ function fileDropTarget(position) {
   const hit = paneAtDragPoint(position);
   if (!hit) return null;
   const owner = terminals.get(hit.ptyId);
-  if (!owner || owner.type !== "ssh") return null;
+  if (!owner || !isRemotePane(owner)) return null;
   if (owner.sftpId == null) {
     const detail = owner.sftpStatus === "connecting"
       ? "SFTP 연결 중입니다. 잠시 후 다시 시도하세요."
@@ -3052,7 +3052,7 @@ function setFocusedPane(ptyId) {
   }
   updateSessionActive();
   showExplorerForSession(ptyId);
-  if (t && t.type !== "ssh" && (t.codexDetected || t.ctxSource === "codex")) {
+  if (t && !isRemotePane(t) && (t.codexDetected || t.ctxSource === "codex")) {
     loadCodexLimits();
   }
 }
@@ -3862,7 +3862,7 @@ function ctxBadgeText(t) {
   if (t.ctxSource === "codex") {
     // Codex's status footer has no reasoning setting, so prefer the active
     // rollout value and fall back to config.toml. ctxPct is converted from "left".
-    const localFallback = t.type !== "ssh";
+    const localFallback = !isRemotePane(t);
     parts.push(t.codexModel || t.codexSnapshotModel ||
       (localFallback ? codexConfiguredModel : null) || "Codex");
     const effort = t.codexReasoningEffort || t.codexSnapshotEffort ||
@@ -4259,7 +4259,7 @@ function parseCodexTokenCountEvent(ev) {
 }
 function applyCodexSessionSnapshot() {
   for (const [pid, tt] of terminals) {
-    if (tt.type === "ssh" || pid !== codexSnapshotPaneId) continue;
+    if (isRemotePane(tt) || pid !== codexSnapshotPaneId) continue;
     if (!tt.codexDetected || tt.ctxSource !== "codex") continue;
     let changed = false;
     const stalePanePct = tt.ctxPct == null || performance.now() - (tt.ctxAt || 0) > 10_000;
@@ -4287,7 +4287,7 @@ async function loadCodexLimits() {
     const requestGeneration = ++codexSnapshotRequestGeneration;
     const ownerId = focusedPaneId;
     const owner = ownerId == null ? null : terminals.get(ownerId);
-    const localCodexOwner = owner && owner.type !== "ssh" &&
+    const localCodexOwner = owner && !isRemotePane(owner) &&
       (owner.codexDetected || owner.ctxSource === "codex");
     const snapshotPaneId = localCodexOwner ? ownerId : null;
     const cwd = localCodexOwner ? (owner.cwd || owner.session?.cwd || null) : null;
@@ -5983,9 +5983,18 @@ function detachPaneSftp(ptyId) {
   }
 }
 
+// A pane is "remote" when its shell lives on another machine — either because
+// Mymux opened the SSH session itself (type "ssh") or because the user typed
+// `ssh …` at the prompt and we adopted it (adoptedSsh). The Explorer, the cd
+// sync, the shell-syntax choice and the local-only Codex lookups all key off
+// this, so they must not test `type` directly.
+function isRemotePane(t) {
+  return t?.type === "ssh" || t?.adoptedSsh != null;
+}
+
 async function attachSftpToPane(ptyId, credentials, announce = true) {
   const t = terminals.get(ptyId);
-  if (!t || t.type !== "ssh") return null;
+  if (!t || !isRemotePane(t)) return null;
   detachPaneSftp(ptyId);
   const token = t.sftpConnectToken;
   t.sftpStatus = "connecting";
@@ -7310,7 +7319,7 @@ function sendToTerminal(command) {
 // that shell actually supports (PowerShell 5.1 has no `&&`).
 function paneShellKind(t) {
   if (!t) return "powershell";
-  if (t.type === "ssh") return "posix";
+  if (isRemotePane(t)) return "posix";
   const s = (t.shell || (localStorage.getItem("mymux.defaultShell") || "powershell")).toLowerCase();
   if (s.includes("pwsh") || s.includes("powershell")) return "powershell";
   if (s.includes("cmd")) return "cmd";
@@ -7911,7 +7920,7 @@ function refreshSessionList() {
     tab.panes.forEach((ptyId, i) => {
       const t = terminals.get(ptyId);
       if (!t) return;
-      const dot = t.type === "ssh" ? ICON.globe : "▸";
+      const dot = isRemotePane(t) ? ICON.globe : "▸";
 
       const li = document.createElement("li");
       li.className = "session-item" + (ptyId === focusedPaneId ? " active" : "");
@@ -8048,7 +8057,7 @@ function showExplorerForSession(ptyId) {
   const t = terminals.get(ptyId);
   if (!t) return;
   const generation = ++explorerFocusGeneration;
-  if (t.type === "ssh") {
+  if (isRemotePane(t)) {
     if (t.sftpId == null) {
       showExplorerBlockedForSession(ptyId, t);
       if (t.sftpStatus === "unsupported") showSftpUnsupportedModal();
@@ -9103,7 +9112,7 @@ function hideAutocomplete() {
 
 async function resolveRemotePaneDir(ptyId, rawPath) {
   const t = terminals.get(ptyId);
-  if (!t || t.type !== "ssh" || t.sftpId == null) return null;
+  if (!t || !isRemotePane(t) || t.sftpId == null) return null;
   const sftpId = t.sftpId;
   let path = String(rawPath == null ? "" : rawPath).trim();
   path = path.replace(/^["']|["']$/g, "").trim();
@@ -9139,7 +9148,7 @@ async function resolveRemotePaneDir(ptyId, rawPath) {
 
 function syncExplorerOnCd(input, ptyId) {
   const t = terminals.get(ptyId);
-  if (t && t.type === "ssh") {
+  if (t && isRemotePane(t)) {
     if (t.sftpId == null) return;
     const match = String(input || "").match(/^cd(?:\s+--)?(?:\s+(.+))?$/i);
     if (!match) return;
