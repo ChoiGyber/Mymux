@@ -445,7 +445,9 @@ async function setupListeners() {
 
   // "+ SSH" — open a new SSH connection anytime (works with sessions open).
   const btnSsh = document.getElementById("btn-ssh");
-  if (btnSsh) btnSsh.addEventListener("click", openSshModal);
+  // Wrapped, not passed directly: `openSshModal` takes a prefill argument and
+  // the click event must not leak into it.
+  if (btnSsh) btnSsh.addEventListener("click", () => openSshModal());
   const sshModalEl = document.getElementById("ssh-modal");
   const sshModalConnect = document.getElementById("ssh-modal-connect");
   const sshModalCancel = document.getElementById("ssh-modal-cancel");
@@ -5722,14 +5724,29 @@ async function connectSshFields(targetVal, portVal, password, keyfile, tmux, tmu
   return true;
 }
 
+// When set, the SSH modal is not opening a new session — it is collecting the
+// password for a pane whose ssh command we already adopted.
+let sshModalSftpOnlyPaneId = null;
+
 // ── "+ SSH" modal — open a new SSH connection at any time ──
-function openSshModal() {
+function openSshModal(prefill = null) {
   const m = document.getElementById("ssh-modal");
   if (!m) return;
   // The native browser overlay floats above all HTML; hide it so the modal shows.
   if (browserTabActive && browserMode === "native") invoke("browser_pane_hide").catch(() => {});
+  sshModalSftpOnlyPaneId = prefill?.forPaneId ?? null;
+  if (prefill) {
+    const addr = document.getElementById("ssh-modal-input");
+    const port = document.getElementById("ssh-modal-port");
+    if (addr) addr.value = `${prefill.username}@${prefill.host}`;
+    if (port) port.value = String(prefill.port);
+  }
   m.classList.remove("hidden");
-  const inp = document.getElementById("ssh-modal-input");
+  // The address is already known for an adopted pane — go straight to the
+  // one thing we are missing.
+  const inp = prefill
+    ? document.getElementById("ssh-modal-password")
+    : document.getElementById("ssh-modal-input");
   if (inp) inp.focus();
 }
 
@@ -5741,12 +5758,39 @@ function closeSshModal() {
   if (pw) pw.value = "";
   // Restore the native browser overlay only if we're still on the browser view.
   if (browserTabActive && browserMode === "native") openNativePane();
+  sshModalSftpOnlyPaneId = null;
 }
 
 async function submitSshModal() {
+  const password = document.getElementById("ssh-modal-password").value;
+  // Adopted pane: the shell is already connected, so attach SFTP to it
+  // instead of opening another session in a new tab.
+  if (sshModalSftpOnlyPaneId != null) {
+    const paneId = sshModalSftpOnlyPaneId;
+    const target = terminals.get(paneId)?.adoptedSsh;
+    if (!target) {
+      closeSshModal();
+      return;
+    }
+    const sftpId = await attachSftpToPane(
+      paneId,
+      {
+        host: target.host,
+        port: target.port,
+        username: target.user,
+        password,
+        keyPath: target.keyPath,
+      },
+      true, // the user asked for this one, so a failure may speak up
+    );
+    if (sftpId != null) {
+      if (focusedPaneId === paneId) showExplorerForSession(paneId);
+      closeSshModal();
+    }
+    return;
+  }
   const target = document.getElementById("ssh-modal-input").value;
   const port = document.getElementById("ssh-modal-port").value;
-  const password = document.getElementById("ssh-modal-password").value;
   const keyfile = document.getElementById("ssh-modal-keyfile").value;
   const save = document.getElementById("ssh-save-info");
   const tmux = document.getElementById("ssh-tmux");
@@ -8170,11 +8214,14 @@ function showExplorerBlockedForSession(ptyId, terminal) {
   explorerLoadGeneration++;
   currentSftpId = null;
   currentExplorerPath = "";
+  const needsPassword = terminal?.sftpStatus === "needs-password";
   const status = terminal?.sftpStatus === "connecting"
     ? "SFTP 연결 중…"
     : terminal?.sftpStatus === "unsupported"
       ? "SFTP 미지원"
-      : "SFTP 연결 안 됨";
+      : needsPassword
+        ? "비밀번호 필요"
+        : "SFTP 연결 안 됨";
   if (explorerPath) {
     explorerPath.textContent = status;
     explorerPath.title = "이 SSH 세션에는 현재 업로드할 수 없습니다.";
@@ -8185,8 +8232,26 @@ function showExplorerBlockedForSession(ptyId, terminal) {
     item.className = "explorer-blocked-message";
     item.textContent = terminal?.sftpStatus === "connecting"
       ? "SFTP 연결이 완료되면 이 세션의 원격 파일이 표시됩니다."
-      : "이 SSH 세션의 SFTP 연결을 사용할 수 없어 업로드가 차단되었습니다.";
+      : needsPassword
+        ? "이 서버의 파일을 보려면 비밀번호가 한 번 필요합니다."
+        : "이 SSH 세션의 SFTP 연결을 사용할 수 없어 업로드가 차단되었습니다.";
     fileListEl.appendChild(item);
+    // A pane whose ssh command we adopted, but which authenticates with a
+    // password we do not have. One click opens the existing SSH modal so the
+    // user can type it once.
+    if (needsPassword && terminal.adoptedSsh) {
+      const { host, port, user } = terminal.adoptedSsh;
+      const connect = document.createElement("li");
+      const button = document.createElement("button");
+      button.className = "explorer-connect-remote";
+      button.textContent = `${host} 열기`;
+      button.title = "이 서버의 파일을 보려면 비밀번호가 한 번 필요합니다";
+      button.addEventListener("click", () => {
+        openSshModal({ host, port, username: user, forPaneId: ptyId });
+      });
+      connect.appendChild(button);
+      fileListEl.appendChild(connect);
+    }
   }
   if (explorerMode) {
     explorerMode.querySelectorAll("option[data-sftp-blocked]").forEach((option) => option.remove());
