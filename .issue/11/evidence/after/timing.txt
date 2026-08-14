@@ -1,0 +1,12 @@
+수정 후 — 같은 호출
+===================
+
+  invoke("sftp_connect", {host, port:22, username:"root", keyPath})
+  invoke("sftp_home_dir", {sessionId})
+  invoke("sftp_list_dir", {sessionId, path})
+
+  결과: {"ok":true,"id":1,"home":"/root","fileCount":30,"ms":914}
+
+  목록 앞부분: [D] .bun  [D] .cache  [D] .claude  [D] .codex  [D] .config  [D] .local
+
+3분 이상 무응답 → 914ms 안에 연결·홈 조회·목록 조회까지 완료.

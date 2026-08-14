@@ -437,13 +437,26 @@ async fn connect_sftp_session(
 
     // Authenticate: explicit key > auto-detect keys > password
     let mut authenticated = false;
+    // Why each attempt failed. Swallowing these leaves the user with a generic
+    // "no valid key" message that is the same whether the file was missing,
+    // encrypted, or simply rejected by the server.
+    let mut attempts: Vec<String> = Vec::new();
 
     if let Some(key_file) = key_path {
-        if let Ok(key) = russh::keys::load_secret_key(key_file, None) {
-            let key_with_alg = PrivateKeyWithHashAlg::new(Arc::new(key), None);
-            if let Ok(result) = handle.authenticate_publickey(username, key_with_alg).await {
-                authenticated = result.success();
+        match russh::keys::load_secret_key(key_file, None) {
+            Ok(key) => {
+                let key_with_alg = PrivateKeyWithHashAlg::new(Arc::new(key), None);
+                match handle.authenticate_publickey(username, key_with_alg).await {
+                    Ok(result) => {
+                        authenticated = result.success();
+                        if !authenticated {
+                            attempts.push(format!("{key_file}: server rejected the key"));
+                        }
+                    }
+                    Err(e) => attempts.push(format!("{key_file}: {e}")),
+                }
             }
+            Err(e) => attempts.push(format!("{key_file}: cannot read key ({e})")),
         }
     }
 
@@ -456,15 +469,19 @@ async fn connect_sftp_session(
                 if !path.exists() {
                     continue;
                 }
-                if let Ok(key) = russh::keys::load_secret_key(&path, None) {
-                    let key_with_alg = PrivateKeyWithHashAlg::new(Arc::new(key), None);
-                    match handle.authenticate_publickey(username, key_with_alg).await {
-                        Ok(result) if result.success() => {
-                            authenticated = true;
-                            break;
+                match russh::keys::load_secret_key(&path, None) {
+                    Ok(key) => {
+                        let key_with_alg = PrivateKeyWithHashAlg::new(Arc::new(key), None);
+                        match handle.authenticate_publickey(username, key_with_alg).await {
+                            Ok(result) if result.success() => {
+                                authenticated = true;
+                                break;
+                            }
+                            Ok(_) => attempts.push(format!("{name}: server rejected the key")),
+                            Err(e) => attempts.push(format!("{name}: {e}")),
                         }
-                        _ => continue,
                     }
+                    Err(e) => attempts.push(format!("{name}: cannot read key ({e})")),
                 }
             }
         }
@@ -481,10 +498,13 @@ async fn connect_sftp_session(
     }
 
     if !authenticated {
-        return Err(
-            "Authentication failed. No valid key found in ~/.ssh/ and no password provided."
-                .to_string(),
-        );
+        if attempts.is_empty() {
+            return Err(
+                "Authentication failed. No key was found in ~/.ssh/ and no password was provided."
+                    .to_string(),
+            );
+        }
+        return Err(format!("Authentication failed. {}", attempts.join("; ")));
     }
 
     let channel = handle
@@ -507,8 +527,8 @@ async fn connect_sftp_session(
     })
 }
 
-#[tauri::command(async)]
-pub fn sftp_connect(
+#[tauri::command]
+pub async fn sftp_connect(
     state: tauri::State<'_, Arc<ExplorerManager>>,
     host: String,
     port: u16,
@@ -518,137 +538,129 @@ pub fn sftp_connect(
 ) -> Result<u32, String> {
     let state_clone = Arc::clone(&*state);
 
-    state.runtime.block_on(async {
-        let home = dirs::home_dir();
-        let session = connect_sftp_session(
-            &host,
-            port,
-            &username,
-            password.as_deref(),
-            key_path.as_deref(),
-            home.as_ref()
-                .map(|path| path.join(".mycli").join("known_hosts")),
-            home.map(|path| path.join(".ssh")),
-        )
-        .await?;
-        let id = {
-            let mut next = state_clone.next_id.lock().await;
-            let id = *next;
-            *next += 1;
-            id
-        };
+    let home = dirs::home_dir();
+    let session = connect_sftp_session(
+        &host,
+        port,
+        &username,
+        password.as_deref(),
+        key_path.as_deref(),
+        home.as_ref()
+            .map(|path| path.join(".mycli").join("known_hosts")),
+        home.map(|path| path.join(".ssh")),
+    )
+    .await?;
+    let id = {
+        let mut next = state_clone.next_id.lock().await;
+        let id = *next;
+        *next += 1;
+        id
+    };
 
-        {
-            let mut sessions = state_clone.sftp_sessions.lock().await;
-            sessions.insert(id, Arc::new(session));
-        }
+    {
+        let mut sessions = state_clone.sftp_sessions.lock().await;
+        sessions.insert(id, Arc::new(session));
+    }
 
-        Ok(id)
-    })
+    Ok(id)
 }
 
-#[tauri::command(async)]
-pub fn sftp_list_dir(
+#[tauri::command]
+pub async fn sftp_list_dir(
     state: tauri::State<'_, Arc<ExplorerManager>>,
     session_id: u32,
     path: String,
 ) -> Result<Vec<FileEntry>, String> {
     let state_clone = Arc::clone(&*state);
 
-    state.runtime.block_on(async {
-        let session = get_sftp_session(&state_clone, session_id).await?;
+    let session = get_sftp_session(&state_clone, session_id).await?;
 
-        let read_dir = session
-            .sftp
-            .read_dir(&path)
-            .await
-            .map_err(|e| format!("Cannot read {}: {}", path, e))?;
+    let read_dir = session
+        .sftp
+        .read_dir(&path)
+        .await
+        .map_err(|e| format!("Cannot read {}: {}", path, e))?;
 
-        let mut result: Vec<FileEntry> = Vec::new();
+    let mut result: Vec<FileEntry> = Vec::new();
 
-        for entry in read_dir {
-            let name = entry.file_name();
-            // Skip . and ..
-            if name == "." || name == ".." {
-                continue;
-            }
-            let full_path = if path.ends_with('/') {
-                format!("{}{}", path, name)
-            } else {
-                format!("{}/{}", path, name)
-            };
-            let mut is_dir = entry.file_type().is_dir();
-            let is_symlink = entry.file_type().is_symlink();
-            // read_dir lstats entries, so a symlink to a directory (e.g. macOS
-            // /Volumes/"Macintosh HD" -> /) reports as a plain link. Stat the
-            // target so such links open as folders in the explorer.
-            if is_symlink && !is_dir {
-                if let Ok(meta) = session.sftp.metadata(full_path.as_str()).await {
-                    if meta.is_dir() {
-                        is_dir = true;
-                    }
+    for entry in read_dir {
+        let name = entry.file_name();
+        // Skip . and ..
+        if name == "." || name == ".." {
+            continue;
+        }
+        let full_path = if path.ends_with('/') {
+            format!("{}{}", path, name)
+        } else {
+            format!("{}/{}", path, name)
+        };
+        let mut is_dir = entry.file_type().is_dir();
+        let is_symlink = entry.file_type().is_symlink();
+        // read_dir lstats entries, so a symlink to a directory (e.g. macOS
+        // /Volumes/"Macintosh HD" -> /) reports as a plain link. Stat the
+        // target so such links open as folders in the explorer.
+        if is_symlink && !is_dir {
+            if let Ok(meta) = session.sftp.metadata(full_path.as_str()).await {
+                if meta.is_dir() {
+                    is_dir = true;
                 }
             }
-            let size = entry.metadata().size.unwrap_or(0);
-
-            result.push(FileEntry {
-                name,
-                path: full_path,
-                is_dir,
-                size,
-                is_symlink,
-            });
         }
+        let size = entry.metadata().size.unwrap_or(0);
 
-        result.sort_by(|a, b| {
-            b.is_dir
-                .cmp(&a.is_dir)
-                .then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase()))
+        result.push(FileEntry {
+            name,
+            path: full_path,
+            is_dir,
+            size,
+            is_symlink,
         });
+    }
 
-        Ok(result)
-    })
+    result.sort_by(|a, b| {
+        b.is_dir
+            .cmp(&a.is_dir)
+            .then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase()))
+    });
+
+    Ok(result)
 }
 
-#[tauri::command(async)]
-pub fn sftp_home_dir(
+#[tauri::command]
+pub async fn sftp_home_dir(
     state: tauri::State<'_, Arc<ExplorerManager>>,
     session_id: u32,
 ) -> Result<String, String> {
     let state_clone = Arc::clone(&*state);
 
-    state.runtime.block_on(async {
-        let session = get_sftp_session(&state_clone, session_id).await?;
+    let session = get_sftp_session(&state_clone, session_id).await?;
 
-        match session.sftp.canonicalize(".").await {
-            Ok(path) => Ok(path),
-            Err(_) => Ok("/".to_string()),
-        }
-    })
+    match session.sftp.canonicalize(".").await {
+        Ok(path) => Ok(path),
+        Err(_) => Ok("/".to_string()),
+    }
 }
 
 /// Canonicalize a remote path and verify that it is a directory. The frontend
 /// uses this before accepting an Explorer-driven or typed SSH `cd`, so the
 /// pane and Explorer only move after the server has confirmed the destination.
-#[tauri::command(async)]
-pub fn sftp_resolve_dir(
+#[tauri::command]
+pub async fn sftp_resolve_dir(
     state: tauri::State<'_, Arc<ExplorerManager>>,
     session_id: u32,
     path: String,
 ) -> Result<String, String> {
     let state_clone = Arc::clone(&*state);
 
-    state.runtime.block_on(async {
-        let session = get_sftp_session(&state_clone, session_id).await?;
-        resolve_remote_dir_path(&session, &path).await
-    })
+    let session = get_sftp_session(&state_clone, session_id).await?;
+    resolve_remote_dir_path(&session, &path).await
 }
 
 /// Read a remote text/code file over SFTP for the in-app viewer. Mirrors
 /// `read_text_file`: returns Err("BINARY") for non-text files and Err for files
 /// larger than ~2 MB.
-#[tauri::command(async)]
-pub fn sftp_read_text_file(
+#[tauri::command]
+pub async fn sftp_read_text_file(
     state: tauri::State<'_, Arc<ExplorerManager>>,
     session_id: u32,
     path: String,
@@ -656,39 +668,37 @@ pub fn sftp_read_text_file(
     use tokio::io::AsyncReadExt;
     let state_clone = Arc::clone(&*state);
 
-    state.runtime.block_on(async {
-        let session = get_sftp_session(&state_clone, session_id).await?;
+    let session = get_sftp_session(&state_clone, session_id).await?;
 
-        // Size guard (~2 MB) when the server reports it.
-        if let Ok(meta) = session.sftp.metadata(&path).await {
-            if let Some(sz) = meta.size {
-                if sz > 2_000_000 {
-                    return Err("File is too large (over 2 MB)".to_string());
-                }
+    // Size guard (~2 MB) when the server reports it.
+    if let Ok(meta) = session.sftp.metadata(&path).await {
+        if let Some(sz) = meta.size {
+            if sz > 2_000_000 {
+                return Err("File is too large (over 2 MB)".to_string());
             }
         }
+    }
 
-        let mut file = session
-            .sftp
-            .open(&path)
-            .await
-            .map_err(|e| format!("Cannot open {}: {}", path, e))?;
-        let mut buf = Vec::new();
-        file.read_to_end(&mut buf)
-            .await
-            .map_err(|e| e.to_string())?;
+    let mut file = session
+        .sftp
+        .open(&path)
+        .await
+        .map_err(|e| format!("Cannot open {}: {}", path, e))?;
+    let mut buf = Vec::new();
+    file.read_to_end(&mut buf)
+        .await
+        .map_err(|e| e.to_string())?;
 
-        let sample = &buf[..buf.len().min(8000)];
-        if sample.contains(&0u8) {
-            return Err("BINARY".into());
-        }
-        Ok(String::from_utf8_lossy(&buf).to_string())
-    })
+    let sample = &buf[..buf.len().min(8000)];
+    if sample.contains(&0u8) {
+        return Err("BINARY".into());
+    }
+    Ok(String::from_utf8_lossy(&buf).to_string())
 }
 
 /// Save text back to a remote file over SFTP (creates/truncates). In-app editor.
-#[tauri::command(async)]
-pub fn sftp_write_text_file(
+#[tauri::command]
+pub async fn sftp_write_text_file(
     state: tauri::State<'_, Arc<ExplorerManager>>,
     session_id: u32,
     path: String,
@@ -697,29 +707,27 @@ pub fn sftp_write_text_file(
     use tokio::io::AsyncWriteExt;
     let state_clone = Arc::clone(&*state);
 
-    state.runtime.block_on(async {
-        let session = get_sftp_session(&state_clone, session_id).await?;
+    let session = get_sftp_session(&state_clone, session_id).await?;
 
-        let mut file = session
-            .sftp
-            .create(&path)
-            .await
-            .map_err(|e| format!("Cannot write {}: {}", path, e))?;
-        file.write_all(content.as_bytes())
-            .await
-            .map_err(|e| e.to_string())?;
-        file.flush().await.ok();
-        file.shutdown().await.ok();
-        Ok(())
-    })
+    let mut file = session
+        .sftp
+        .create(&path)
+        .await
+        .map_err(|e| format!("Cannot write {}: {}", path, e))?;
+    file.write_all(content.as_bytes())
+        .await
+        .map_err(|e| e.to_string())?;
+    file.flush().await.ok();
+    file.shutdown().await.ok();
+    Ok(())
 }
 
 /// Upload a local file or directory tree into an existing SFTP directory.
 ///
 /// The destination is never overwritten. This keeps a drag-and-drop upload
 /// recoverable and matches the local Explorer copy behavior.
-#[tauri::command(async)]
-pub fn sftp_upload_path(
+#[tauri::command]
+pub async fn sftp_upload_path(
     app: tauri::AppHandle,
     state: tauri::State<'_, Arc<ExplorerManager>>,
     session_id: u32,
@@ -729,64 +737,60 @@ pub fn sftp_upload_path(
 ) -> Result<(), String> {
     let state_clone = Arc::clone(&*state);
 
-    state.runtime.block_on(async {
-        let session = get_sftp_session(&state_clone, session_id).await?;
-        let canonical_remote_dir = resolve_remote_dir_path(&session, &remote_dir).await?;
-        let cancellation = claim_upload_state(
-            &state_clone.active_uploads,
-            &upload_id,
-            session_id,
-            &canonical_remote_dir,
+    let session = get_sftp_session(&state_clone, session_id).await?;
+    let canonical_remote_dir = resolve_remote_dir_path(&session, &remote_dir).await?;
+    let cancellation = claim_upload_state(
+        &state_clone.active_uploads,
+        &upload_id,
+        session_id,
+        &canonical_remote_dir,
+    )
+    .await?;
+    let result = async {
+        let source = PathBuf::from(&local_path);
+        let manifest = open_secure_local_manifest(&source)?;
+        let remote_path = remote_join(&canonical_remote_dir, &manifest.name);
+        let total = manifest.total;
+        let progress = UploadProgress {
+            app: Some(&app),
+            upload_id: &upload_id,
+            transferred: AtomicU64::new(0),
+            total,
+        };
+        progress.emit();
+        upload_and_publish_entry(
+            &session.sftp,
+            manifest,
+            remote_path,
+            &progress,
+            &cancellation,
         )
         .await?;
-        let result = async {
-            let source = PathBuf::from(&local_path);
-            let manifest = open_secure_local_manifest(&source)?;
-            let remote_path = remote_join(&canonical_remote_dir, &manifest.name);
-            let total = manifest.total;
-            let progress = UploadProgress {
-                app: Some(&app),
-                upload_id: &upload_id,
-                transferred: AtomicU64::new(0),
-                total,
-            };
-            progress.emit();
-            upload_and_publish_entry(
-                &session.sftp,
-                manifest,
-                remote_path,
-                &progress,
-                &cancellation,
-            )
-            .await?;
-            progress.emit();
-            Ok(())
-        }
-        .await;
-        release_upload_state(&state_clone.active_uploads, &upload_id).await;
-        result
-    })
+        progress.emit();
+        Ok(())
+    }
+    .await;
+    release_upload_state(&state_clone.active_uploads, &upload_id).await;
+    result
 }
 
 /// Start one upload batch and bind it to the authenticated SFTP session and
 /// canonical destination directory. The identifier is generated by the backend.
-#[tauri::command(async)]
-pub fn sftp_begin_upload(
+#[tauri::command]
+pub async fn sftp_begin_upload(
     state: tauri::State<'_, Arc<ExplorerManager>>,
     session_id: u32,
     remote_dir: String,
 ) -> Result<String, String> {
     let state_clone = Arc::clone(&*state);
-    state.runtime.block_on(async {
-        let session = get_sftp_session(&state_clone, session_id).await?;
-        let canonical_remote_dir = resolve_remote_dir_path(&session, &remote_dir).await?;
-        Ok(register_upload_state(
-            &state_clone.active_uploads,
-            session_id,
-            canonical_remote_dir,
-        )
-        .await)
-    })
+    let session = get_sftp_session(&state_clone, session_id).await?;
+    let canonical_remote_dir = resolve_remote_dir_path(&session, &remote_dir).await?;
+    Ok(register_upload_state(
+        &state_clone.active_uploads,
+        session_id,
+        canonical_remote_dir,
+    )
+    .await)
 }
 
 #[tauri::command(async)]
@@ -1141,7 +1145,10 @@ fn upload_local_entry<'a>(
     progress: &'a UploadProgress<'a>,
     cancellation: &'a AtomicBool,
     created: &'a mut Vec<CreatedRemoteEntry>,
-) -> Pin<Box<dyn Future<Output = Result<(), String>> + 'a>> {
+// `Send` matters here: the upload command is a Tauri async command, so its
+// whole future is spawned onto the runtime and must cross threads. Without the
+// bound this recursive boxed future silently makes the caller non-`Send`.
+) -> Pin<Box<dyn Future<Output = Result<(), String>> + Send + 'a>> {
     Box::pin(async move {
         ensure_upload_not_cancelled(cancellation)?;
         if remote_path_exists(sftp, &remote).await? {
@@ -1258,19 +1265,17 @@ fn created_entries_for_cleanup(
     created.iter().rev()
 }
 
-#[tauri::command(async)]
-pub fn sftp_disconnect(
+#[tauri::command]
+pub async fn sftp_disconnect(
     state: tauri::State<'_, Arc<ExplorerManager>>,
     session_id: u32,
 ) -> Result<(), String> {
     let state_clone = Arc::clone(&*state);
 
-    state.runtime.block_on(async {
-        cancel_session_uploads(&state_clone.active_uploads, session_id).await;
-        let mut sessions = state_clone.sftp_sessions.lock().await;
-        sessions.remove(&session_id);
-        Ok(())
-    })
+    cancel_session_uploads(&state_clone.active_uploads, session_id).await;
+    let mut sessions = state_clone.sftp_sessions.lock().await;
+    sessions.remove(&session_id);
+    Ok(())
 }
 
 /// A pane's `ssh` command, split into what we need to open an SFTP session
