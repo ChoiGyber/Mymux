@@ -8,6 +8,48 @@ For installers, see the [GitHub Releases](https://github.com/ChoiGyber/Mymux/rel
 
 ---
 
+## v0.1.57 — 2026-08-14
+
+### Fixed
+- **SFTP stopped working entirely, without saying so.** Every SFTP command
+  (`connect`, `list_dir`, `home_dir`, `read`/`write`, upload) was an async Tauri
+  command that then called `block_on` on its own tokio runtime. Tauri already
+  runs those on a runtime thread, so the nesting panicked — and a panicked
+  command's promise never resolves or rejects, leaving the Explorer stuck on
+  "SFTP 연결 중…" with no error at all. The commands are now `async fn` and
+  await directly. A connection that used to hang past three minutes completes in
+  under a second. SSH authentication failures now say which key failed and why
+  instead of one generic message. /
+  SSH 탐색기 기능 전체가 아무 말 없이 멈춰 있던 문제를 수정했습니다. SFTP 명령이
+  런타임 중첩으로 패닉하면서 그 요청이 영원히 끝나지 않아, 오류 하나 없이 "SFTP
+  연결 중…"에 갇혔습니다. 이제 정상적으로 연결되며, 실패할 때는 어떤 키가 왜
+  거부됐는지 알려줍니다. (#11)
+- **Per-session usage was blank without oh-my-claudecode.** Claude Code hands
+  context-window numbers only to its statusline command, so a PC with no
+  statusline configured showed the global usage but never the per-session badge,
+  model or effort. Mymux now installs its own statusline when — and only when —
+  none is configured; an OMC or other user-chosen statusline is left untouched.
+  The Codex badge no longer falls back to the rollout's cumulative token total,
+  which exceeds the context window and pinned the badge at 100%. /
+  OMC 플러그인이 없는 PC에서 세션별 사용량·모델·effort가 비어 있던 문제를
+  수정했습니다. statusline이 아예 없을 때만 Mymux 것을 설치하며, 이미 설정된
+  statusline은 건드리지 않습니다. Codex 배지가 100%로 굳던 문제도 함께
+  고쳤습니다. (#9, #8)
+
+### Added
+- **The Explorer follows an `ssh` you typed yourself.** Until now only sessions
+  opened with the `+ SSH` button counted as remote, so connecting by typing
+  `ssh user@host` at the prompt left the Explorer on the local disk. Mymux now
+  recognises the command — including `-p`, `-i` and `~/.ssh/config` aliases —
+  and opens the same SFTP view beside it. `exit` gives the pane back to the
+  local disk, and if the server wants a password the Explorer offers a one-click
+  connect instead. /
+  패인에 직접 입력한 `ssh`도 탐색기가 따라갑니다. `-p`·`-i`·`~/.ssh/config`
+  별칭을 인식하며, `exit`하면 로컬로 돌아옵니다. 비밀번호가 필요한 서버는
+  탐색기에서 한 번 클릭으로 연결할 수 있습니다. (#7)
+
+---
+
 ## v0.1.56 — 2026-08-13
 
 ### Fixed
