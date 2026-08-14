@@ -971,6 +971,22 @@ html[data-theme="light"] #toolbar-actions #btn-update:hover {
   line-height: 1.5;
   text-align: center;
 }
+.explorer-connect-remote {
+  display: block;
+  margin: 0 auto 10px;
+  padding: 5px 12px;
+  font: inherit;
+  font-size: 12px;
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  cursor: pointer;
+}
+.explorer-connect-remote:hover {
+  background: var(--surface-hover);
+  border-color: var(--accent);
+}
 #explorer-upload-progress {
   --upload-pct: 0%;
   display: flex;

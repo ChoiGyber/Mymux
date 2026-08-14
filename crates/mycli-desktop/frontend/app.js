@@ -445,7 +445,9 @@ async function setupListeners() {
 
   // "+ SSH" — open a new SSH connection anytime (works with sessions open).
   const btnSsh = document.getElementById("btn-ssh");
-  if (btnSsh) btnSsh.addEventListener("click", openSshModal);
+  // Wrapped, not passed directly: `openSshModal` takes a prefill argument and
+  // the click event must not leak into it.
+  if (btnSsh) btnSsh.addEventListener("click", () => openSshModal());
   const sshModalEl = document.getElementById("ssh-modal");
   const sshModalConnect = document.getElementById("ssh-modal-connect");
   const sshModalCancel = document.getElementById("ssh-modal-cancel");
@@ -849,7 +851,7 @@ function fileDropTarget(position) {
   const hit = paneAtDragPoint(position);
   if (!hit) return null;
   const owner = terminals.get(hit.ptyId);
-  if (!owner || owner.type !== "ssh") return null;
+  if (!owner || !isRemotePane(owner)) return null;
   if (owner.sftpId == null) {
     const detail = owner.sftpStatus === "connecting"
       ? "SFTP 연결 중입니다. 잠시 후 다시 시도하세요."
@@ -3052,7 +3054,7 @@ function setFocusedPane(ptyId) {
   }
   updateSessionActive();
   showExplorerForSession(ptyId);
-  if (t && t.type !== "ssh" && (t.codexDetected || t.ctxSource === "codex")) {
+  if (t && !isRemotePane(t) && (t.codexDetected || t.ctxSource === "codex")) {
     loadCodexLimits(ptyId);
   }
 }
@@ -3862,7 +3864,7 @@ function ctxBadgeText(t) {
   if (t.ctxSource === "codex") {
     // Codex's status footer has no reasoning setting, so prefer the active
     // rollout value and fall back to config.toml. ctxPct is converted from "left".
-    const localFallback = t.type !== "ssh";
+    const localFallback = !isRemotePane(t);
     parts.push(t.codexModel || t.codexSnapshotModel ||
       (localFallback ? codexConfiguredModel : null) || "Codex");
     const effort = t.codexReasoningEffort || t.codexSnapshotEffort ||
@@ -4277,7 +4279,7 @@ function parseCodexTokenCountEvent(ev) {
 }
 function applyCodexSessionSnapshot() {
   for (const [pid, tt] of terminals) {
-    if (tt.type === "ssh" || pid !== codexSnapshotPaneId) continue;
+    if (isRemotePane(tt) || pid !== codexSnapshotPaneId) continue;
     if (!tt.codexDetected || tt.ctxSource !== "codex") continue;
     let changed = false;
     const stalePanePct = tt.ctxPct == null || performance.now() - (tt.ctxAt || 0) > 10_000;
@@ -4321,7 +4323,7 @@ async function loadCodexLimits(paneId = null) {
     // when focus changes while the rollout file is being read.
     const ownerId = paneId == null ? focusedPaneId : paneId;
     const owner = ownerId == null ? null : terminals.get(ownerId);
-    const localCodexOwner = owner && owner.type !== "ssh" &&
+    const localCodexOwner = owner && !isRemotePane(owner) &&
       (owner.codexDetected || owner.ctxSource === "codex" || paneId != null);
     const snapshotPaneId = localCodexOwner ? ownerId : null;
     const cwd = localCodexOwner ? (owner.cwd || owner.session?.cwd || null) : null;
@@ -5757,14 +5759,29 @@ async function connectSshFields(targetVal, portVal, password, keyfile, tmux, tmu
   return true;
 }
 
+// When set, the SSH modal is not opening a new session — it is collecting the
+// password for a pane whose ssh command we already adopted.
+let sshModalSftpOnlyPaneId = null;
+
 // ── "+ SSH" modal — open a new SSH connection at any time ──
-function openSshModal() {
+function openSshModal(prefill = null) {
   const m = document.getElementById("ssh-modal");
   if (!m) return;
   // The native browser overlay floats above all HTML; hide it so the modal shows.
   if (browserTabActive && browserMode === "native") invoke("browser_pane_hide").catch(() => {});
+  sshModalSftpOnlyPaneId = prefill?.forPaneId ?? null;
+  if (prefill) {
+    const addr = document.getElementById("ssh-modal-input");
+    const port = document.getElementById("ssh-modal-port");
+    if (addr) addr.value = `${prefill.username}@${prefill.host}`;
+    if (port) port.value = String(prefill.port);
+  }
   m.classList.remove("hidden");
-  const inp = document.getElementById("ssh-modal-input");
+  // The address is already known for an adopted pane — go straight to the
+  // one thing we are missing.
+  const inp = prefill
+    ? document.getElementById("ssh-modal-password")
+    : document.getElementById("ssh-modal-input");
   if (inp) inp.focus();
 }
 
@@ -5776,12 +5793,39 @@ function closeSshModal() {
   if (pw) pw.value = "";
   // Restore the native browser overlay only if we're still on the browser view.
   if (browserTabActive && browserMode === "native") openNativePane();
+  sshModalSftpOnlyPaneId = null;
 }
 
 async function submitSshModal() {
+  const password = document.getElementById("ssh-modal-password").value;
+  // Adopted pane: the shell is already connected, so attach SFTP to it
+  // instead of opening another session in a new tab.
+  if (sshModalSftpOnlyPaneId != null) {
+    const paneId = sshModalSftpOnlyPaneId;
+    const target = terminals.get(paneId)?.adoptedSsh;
+    if (!target) {
+      closeSshModal();
+      return;
+    }
+    const sftpId = await attachSftpToPane(
+      paneId,
+      {
+        host: target.host,
+        port: target.port,
+        username: target.user,
+        password,
+        keyPath: target.keyPath,
+      },
+      true, // the user asked for this one, so a failure may speak up
+    );
+    if (sftpId != null) {
+      if (focusedPaneId === paneId) showExplorerForSession(paneId);
+      closeSshModal();
+    }
+    return;
+  }
   const target = document.getElementById("ssh-modal-input").value;
   const port = document.getElementById("ssh-modal-port").value;
-  const password = document.getElementById("ssh-modal-password").value;
   const keyfile = document.getElementById("ssh-modal-keyfile").value;
   const save = document.getElementById("ssh-save-info");
   const tmux = document.getElementById("ssh-tmux");
@@ -6018,9 +6062,88 @@ function detachPaneSftp(ptyId) {
   }
 }
 
+// A pane is "remote" when its shell lives on another machine — either because
+// Mymux opened the SSH session itself (type "ssh") or because the user typed
+// `ssh …` at the prompt and we adopted it (adoptedSsh). The Explorer, the cd
+// sync, the shell-syntax choice and the local-only Codex lookups all key off
+// this, so they must not test `type` directly.
+function isRemotePane(t) {
+  return t?.type === "ssh" || t?.adoptedSsh != null;
+}
+
+// The user typed `ssh …` at a local prompt. Mymux did not open that session,
+// so nothing has attached SFTP to it and the Explorer is still showing the
+// local disk. Work out what the command connects to and open an SFTP session
+// beside it, exactly as `+ SSH` would have.
+//
+// This is not something the user asked for, so it stays quiet: a command we
+// cannot resolve, or a connection we cannot make, leaves the pane local.
+async function adoptTypedSsh(typed, ptyId) {
+  const t = terminals.get(ptyId);
+  if (!t || isRemotePane(t)) return; // already remote — nothing to adopt
+  let target = null;
+  try {
+    target = await invoke("ssh_resolve_command", { command: typed });
+  } catch {
+    return;
+  }
+  if (!target) return;
+  const live = terminals.get(ptyId);
+  if (!live || isRemotePane(live)) return; // the pane changed while we asked
+  live.adoptedSsh = target;
+  live.sshTarget = `${target.user}@${target.host}`;
+  // Remember where the local shell was. The remote cd sync overwrites `cwd`,
+  // so without this the Explorer would show a server path after `exit`.
+  live.localCwdBeforeSsh = live.cwd || null;
+  // The row's globe icon and its `SSH: …` label both read the state we just
+  // changed, so the list has to be redrawn to show them.
+  refreshSessionList();
+  if (!target.keyPath) {
+    // Password auth: SFTP is a separate connection and cannot reuse whatever
+    // the terminal just authenticated with. Offer the connection instead.
+    live.sftpStatus = "needs-password";
+    if (focusedPaneId === ptyId) showExplorerBlockedForSession(ptyId, live);
+    return;
+  }
+  const sftpId = await attachSftpToPane(
+    ptyId,
+    { host: target.host, port: target.port, username: target.user, keyPath: target.keyPath },
+    false, // announce=false — the user did not ask for this
+  );
+  if (sftpId == null) {
+    // The key did not work, the host refused, the pane closed. Give the pane
+    // back to the local Explorer rather than leaving it on a blocked screen
+    // it never asked to see.
+    releaseTypedSsh(ptyId);
+    return;
+  }
+  if (focusedPaneId === ptyId) showExplorerForSession(ptyId);
+}
+
+// The adopted session ended. Drop the SFTP connection with it so the Explorer
+// goes back to the local disk instead of showing a server the shell already
+// left. A disconnect we miss (the server hanging up, say) is not fatal — the
+// Explorer's source dropdown still switches back by hand.
+function releaseTypedSsh(ptyId) {
+  const t = terminals.get(ptyId);
+  if (!t?.adoptedSsh) return;
+  t.adoptedSsh = null;
+  t.sshTarget = null;
+  t.sftpStatus = null;
+  t.remotePath = null;
+  if (t.localCwdBeforeSsh) {
+    t.cwd = t.localCwdBeforeSsh;
+    t.localCwdBeforeSsh = null;
+  }
+  if (t.session) t.session.remotePath = null;
+  detachPaneSftp(ptyId);
+  refreshSessionList(); // drop the globe icon and the `SSH: …` label again
+  if (focusedPaneId === ptyId) showExplorerForSession(ptyId);
+}
+
 async function attachSftpToPane(ptyId, credentials, announce = true) {
   const t = terminals.get(ptyId);
-  if (!t || t.type !== "ssh") return null;
+  if (!t || !isRemotePane(t)) return null;
   detachPaneSftp(ptyId);
   const token = t.sftpConnectToken;
   t.sftpStatus = "connecting";
@@ -6073,8 +6196,13 @@ async function attachSftpToPane(ptyId, credentials, announce = true) {
     live.sftpStatus = isSftpUnsupportedError(error) ? "unsupported" : "error";
     live.sftpError = String(error);
     if (focusedPaneId === ptyId) showExplorerBlockedForSession(ptyId, live);
-    if (live.sftpStatus === "unsupported") showSftpUnsupportedModal();
-    else if (announce) toast("SSH opened. SFTP: " + error, true);
+    // `announce` also means "the user asked for this connection". An adopted
+    // session did not ask, so it must not raise a modal or a toast about a
+    // failure the user never initiated.
+    if (announce) {
+      if (live.sftpStatus === "unsupported") showSftpUnsupportedModal();
+      else toast("SSH opened. SFTP: " + error, true);
+    }
     return null;
   }
 }
@@ -7347,7 +7475,7 @@ function sendToTerminal(command) {
 // that shell actually supports (PowerShell 5.1 has no `&&`).
 function paneShellKind(t) {
   if (!t) return "powershell";
-  if (t.type === "ssh") return "posix";
+  if (isRemotePane(t)) return "posix";
   const s = (t.shell || (localStorage.getItem("mymux.defaultShell") || "powershell")).toLowerCase();
   if (s.includes("pwsh") || s.includes("powershell")) return "powershell";
   if (s.includes("cmd")) return "cmd";
@@ -7949,7 +8077,7 @@ function refreshSessionList() {
     tab.panes.forEach((ptyId, i) => {
       const t = terminals.get(ptyId);
       if (!t) return;
-      const dot = t.type === "ssh" ? ICON.globe : "▸";
+      const dot = isRemotePane(t) ? ICON.globe : "▸";
 
       const li = document.createElement("li");
       li.className = "session-item" + (ptyId === focusedPaneId ? " active" : "");
@@ -8086,7 +8214,7 @@ function showExplorerForSession(ptyId) {
   const t = terminals.get(ptyId);
   if (!t) return;
   const generation = ++explorerFocusGeneration;
-  if (t.type === "ssh") {
+  if (isRemotePane(t)) {
     if (t.sftpId == null) {
       showExplorerBlockedForSession(ptyId, t);
       if (t.sftpStatus === "unsupported") showSftpUnsupportedModal();
@@ -8129,11 +8257,14 @@ function showExplorerBlockedForSession(ptyId, terminal) {
   explorerLoadGeneration++;
   currentSftpId = null;
   currentExplorerPath = "";
+  const needsPassword = terminal?.sftpStatus === "needs-password";
   const status = terminal?.sftpStatus === "connecting"
     ? "SFTP 연결 중…"
     : terminal?.sftpStatus === "unsupported"
       ? "SFTP 미지원"
-      : "SFTP 연결 안 됨";
+      : needsPassword
+        ? "비밀번호 필요"
+        : "SFTP 연결 안 됨";
   if (explorerPath) {
     explorerPath.textContent = status;
     explorerPath.title = "이 SSH 세션에는 현재 업로드할 수 없습니다.";
@@ -8144,8 +8275,26 @@ function showExplorerBlockedForSession(ptyId, terminal) {
     item.className = "explorer-blocked-message";
     item.textContent = terminal?.sftpStatus === "connecting"
       ? "SFTP 연결이 완료되면 이 세션의 원격 파일이 표시됩니다."
-      : "이 SSH 세션의 SFTP 연결을 사용할 수 없어 업로드가 차단되었습니다.";
+      : needsPassword
+        ? "이 서버의 파일을 보려면 비밀번호가 한 번 필요합니다."
+        : "이 SSH 세션의 SFTP 연결을 사용할 수 없어 업로드가 차단되었습니다.";
     fileListEl.appendChild(item);
+    // A pane whose ssh command we adopted, but which authenticates with a
+    // password we do not have. One click opens the existing SSH modal so the
+    // user can type it once.
+    if (needsPassword && terminal.adoptedSsh) {
+      const { host, port, user } = terminal.adoptedSsh;
+      const connect = document.createElement("li");
+      const button = document.createElement("button");
+      button.className = "explorer-connect-remote";
+      button.textContent = `${host} 열기`;
+      button.title = "이 서버의 파일을 보려면 비밀번호가 한 번 필요합니다";
+      button.addEventListener("click", () => {
+        openSshModal({ host, port, username: user, forPaneId: ptyId });
+      });
+      connect.appendChild(button);
+      fileListEl.appendChild(connect);
+    }
   }
   if (explorerMode) {
     explorerMode.querySelectorAll("option[data-sftp-blocked]").forEach((option) => option.remove());
@@ -8932,6 +9081,9 @@ function handleTerminalInput(data, ptyId) {
     currentInput = value;
     if (tInfo) tInfo.acInput = value;
   };
+  // Ctrl+D at an empty prompt ends the shell — for an adopted pane that means
+  // the ssh session is over and the Explorer belongs to the local disk again.
+  if (data === "\x04" && !getInput()) releaseTypedSsh(ptyId);
   // Track what user types to build current input line
   if (data === "\r" || data === "\n") {
     // Enter pressed — detect cd command and sync explorer
@@ -8939,6 +9091,10 @@ function handleTerminalInput(data, ptyId) {
     const typed = typedRaw.trim();
     presetCtxSourceFromCmd(ptyId, tInfo, typed);
     syncExplorerOnCd(typed, ptyId);
+    // `ssh …` typed at a local prompt — adopt it so the Explorer follows.
+    // `exit`/`logout` gives the pane back. Both are fire-and-forget.
+    if (/^ssh\s/.test(typed)) adoptTypedSsh(typed, ptyId);
+    else if (/^(exit|logout)$/i.test(typed)) releaseTypedSsh(ptyId);
     setInput("");
     hideAutocomplete();
     // Alias typed at the prompt: erase it and run the full combo instead
@@ -9142,7 +9298,7 @@ function hideAutocomplete() {
 
 async function resolveRemotePaneDir(ptyId, rawPath) {
   const t = terminals.get(ptyId);
-  if (!t || t.type !== "ssh" || t.sftpId == null) return null;
+  if (!t || !isRemotePane(t) || t.sftpId == null) return null;
   const sftpId = t.sftpId;
   let path = String(rawPath == null ? "" : rawPath).trim();
   path = path.replace(/^["']|["']$/g, "").trim();
@@ -9178,7 +9334,7 @@ async function resolveRemotePaneDir(ptyId, rawPath) {
 
 function syncExplorerOnCd(input, ptyId) {
   const t = terminals.get(ptyId);
-  if (t && t.type === "ssh") {
+  if (t && isRemotePane(t)) {
     if (t.sftpId == null) return;
     const match = String(input || "").match(/^cd(?:\s+--)?(?:\s+(.+))?$/i);
     if (!match) return;

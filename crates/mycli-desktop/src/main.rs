@@ -80,6 +80,7 @@ fn main() {
             explorer::sftp_finish_upload,
             explorer::sftp_upload_path,
             explorer::sftp_disconnect,
+            explorer::ssh_resolve_command,
             browser::browser_launch,
             browser::browser_profiles,
             browser::browser_import_profile,

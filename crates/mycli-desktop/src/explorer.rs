@@ -1278,6 +1278,393 @@ pub async fn sftp_disconnect(
     Ok(())
 }
 
+/// A pane's `ssh` command, split into what we need to open an SFTP session
+/// beside it. `alias` is set when the target was a bare name that has to be
+/// looked up in `~/.ssh/config`.
+#[derive(Debug, Default, Clone, PartialEq)]
+pub struct ParsedSsh {
+    pub alias: Option<String>,
+    pub user: Option<String>,
+    pub host: Option<String>,
+    pub port: Option<u16>,
+    pub key_path: Option<String>,
+}
+
+/// ssh options that consume the next argument. Everything else starting with
+/// `-` is a flag we can skip. From ssh(1).
+const SSH_OPTS_WITH_VALUE: &[char] = &[
+    'B', 'b', 'c', 'D', 'E', 'e', 'F', 'I', 'i', 'J', 'L', 'l', 'm', 'O', 'o', 'p', 'Q', 'R', 'S',
+    'W', 'w',
+];
+
+/// Parse a command line the user typed at the prompt. Returns `None` for
+/// anything that is not an interactive `ssh` login — a different program, a
+/// remote command (no shell opens), or no target at all.
+pub fn parse_ssh_command(command: &str) -> Option<ParsedSsh> {
+    let mut tokens = command.split_whitespace();
+    if tokens.next()? != "ssh" {
+        return None;
+    }
+
+    let mut parsed = ParsedSsh::default();
+    let mut target: Option<String> = None;
+    let mut tokens = tokens.peekable();
+
+    while let Some(token) = tokens.next() {
+        if let Some(rest) = token.strip_prefix('-') {
+            let Some(flag) = rest.chars().next() else {
+                return None; // a lone "-"
+            };
+            if !SSH_OPTS_WITH_VALUE.contains(&flag) {
+                continue; // -t, -C, -4 …
+            }
+            // The value is either glued on (-p2222) or the next token.
+            let value = if rest.len() > flag.len_utf8() {
+                rest[flag.len_utf8()..].to_string()
+            } else {
+                tokens.next()?.to_string()
+            };
+            match flag {
+                'p' => parsed.port = value.parse().ok(),
+                'i' => parsed.key_path = Some(value),
+                'l' => parsed.user = Some(value),
+                _ => {}
+            }
+            continue;
+        }
+        if target.is_some() {
+            return None; // a remote command follows — no interactive shell
+        }
+        target = Some(token.to_string());
+    }
+
+    let target = target?;
+    if let Some((user, host)) = target.split_once('@') {
+        if user.is_empty() || host.is_empty() {
+            return None;
+        }
+        parsed.user = Some(user.to_string());
+        parsed.host = Some(host.to_string());
+    } else if target.contains('.') || target.contains(':') {
+        parsed.host = Some(target); // looks like a hostname or an address
+    } else {
+        parsed.alias = Some(target); // a name to look up in ~/.ssh/config
+    }
+    Some(parsed)
+}
+
+/// The subset of `~/.ssh/config` we model. Anything else in the file is
+/// ignored; anything we cannot model correctly makes us give up entirely.
+#[derive(Debug, Default, Clone, PartialEq)]
+pub struct SshConfigEntry {
+    pub host_name: Option<String>,
+    pub user: Option<String>,
+    pub port: Option<u16>,
+    pub identity_file: Option<String>,
+}
+
+/// Look `alias` up in the contents of an ssh config file.
+///
+/// Only an exact `Host <alias>` block counts — we deliberately do not
+/// implement ssh's pattern matching, so a wildcard block never applies. An
+/// `Include` anywhere means the file we were given is incomplete, and a
+/// `ProxyJump` in the matched block means the connection we would open is not
+/// the one the terminal made. Both return `None` so the caller stays quiet.
+pub fn resolve_ssh_alias(alias: &str, config: &str) -> Option<SshConfigEntry> {
+    let mut entry: Option<SshConfigEntry> = None;
+    let mut in_block = false;
+
+    for line in config.lines() {
+        let line = line.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        // A keyword with no value is malformed; skip that line rather than
+        // abandoning the whole file.
+        let Some((keyword, value)) = line.split_once(|c: char| c.is_whitespace() || c == '=')
+        else {
+            continue;
+        };
+        let keyword = keyword.to_ascii_lowercase();
+        let value = value.trim_start_matches(['=', ' ', '\t']).trim();
+
+        if keyword == "include" {
+            return None; // we cannot see the rest of the configuration
+        }
+        if keyword == "host" {
+            in_block = value.split_whitespace().any(|pattern| pattern == alias);
+            if in_block {
+                entry = Some(SshConfigEntry::default());
+            }
+            continue;
+        }
+        if keyword == "match" {
+            in_block = false;
+            continue;
+        }
+        if !in_block {
+            continue;
+        }
+        let Some(current) = entry.as_mut() else { continue };
+        match keyword.as_str() {
+            "hostname" => current.host_name = Some(value.to_string()),
+            "user" => current.user = Some(value.to_string()),
+            "port" => current.port = value.parse().ok(),
+            "identityfile" => current.identity_file = Some(value.to_string()),
+            "proxyjump" => return None, // not the connection we would open
+            _ => {}
+        }
+    }
+    entry
+}
+
+/// Everything `sftp_connect` needs, derived from a typed ssh command.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SshTarget {
+    pub host: String,
+    pub port: u16,
+    pub user: String,
+    pub key_path: Option<String>,
+}
+
+/// Merge a parsed command line with `~/.ssh/config`. The command line wins —
+/// that is what ssh itself does — and anything still missing falls back to
+/// ssh's defaults (port 22, the current OS user).
+fn resolve_target(parsed: ParsedSsh, config: &str, os_user: &str) -> Option<SshTarget> {
+    let entry = match parsed.alias.as_deref() {
+        Some(alias) => Some(resolve_ssh_alias(alias, config)?),
+        None => None,
+    };
+    let from_config = |pick: fn(&SshConfigEntry) -> Option<String>| entry.as_ref().and_then(pick);
+
+    let host = parsed
+        .host
+        .or_else(|| from_config(|e| e.host_name.clone()))
+        // `Host box` with no HostName means the alias IS the hostname.
+        .or_else(|| parsed.alias.clone())?;
+    let port = parsed
+        .port
+        .or_else(|| entry.as_ref().and_then(|e| e.port))
+        .unwrap_or(22);
+    let user = parsed
+        .user
+        .or_else(|| from_config(|e| e.user.clone()))
+        .unwrap_or_else(|| os_user.to_string());
+    let key_path = parsed
+        .key_path
+        .or_else(|| from_config(|e| e.identity_file.clone()))
+        .map(|path| expand_home(&path));
+
+    Some(SshTarget { host, port, user, key_path })
+}
+
+/// `~/x` → `<home>/x`. Left alone when the home directory is unknown.
+fn expand_home(path: &str) -> String {
+    let Some(rest) = path.strip_prefix("~/") else {
+        return path.to_string();
+    };
+    match dirs::home_dir() {
+        Some(home) => home.join(rest).to_string_lossy().into_owned(),
+        None => path.to_string(),
+    }
+}
+
+/// Work out what a pane's typed `ssh` command connects to, so the Explorer can
+/// open an SFTP session beside it. Returns `None` for anything we do not
+/// model — the caller then stays quiet, because the user never asked for this.
+#[tauri::command]
+pub fn ssh_resolve_command(command: String) -> Option<SshTarget> {
+    let parsed = parse_ssh_command(&command)?;
+    // Read as bytes, not `read_to_string`. An ssh config with a comment in a
+    // non-UTF-8 encoding is common enough on Windows, and losing the whole
+    // file to a decode error would silently disable alias resolution.
+    let config = dirs::home_dir()
+        .map(|home| home.join(".ssh").join("config"))
+        .and_then(|path| std::fs::read(path).ok())
+        .map(|bytes| String::from_utf8_lossy(&bytes).into_owned())
+        .unwrap_or_default();
+    let os_user = std::env::var("USERNAME")
+        .or_else(|_| std::env::var("USER"))
+        .unwrap_or_default();
+    resolve_target(parsed, &config, &os_user)
+}
+
+#[cfg(test)]
+mod ssh_command_tests {
+    use super::*;
+
+    #[test]
+    fn parses_the_common_shapes() {
+        let p = parse_ssh_command("ssh me@10.0.0.5").unwrap();
+        assert_eq!(p.host.as_deref(), Some("10.0.0.5"));
+        assert_eq!(p.user.as_deref(), Some("me"));
+        assert_eq!(p.port, None);
+
+        let p = parse_ssh_command("ssh -p 2222 me@host").unwrap();
+        assert_eq!(p.port, Some(2222));
+
+        let p = parse_ssh_command("ssh me@host -p 2222").unwrap();
+        assert_eq!(p.port, Some(2222));
+
+        // The value can be glued to the flag.
+        let p = parse_ssh_command("ssh -p2222 me@host").unwrap();
+        assert_eq!(p.port, Some(2222));
+
+        let p = parse_ssh_command("ssh -i ~/.ssh/id_ed25519 me@host").unwrap();
+        assert_eq!(p.key_path.as_deref(), Some("~/.ssh/id_ed25519"));
+
+        // -l gives the user name instead of user@host.
+        let p = parse_ssh_command("ssh -l me host.example.com").unwrap();
+        assert_eq!(p.user.as_deref(), Some("me"));
+
+        // Flags that take no argument are skipped.
+        let p = parse_ssh_command("ssh -t -C me@host").unwrap();
+        assert_eq!(p.host.as_deref(), Some("host"));
+    }
+
+    #[test]
+    fn treats_a_bare_token_as_an_alias() {
+        let p = parse_ssh_command("ssh 미니맥").unwrap();
+        assert_eq!(p.alias.as_deref(), Some("미니맥"));
+        assert_eq!(p.host, None);
+
+        // Hyphens are ordinary alias characters — this shape is in real configs.
+        let p = parse_ssh_command("ssh clp-MS").unwrap();
+        assert_eq!(p.alias.as_deref(), Some("clp-MS"));
+        assert_eq!(p.host, None);
+    }
+
+    #[test]
+    fn rejects_what_is_not_an_interactive_login() {
+        // A remote command means no interactive shell opens.
+        assert!(parse_ssh_command("ssh host uptime").is_none());
+        // Not the program we handle.
+        assert!(parse_ssh_command("ssh-keygen -t ed25519").is_none());
+        assert!(parse_ssh_command("sshpass -p x ssh me@host").is_none());
+        assert!(parse_ssh_command("echo ssh me@host").is_none());
+        // No target.
+        assert!(parse_ssh_command("ssh").is_none());
+        assert!(parse_ssh_command("ssh -p 22").is_none());
+        // A malformed target is not a login either.
+        assert!(parse_ssh_command("ssh @host").is_none());
+        assert!(parse_ssh_command("ssh me@").is_none());
+    }
+}
+
+#[cfg(test)]
+mod ssh_config_tests {
+    use super::*;
+
+    const CONFIG: &str = "\
+Host 미니맥
+  HostName 192.168.0.21
+  User gyber
+  Port 2222
+  IdentityFile ~/.ssh/minimac
+
+host BOX
+  hostname box.internal
+
+Host wild*
+  HostName nope.example.com
+
+Host jump
+  HostName jump.example.com
+  ProxyJump bastion
+";
+
+    #[test]
+    fn reads_the_four_keys_we_support() {
+        let e = resolve_ssh_alias("미니맥", CONFIG).unwrap();
+        assert_eq!(e.host_name.as_deref(), Some("192.168.0.21"));
+        assert_eq!(e.user.as_deref(), Some("gyber"));
+        assert_eq!(e.port, Some(2222));
+        assert_eq!(e.identity_file.as_deref(), Some("~/.ssh/minimac"));
+    }
+
+    #[test]
+    fn keywords_are_case_insensitive() {
+        // ssh itself does not care about the case of Host/HostName.
+        let e = resolve_ssh_alias("BOX", CONFIG).unwrap();
+        assert_eq!(e.host_name.as_deref(), Some("box.internal"));
+    }
+
+    #[test]
+    fn ignores_keys_outside_the_subset_we_model() {
+        // A real config: RequestTTY/RemoteCommand still open an interactive
+        // shell, so the entry stays usable and the extra keys are ignored.
+        let config = "\
+Host clp-MS
+  HostName 49.247.202.200
+  User root
+  IdentityFile ~/.ssh/id_ed25519_clp
+  IdentitiesOnly yes
+  RequestTTY yes
+  RemoteCommand tmux attach -t MyStoryboard
+";
+        let e = resolve_ssh_alias("clp-MS", config).unwrap();
+        assert_eq!(e.host_name.as_deref(), Some("49.247.202.200"));
+        assert_eq!(e.user.as_deref(), Some("root"));
+        assert_eq!(e.identity_file.as_deref(), Some("~/.ssh/id_ed25519_clp"));
+    }
+
+    #[test]
+    fn gives_up_on_what_we_do_not_model() {
+        // Not present at all.
+        assert!(resolve_ssh_alias("missing", CONFIG).is_none());
+        // A wildcard block is out of scope — we do not pattern-match.
+        assert!(resolve_ssh_alias("wildcard", CONFIG).is_none());
+        // ProxyJump means the real connection is not the one we would open.
+        assert!(resolve_ssh_alias("jump", CONFIG).is_none());
+        // An Include we cannot follow makes the whole file unreliable.
+        assert!(resolve_ssh_alias("미니맥", "Include other\nHost 미니맥\n  HostName x\n").is_none());
+    }
+}
+
+#[cfg(test)]
+mod ssh_target_tests {
+    use super::*;
+
+    #[test]
+    fn fills_defaults_and_prefers_the_command_line() {
+        let config = "Host box\n  HostName box.internal\n  User configuser\n  Port 2222\n";
+
+        // An alias takes everything from the config.
+        let t = resolve_target(parse_ssh_command("ssh box").unwrap(), config, "osuser").unwrap();
+        assert_eq!(t.host, "box.internal");
+        assert_eq!(t.user, "configuser");
+        assert_eq!(t.port, 2222);
+
+        // The command line wins over the config, exactly as ssh does.
+        let parsed = parse_ssh_command("ssh -p 2200 me@box").unwrap();
+        let t = resolve_target(parsed, config, "osuser").unwrap();
+        assert_eq!(t.host, "box");
+        assert_eq!(t.user, "me");
+        assert_eq!(t.port, 2200);
+
+        // Nothing anywhere: ssh's own defaults.
+        let t = resolve_target(parse_ssh_command("ssh host.example.com").unwrap(), "", "osuser")
+            .unwrap();
+        assert_eq!(t.port, 22);
+        assert_eq!(t.user, "osuser");
+    }
+
+    #[test]
+    fn a_host_block_without_a_hostname_is_the_hostname() {
+        let config = "Host box\n  User configuser\n";
+        let t = resolve_target(parse_ssh_command("ssh box").unwrap(), config, "osuser").unwrap();
+        assert_eq!(t.host, "box");
+        assert_eq!(t.user, "configuser");
+    }
+
+    #[test]
+    fn an_unresolvable_alias_yields_nothing() {
+        let parsed = parse_ssh_command("ssh unknown").unwrap();
+        assert!(resolve_target(parsed, "", "osuser").is_none());
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
