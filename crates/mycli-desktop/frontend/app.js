@@ -5522,6 +5522,9 @@ async function splitPane(direction, cwd) {
     // cover the existing branch during the first layout pass.
     await settleSplitLayout(splitContainer);
     currentTab.panes.push(newPtyId);
+    // A split nests the new pane, so appending is not necessarily where it
+    // ended up on screen. Re-derive so the list matches the layout.
+    syncTabPaneOrder(currentTab);
     const nti = terminals.get(newPtyId);
     if (nti) nti.session = { kind: "local", shell: splitShell || null, cwd: cwd || null };
     refreshSessionList();
@@ -5728,7 +5731,10 @@ function findTabForPane(ptyId) {
 }
 
 // Move a pane (session) from its current tab into another tab (drag in the list).
-function movePaneToTab(ptyId, targetTabIdx) {
+// Move a pane into another tab. `dropTargetId` is the session it was dropped
+// onto, which decides where in that tab's layout it lands; dropping on the tab
+// header instead leaves it null and the pane goes to the end as before.
+function movePaneToTab(ptyId, targetTabIdx, dropTargetId = null, after = true) {
   const srcTab = findTabForPane(ptyId);
   const dstTab = tabs.get(targetTabIdx);
   if (!srcTab || !dstTab || srcTab.tabIdx === targetTabIdx) return;
@@ -5744,18 +5750,27 @@ function movePaneToTab(ptyId, targetTabIdx) {
     detachAndCollapse(leaf, srcTab);
     srcTab.panes = srcTab.panes.filter((p) => p !== ptyId);
 
-    // Append into the destination root as a new split column/row.
     const dstRoot = dstTab.rootEl;
-    if (dstRoot.children.length > 0) {
-      const vertical = dstRoot.classList.contains("vertical");
-      const divider = document.createElement("div");
-      divider.className = "pane-divider";
-      dstRoot.appendChild(divider);
-      setupDividerDrag(divider, dstRoot, vertical ? "vertical" : "horizontal");
+    const dropTarget =
+      dropTargetId != null && dstTab.panes.includes(dropTargetId)
+        ? terminals.get(dropTargetId)
+        : null;
+    const placed =
+      !!dropTarget && insertLeafBeside(leaf, dropTarget.paneEl, after);
+    if (!placed) {
+      // Append into the destination root as a new split column/row.
+      if (dstRoot.children.length > 0) {
+        const vertical = dstRoot.classList.contains("vertical");
+        const divider = document.createElement("div");
+        divider.className = "pane-divider";
+        dstRoot.appendChild(divider);
+        setupDividerDrag(divider, dstRoot, vertical ? "vertical" : "horizontal");
+      }
+      leaf.style.flex = "1";
+      dstRoot.appendChild(leaf);
     }
-    leaf.style.flex = "1";
-    dstRoot.appendChild(leaf);
     dstTab.panes.push(ptyId);
+    syncTabPaneOrder(dstTab);
 
     // Close the source tab if it has no panes left (and tell the user).
     const srcEmptied = srcTab.panes.length === 0;
@@ -5999,6 +6014,64 @@ function detachAndCollapse(leaf, tab) {
   const container = leaf.parentElement;
   leaf.remove();
   collapseSplitContainer(container, tab);
+}
+
+// Pane ids in the order they appear on screen. `tab.panes` drives the session
+// list, so deriving it from the layout is what keeps the list from claiming an
+// order the panes do not have.
+function panesInLayoutOrder(tab) {
+  if (!tab || !tab.rootEl) return tab && tab.panes ? [...tab.panes] : [];
+  const onScreen = [...tab.rootEl.querySelectorAll(".pane-leaf")]
+    .map((el) => Number(el.dataset.ptyId))
+    .filter((id) => terminals.has(id));
+  // A pane that is somehow not under this root still belongs to the tab —
+  // keep it rather than dropping it out of the list entirely.
+  const missing = (tab.panes || []).filter((id) => terminals.has(id) && !onScreen.includes(id));
+  return [...onScreen, ...missing];
+}
+function syncTabPaneOrder(tab) {
+  if (tab) tab.panes = panesInLayoutOrder(tab);
+}
+
+// Place `leaf` next to `targetLeaf`, matching how that part of the layout is
+// already arranged.
+//
+// A vertical stack takes the arrival as a flat sibling at the drop point, so
+// every pane keeps an equal share — nesting there would halve just the pane
+// that was dropped on. A horizontal row has no "between" that reads as the
+// drop position, so the dropped-on pane splits and the arrival goes
+// underneath it. Either way the session's place in the list is its place on
+// screen. Returns false when there is nothing to attach to.
+function insertLeafBeside(leaf, targetLeaf, after) {
+  const parent = targetLeaf && targetLeaf.parentElement;
+  if (!parent || leaf === targetLeaf) return false;
+  leaf.style.flex = "1 1 0";
+  const divider = document.createElement("div");
+  divider.className = "pane-divider";
+
+  if (parent.classList.contains("vertical")) {
+    if (after) {
+      parent.insertBefore(leaf, targetLeaf.nextSibling);
+      parent.insertBefore(divider, leaf);
+    } else {
+      parent.insertBefore(leaf, targetLeaf);
+      parent.insertBefore(divider, targetLeaf);
+    }
+    setupDividerDrag(divider, parent, "vertical");
+    normalizeSplitChildren(parent);
+    return true;
+  }
+
+  const split = document.createElement("div");
+  split.className = "pane-container vertical";
+  split.style.cssText = "flex:1 1 0;min-width:0;min-height:0;";
+  parent.replaceChild(split, targetLeaf);
+  targetLeaf.style.flex = "1 1 0";
+  if (after) split.append(targetLeaf, divider, leaf);
+  else split.append(leaf, divider, targetLeaf);
+  setupDividerDrag(divider, split, "vertical");
+  normalizeSplitChildren(split);
+  return true;
 }
 
 // Move `srcId` next to `targetId` on the given side (top/bottom/left/right),
@@ -8018,15 +8091,36 @@ function setPaneCwd(ptyId, path) {
 // Reorder a session within its own tab's panes — changes the session-list order
 // and the #N numbering. (The split layout on screen is left as-is; moving a
 // session to a *different* tab uses movePaneToTab, which relocates the pane.)
+// Reorder inside one tab. This used to shuffle `tab.panes` and nothing else,
+// so the list claimed an order the panes on screen did not have; the pane is
+// relocated for real now and the list is re-derived from where it landed.
 function reorderSessionWithin(tab, dragId, targetId, after) {
-  const arr = tab.panes;
-  const from = arr.indexOf(dragId);
-  if (from < 0) return;
-  arr.splice(from, 1);
-  const to = arr.indexOf(targetId);
-  if (to < 0) arr.push(dragId);
-  else arr.splice(after ? to + 1 : to, 0, dragId);
-  refreshSessionList();
+  if (!tab || dragId === targetId) return;
+  const src = terminals.get(dragId);
+  const target = terminals.get(targetId);
+  if (!src || !target || !src.paneEl || !target.paneEl) return;
+  if (!tab.panes.includes(dragId) || !tab.panes.includes(targetId)) return;
+
+  clearPaneZoom(); // layout is about to change — drop any zoom overlay first
+  try {
+    // Re-tiling reparents both leaves (and any collapsed sibling) — keep pins.
+    const repin = captureBottomPins();
+    detachAndCollapse(src.paneEl, tab);
+    // Read the target's parent only now: collapsing the source's container can
+    // promote the target into its grandparent.
+    if (!insertLeafBeside(src.paneEl, target.paneEl, after)) {
+      // The target lost its place while we were detaching — put the pane back
+      // at the end of the tab rather than leaving it orphaned off-screen.
+      tab.rootEl.appendChild(src.paneEl);
+    }
+    syncTabPaneOrder(tab);
+    repin();
+    refreshSessionList();
+    requestAnimationFrame(() => { refitAllPanes(); repin(); });
+  } catch (e) {
+    toast("세션 이동 오류: " + (e && e.message), true);
+    console.error("reorderSessionWithin failed", e);
+  }
 }
 
 // ── Session scratch memos 🗒 ──────────────────────────────────────────────────
@@ -8843,12 +8937,15 @@ function refreshSessionList() {
         const srcTab = findTabForPane(dragId);
         const dstTab = findTabForPane(ptyId);
         if (!srcTab || !dstTab) return;
+        // Which half of the row it was dropped on decides whether the pane
+        // goes before or after the one under the cursor — in the list and,
+        // now, in the layout too.
+        const rect = li.getBoundingClientRect();
+        const after = (e.clientY - rect.top) > rect.height / 2;
         if (srcTab.tabIdx === dstTab.tabIdx) {
-          const rect = li.getBoundingClientRect();
-          const after = (e.clientY - rect.top) > rect.height / 2;
-          reorderSessionWithin(dstTab, dragId, ptyId, after); // same tab → reorder
+          reorderSessionWithin(dstTab, dragId, ptyId, after);      // same tab
         } else {
-          movePaneToTab(dragId, dstTab.tabIdx);               // other tab → move
+          movePaneToTab(dragId, dstTab.tabIdx, ptyId, after);      // other tab
         }
       });
 
