@@ -54,7 +54,97 @@
     </div>
   </header>
 
-  <div id="voice-popover" class="voice-popover hidden" role="dialog" aria-label="Voice input settings"><label>Provider <select id="voice-provider"><option value="deepgram">Deepgram cloud</option><option value="faster-whisper">Local faster-whisper</option></select></label><label id="voice-key-row">Deepgram API key <input id="voice-api-key" type="password" autocomplete="off"></label><button id="voice-save-key" type="button">Save encrypted key</button><label id="voice-command-row" class="hidden">Whisper command <input id="voice-command" placeholder="python faster_whisper_cli.py"></label><button id="voice-record" type="button">Hold to talk</button><span id="voice-status" aria-live="polite"></span></div>
+  <div id="voice-popover" class="voice-popover hidden" role="dialog" aria-label="음성 입력 설정">
+    <label>인식 엔진
+      <select id="voice-provider">
+        <option value="deepgram">Deepgram 클라우드</option>
+        <option value="faster-whisper">로컬 faster-whisper</option>
+      </select>
+    </label>
+
+    <label id="voice-key-row">Deepgram API 키
+      <input id="voice-api-key" type="password" autocomplete="off">
+    </label>
+    <button id="voice-save-key" type="button">키 암호화 저장</button>
+
+    <div id="voice-local" class="hidden">
+      <div class="voice-modes" role="radiogroup" aria-label="로컬 실행 방식">
+        <label><input type="radio" name="voice-local-mode" value="standalone" checked> 단독 실행 파일</label>
+        <label><input type="radio" name="voice-local-mode" value="python"> Python</label>
+      </div>
+
+      <!-- Exactly what to install, with the links, because the previous build
+           demanded an executable it never shipped and never named. -->
+      <details id="voice-guide-standalone" class="voice-guide">
+        <summary>설치 안내 · Python 불필요</summary>
+        <ol>
+          <li>
+            <button type="button" class="voice-link" data-url="https://github.com/Purfview/whisper-standalone-win/releases/tag/Faster-Whisper-XXL">다운로드 페이지 열기 ↗</button>
+            <span class="voice-hint">Faster-Whisper-XXL 의 최신 <code>*_windows.7z</code> (약 1.4GB)</span>
+          </li>
+          <li>
+            압축을 풉니다. Windows 11 탐색기는 <code>.7z</code> 를 기본 지원합니다.
+            <button type="button" class="voice-link" data-url="https://www.7-zip.org/">그 이하 버전은 7-Zip ↗</button>
+          </li>
+          <li>푼 폴더의 <code>faster-whisper-xxl.exe</code> 를 아래에서 고릅니다. 모델은 첫 실행 때 자동으로 받습니다.</li>
+        </ol>
+      </details>
+
+      <details id="voice-guide-python" class="voice-guide">
+        <summary>설치 안내 · Python</summary>
+        <ol>
+          <li>
+            <button type="button" class="voice-link" data-url="https://www.python.org/downloads/windows/">python.org 열기 ↗</button>
+            <span class="voice-hint">Python 3.9 이상</span>
+          </li>
+          <li>
+            <code>pip install faster-whisper</code>
+            <button type="button" class="voice-copy" data-copy="pip install faster-whisper">복사</button>
+            <button type="button" id="voice-pip-run">현재 패인에 입력</button>
+          </li>
+          <li>
+            GPU 를 쓸 때만 · cuBLAS + cuDNN 9 for CUDA 12
+            <button type="button" class="voice-link" data-url="https://github.com/SYSTRAN/faster-whisper#gpu">안내 ↗</button>
+          </li>
+          <li><code>python.exe</code> 를 아래에서 고릅니다. 래퍼 스크립트는 Mymux 에 동봉돼 있어 직접 만들 필요가 없습니다.</li>
+        </ol>
+      </details>
+
+      <div class="voice-runner-row">
+        <input id="voice-runner" readonly placeholder="실행 파일을 선택하세요">
+        <button id="voice-browse" type="button">찾아보기…</button>
+      </div>
+
+      <div class="voice-two">
+        <label>모델
+          <select id="voice-model">
+            <option value="tiny">tiny · 가장 빠름</option>
+            <option value="base">base</option>
+            <option value="small" selected>small · 권장</option>
+            <option value="medium">medium</option>
+            <option value="large-v3">large-v3 · 가장 정확</option>
+            <option value="turbo">turbo</option>
+          </select>
+        </label>
+        <label>언어
+          <select id="voice-language">
+            <option value="ko" selected>한국어</option>
+            <option value="en">English</option>
+            <option value="ja">日本語</option>
+            <option value="auto">자동 감지</option>
+          </select>
+        </label>
+      </div>
+      <button id="voice-check" type="button">설치 확인</button>
+    </div>
+
+    <label class="voice-chk"><input type="checkbox" id="voice-ptt" checked> Ctrl+Space 눌러서 말하기</label>
+    <button id="voice-record" type="button">🎤 눌러서 말하기</button>
+    <span id="voice-status" aria-live="polite"></span>
+  </div>
+  <!-- Visible while recording even when the popover is closed, so push-to-talk
+       has feedback without opening settings. -->
+  <div id="voice-recording" class="voice-recording hidden" aria-live="polite">🎤 녹음 중…</div>
   <div id="main-layout">
     <!-- ── Sidebar ── -->
     <aside id="sidebar">

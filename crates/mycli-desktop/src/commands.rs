@@ -247,6 +247,117 @@ pub fn write_text_file(path: String, content: String) -> Result<(), String> {
     std::fs::write(&path, content).map_err(|e| e.to_string())
 }
 
+/// Turn a memo title into a file name the Save dialog can start from.
+///
+/// Illegal characters are replaced rather than rejected: a title is free text
+/// the user wrote for themselves, and refusing to export it because it happens
+/// to contain a colon would be the wrong trade.
+fn sanitize_txt_filename(title: &str) -> String {
+    let mut name: String = title
+        .chars()
+        .map(|c| match c {
+            '\\' | '/' | ':' | '*' | '?' | '"' | '<' | '>' | '|' => '_',
+            c if (c as u32) < 0x20 => '_',
+            c => c,
+        })
+        .collect();
+    // Windows rejects names ending in a space or a dot.
+    name = name.trim().trim_end_matches('.').trim().to_string();
+    // Chars, not bytes: a Korean title would otherwise be cut mid-character.
+    if name.chars().count() > 60 {
+        name = name.chars().take(60).collect::<String>().trim_end().to_string();
+    }
+    if name.is_empty() {
+        name = "메모".to_string();
+    }
+    if !name.to_ascii_lowercase().ends_with(".txt") {
+        name.push_str(".txt");
+    }
+    name
+}
+
+/// Save text through the OS "Save as" dialog. `Ok(None)` means the user
+/// cancelled, which is not an error.
+///
+/// Written as UTF-8 **with a BOM** and CRLF line endings. This is a .txt a
+/// Windows user opens in Notepad or drops into Excel; without the BOM those
+/// tools can still guess the codepage wrong and render Korean as mojibake.
+///
+/// Runs as a sync command (like `pick_key_file`) so the blocking dialog
+/// dispatches to the main thread from a worker without deadlocking.
+#[tauri::command]
+pub fn save_text_file_as(
+    app: tauri::AppHandle,
+    suggested_name: String,
+    content: String,
+) -> Result<Option<String>, String> {
+    use tauri_plugin_dialog::DialogExt;
+    let Some(chosen) = app
+        .dialog()
+        .file()
+        .set_file_name(sanitize_txt_filename(&suggested_name))
+        .add_filter("텍스트 문서", &["txt"])
+        .blocking_save_file()
+    else {
+        return Ok(None);
+    };
+    let path = chosen
+        .into_path()
+        .map_err(|e| format!("Cannot resolve the chosen path: {e}"))?;
+    let mut bytes = Vec::with_capacity(content.len() + 3);
+    bytes.extend_from_slice(&[0xEF, 0xBB, 0xBF]);
+    // Normalize to CRLF without doubling a \r that is already there.
+    bytes.extend_from_slice(
+        content
+            .replace("\r\n", "\n")
+            .replace('\n', "\r\n")
+            .as_bytes(),
+    );
+    std::fs::write(&path, bytes).map_err(|e| e.to_string())?;
+    Ok(Some(path.to_string_lossy().into_owned()))
+}
+
+#[cfg(test)]
+mod txt_filename_tests {
+    use super::sanitize_txt_filename;
+
+    #[test]
+    fn replaces_characters_windows_refuses() {
+        assert_eq!(
+            sanitize_txt_filename(r#"build: a/b\c*d?e"f<g>h|i"#),
+            "build_ a_b_c_d_e_f_g_h_i.txt"
+        );
+    }
+
+    #[test]
+    fn keeps_korean_and_adds_the_extension_once() {
+        assert_eq!(sanitize_txt_filename("빌드 로그"), "빌드 로그.txt");
+        assert_eq!(sanitize_txt_filename("빌드 로그.txt"), "빌드 로그.txt");
+        assert_eq!(sanitize_txt_filename("빌드 로그.TXT"), "빌드 로그.TXT");
+    }
+
+    #[test]
+    fn falls_back_when_nothing_usable_is_left() {
+        assert_eq!(sanitize_txt_filename(""), "메모.txt");
+        assert_eq!(sanitize_txt_filename("   "), "메모.txt");
+        assert_eq!(sanitize_txt_filename("..."), "메모.txt");
+    }
+
+    #[test]
+    fn truncates_on_character_boundaries() {
+        let long = "가".repeat(200);
+        let out = sanitize_txt_filename(&long);
+        assert_eq!(out.chars().count(), 64, "60 chars + \".txt\"");
+        assert!(out.ends_with(".txt"));
+        assert!(out.starts_with("가가가"));
+    }
+
+    #[test]
+    fn strips_control_characters_from_a_pasted_first_line() {
+        assert_eq!(sanitize_txt_filename("log\tline\u{7}"), "log_line_.txt");
+    }
+}
+
 fn sorted_dirs_desc(dir: &std::path::Path) -> Vec<std::path::PathBuf> {
     let mut v: Vec<_> = std::fs::read_dir(dir)
         .map(|rd| rd.flatten().map(|e| e.path()).filter(|p| p.is_dir()).collect())

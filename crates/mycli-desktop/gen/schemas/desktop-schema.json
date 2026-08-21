@@ -675,6 +675,12 @@
           "markdownDescription": "Enables the read_text_file command without any pre-configured scope."
         },
         {
+          "description": "Enables the save_text_file_as command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-save-text-file-as",
+          "markdownDescription": "Enables the save_text_file_as command without any pre-configured scope."
+        },
+        {
           "description": "Enables the session_clear command without any pre-configured scope.",
           "type": "string",
           "const": "allow-session-clear",
@@ -801,10 +807,22 @@
           "markdownDescription": "Enables the update_install command without any pre-configured scope."
         },
         {
+          "description": "Enables the voice_check_local command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-voice-check-local",
+          "markdownDescription": "Enables the voice_check_local command without any pre-configured scope."
+        },
+        {
           "description": "Enables the voice_deepgram_token command without any pre-configured scope.",
           "type": "string",
           "const": "allow-voice-deepgram-token",
           "markdownDescription": "Enables the voice_deepgram_token command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the voice_pick_runner command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-voice-pick-runner",
+          "markdownDescription": "Enables the voice_pick_runner command without any pre-configured scope."
         },
         {
           "description": "Enables the voice_store_deepgram_key command without any pre-configured scope.",
@@ -1119,6 +1137,12 @@
           "markdownDescription": "Denies the read_text_file command without any pre-configured scope."
         },
         {
+          "description": "Denies the save_text_file_as command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-save-text-file-as",
+          "markdownDescription": "Denies the save_text_file_as command without any pre-configured scope."
+        },
+        {
           "description": "Denies the session_clear command without any pre-configured scope.",
           "type": "string",
           "const": "deny-session-clear",
@@ -1245,10 +1269,22 @@
           "markdownDescription": "Denies the update_install command without any pre-configured scope."
         },
         {
+          "description": "Denies the voice_check_local command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-voice-check-local",
+          "markdownDescription": "Denies the voice_check_local command without any pre-configured scope."
+        },
+        {
           "description": "Denies the voice_deepgram_token command without any pre-configured scope.",
           "type": "string",
           "const": "deny-voice-deepgram-token",
           "markdownDescription": "Denies the voice_deepgram_token command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the voice_pick_runner command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-voice-pick-runner",
+          "markdownDescription": "Denies the voice_pick_runner command without any pre-configured scope."
         },
         {
           "description": "Denies the voice_store_deepgram_key command without any pre-configured scope.",

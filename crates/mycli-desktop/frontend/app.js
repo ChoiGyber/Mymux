@@ -18,6 +18,9 @@ const ICON = {
   copy: `<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="8" y="8" width="11" height="12" rx="2"/><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h2"/></svg>`,
   star: `<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m12 3 2.8 5.7 6.2.9-4.5 4.4 1.1 6.2-5.6-2.9-5.6 2.9 1.1-6.2L3 9.6l6.2-.9z"/></svg>`,
   close: `<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg>`,
+  search: `<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="6"/><path d="m20 20-4.4-4.4"/></svg>`,
+  plus: `<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>`,
+  save: `<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v11"/><path d="m8 11 4 4 4-4"/><path d="M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2"/></svg>`,
   check: `<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m5 12 4 4L19 6"/></svg>`,
   keyboard: `<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="6" width="18" height="12" rx="2"/><path d="M7 10h.01M11 10h.01M15 10h.01M8 14h8"/></svg>`,
   play: `<svg class="icon" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M7 4.8v14.4a1 1 0 0 0 1.5.9l11-7.2a1 1 0 0 0 0-1.8l-11-7.2A1 1 0 0 0 7 4.8z"/></svg>`,
@@ -290,33 +293,318 @@ window.addEventListener("DOMContentLoaded", async () => {
   setupCloseHandler();
 });
 
-function setupVoiceInput() {
-  const pop=document.getElementById('voice-popover'), toggle=document.getElementById('btn-voice-input'), provider=document.getElementById('voice-provider'), key=document.getElementById('voice-api-key'), save=document.getElementById('voice-save-key'), cmd=document.getElementById('voice-command'), rec=document.getElementById('voice-record'), status=document.getElementById('voice-status');
-  if (!toggle || !rec) return; let media=null, chunks=[], target=null;
-  const sync=()=>{ const local=provider.value==='faster-whisper'; document.getElementById('voice-key-row').classList.toggle('hidden',local); save.classList.toggle('hidden',local); document.getElementById('voice-command-row').classList.toggle('hidden',!local); };
-  toggle.onclick=()=>pop.classList.toggle('hidden'); provider.onchange=sync; sync();
-  save.onclick=async()=>{ try { await invoke('voice_store_deepgram_key',{key:key.value}); key.value=''; status.textContent='Saved encrypted'; } catch(e){ status.textContent=String(e); } };
-  const stop=()=>{ if(media&&media.state==='recording') { media.stop(); } };
-  rec.onpointerdown=async()=>{ try { target=focusedPaneId; if(!target||!terminals.has(target)) throw Error('Select a terminal pane first'); media=await navigator.mediaDevices.getUserMedia({audio:true}); chunks=[]; const mr=new MediaRecorder(media); media.getTracks().forEach(t=>t.stop()); media=null; status.textContent='Recording… release to transcribe'; rec._mr=mr; mr.ondataavailable=e=>{if(e.data.size)chunks.push(e.data)}; mr.onstop=async()=>{ status.textContent='Transcribing…'; const blob=new Blob(chunks,{type:mr.mimeType||'audio/webm'}); try { let text=''; if(provider.value==='deepgram'){ const token=await invoke('voice_deepgram_token'); const ws=new WebSocket('wss://api.deepgram.com/v1/listen?model=nova-3&language=ko&smart_format=true&interim_results=false&token='+encodeURIComponent(token)); text=await new Promise((resolve,reject)=>{ws.onopen=()=>ws.send(blob); ws.onmessage=e=>{try{const d=JSON.parse(e.data); const t=d.channel?.alternatives?.[0]?.transcript;if(t)resolve(t)}catch{}}; ws.onerror=()=>reject(Error('Deepgram connection failed')); setTimeout(()=>reject(Error('Transcription timeout')),30000);}); ws.close(); } else { const b64=await new Promise(r=>{const fr=new FileReader();fr.onload=()=>r(String(fr.result).split(',')[1]);fr.readAsDataURL(blob)}); text=await invoke('voice_transcribe_local',{audioBase64:b64,command:cmd.value}); } text=String(text).replace(/[\r\n\x00-\x1f]+/g,' ').trim(); if(text&&terminals.has(target)) terminals.get(target).term.paste(text); status.textContent=text?'Inserted':'No speech detected'; }catch(e){status.textContent=String(e)} }; mr.start(); } catch(e){ status.textContent=String(e); } };
-  rec.onpointerup=stop; rec.onpointercancel=stop; rec.onpointerleave=e=>{if(e.buttons===0)stop()};
-  let voiceShortcutActive=false;
-  document.addEventListener('keydown',(e)=>{if(e.ctrlKey&&!e.altKey&&!e.shiftKey&&e.code==='Space'&&!e.repeat){e.preventDefault();voiceShortcutActive=true;rec.dispatchEvent(new PointerEvent('pointerdown',{bubbles:true,pointerId:0,buttons:1}))}},true);
-  document.addEventListener('keyup',(e)=>{if(voiceShortcutActive&&(e.code==='Space'||e.key==='Control')){e.preventDefault();voiceShortcutActive=false;rec.dispatchEvent(new PointerEvent('pointerup',{bubbles:true,pointerId:0,buttons:0}))}},true);
+// ── Voice input 🎙 ────────────────────────────────────────────────────────────
+// Hold the button (or Ctrl+Space) to dictate into the focused pane. Two
+// engines: Deepgram in the cloud, or faster-whisper on this machine.
+//
+// The local path used to be unusable. It demanded an absolute path to an
+// executable literally named faster-whisper.exe — something Mymux never
+// shipped, never built and never described — while the field's placeholder
+// suggested a python command that could not pass that check. The popover now
+// states what to install, links it, and can verify the result.
+const VOICE_KEYS = {
+  provider: "mymux.voice.provider",
+  localMode: "mymux.voice.localMode",
+  runner: (mode) => `mymux.voice.runner.${mode}`,
+  model: "mymux.voice.model",
+  language: "mymux.voice.language",
+  pushToTalk: "mymux.voice.pushToTalk",
+};
+
+// MediaRecorder in WebView2 only emits webm/opus, which whisper cannot read
+// without ffmpeg beside it — the most common way a correct install still
+// transcribes nothing. Decode here and hand the backend a plain 16 kHz mono
+// WAV, which every engine reads natively. It is also a smaller payload.
+async function blobToWav16k(blob) {
+  const decodeContext = new AudioContext();
+  let decoded;
+  try {
+    decoded = await decodeContext.decodeAudioData(await blob.arrayBuffer());
+  } finally {
+    decodeContext.close();
+  }
+  const rate = 16000;
+  const frames = Math.max(1, Math.ceil(decoded.duration * rate));
+  const offline = new OfflineAudioContext(1, frames, rate);
+  const source = offline.createBufferSource();
+  source.buffer = decoded;
+  source.connect(offline.destination);
+  source.start();
+  const mono = (await offline.startRendering()).getChannelData(0);
+
+  const bytes = new ArrayBuffer(44 + mono.length * 2);
+  const view = new DataView(bytes);
+  const ascii = (offset, text) => {
+    for (let i = 0; i < text.length; i++) view.setUint8(offset + i, text.charCodeAt(i));
+  };
+  ascii(0, "RIFF");
+  view.setUint32(4, 36 + mono.length * 2, true);
+  ascii(8, "WAVEfmt ");
+  view.setUint32(16, 16, true); // PCM header size
+  view.setUint16(20, 1, true); // format: PCM
+  view.setUint16(22, 1, true); // channels
+  view.setUint32(24, rate, true);
+  view.setUint32(28, rate * 2, true); // byte rate
+  view.setUint16(32, 2, true); // block align
+  view.setUint16(34, 16, true); // bits per sample
+  ascii(36, "data");
+  view.setUint32(40, mono.length * 2, true);
+  for (let i = 0; i < mono.length; i++) {
+    const sample = Math.max(-1, Math.min(1, mono[i]));
+    view.setInt16(44 + i * 2, sample < 0 ? sample * 0x8000 : sample * 0x7fff, true);
+  }
+
+  let binary = "";
+  const raw = new Uint8Array(bytes);
+  for (let i = 0; i < raw.length; i += 0x8000) {
+    binary += String.fromCharCode.apply(null, raw.subarray(i, i + 0x8000));
+  }
+  return btoa(binary);
 }
 
-function setupVoiceInputSafe() {
-  const pop=document.getElementById('voice-popover'), toggle=document.getElementById('btn-voice-input'), provider=document.getElementById('voice-provider'), key=document.getElementById('voice-api-key'), save=document.getElementById('voice-save-key'), runner=document.getElementById('voice-command'), rec=document.getElementById('voice-record'), status=document.getElementById('voice-status');
-  if (!toggle || !rec) return; let stream=null, recorder=null, chunks=[], target=null;
-  const sync=()=>{ const local=provider.value==='faster-whisper'; document.getElementById('voice-key-row').classList.toggle('hidden',local); save.classList.toggle('hidden',local); document.getElementById('voice-command-row').classList.toggle('hidden',!local); };
-  toggle.onclick=()=>pop.classList.toggle('hidden'); provider.onchange=sync; sync();
-  save.onclick=async()=>{ try { await invoke('voice_store_deepgram_key',{key:key.value}); key.value=''; status.textContent='Saved encrypted'; } catch(e){ status.textContent=String(e); } };
-  const stop=()=>{ if(recorder&&recorder.state==='recording') recorder.stop(); };
-  rec.onpointerdown=async(e)=>{ e.preventDefault(); if(recorder) return; try { target=focusedPaneId; if(!target||!terminals.has(target)) throw Error('Select a terminal pane first'); stream=await navigator.mediaDevices.getUserMedia({audio:true}); chunks=[]; recorder=new MediaRecorder(stream); const mr=recorder; mr.ondataavailable=x=>{if(x.data.size)chunks.push(x.data)}; mr.onstop=async()=>{ recorder=null; stream?.getTracks().forEach(t=>t.stop()); stream=null; status.textContent='Transcribing'; const blob=new Blob(chunks,{type:mr.mimeType||'audio/webm'}); try { let text=''; if(provider.value==='deepgram'){ const token=await invoke('voice_deepgram_token'); const ws=new WebSocket('wss://api.deepgram.com/v1/listen?model=nova-3&language=ko-KR&smart_format=true&interim_results=false&token='+encodeURIComponent(token)); text=await new Promise((resolve,reject)=>{let all='',done=false,timer=setTimeout(()=>finish(Error('Transcription timeout')),30000); const finish=err=>{if(done)return;done=true;clearTimeout(timer);try{ws.close()}catch{} err?reject(err):resolve(all)}; ws.onopen=()=>{ws.send(blob);ws.send(JSON.stringify({type:'CloseStream'}))}; ws.onmessage=x=>{try{const d=JSON.parse(x.data);const t=d.channel?.alternatives?.[0]?.transcript;if(t)all+=(all?' ':'')+t;if(d.speech_final||d.is_final)finish()}catch{}}; ws.onerror=()=>finish(Error('Deepgram connection failed')); ws.onclose=()=>finish()}); } else { const modelPath=localStorage.getItem('mymux.voice.modelPath')||prompt('faster-whisper 모델 폴더의 절대 경로를 입력하세요'); if(!modelPath) throw Error('Model path is required'); localStorage.setItem('mymux.voice.modelPath',modelPath); const b64=await new Promise(r=>{const fr=new FileReader();fr.onload=()=>r(String(fr.result).split(',')[1]);fr.readAsDataURL(blob)}); text=await invoke('voice_transcribe_local',{audioBase64:b64,runnerPath:runner.value,modelPath}); } text=String(text).replace(/[\r\n\x00-\x1f]+/g,' ').trim(); if(text&&terminals.has(target)) terminals.get(target).term.paste(text); status.textContent=text?'Inserted':'No speech detected'; }catch(x){status.textContent=String(x)} }; mr.start(); status.textContent='Recording release to transcribe'; } catch(x){stream?.getTracks().forEach(t=>t.stop());stream=null;status.textContent=String(x)} };
-  rec.onpointerup=stop; rec.onpointercancel=stop; rec.onpointerleave=e=>{if(e.buttons===0)stop()};
+function setupVoiceInput() {
+  const $ = (id) => document.getElementById(id);
+  const pop = $("voice-popover");
+  const toggle = $("btn-voice-input");
+  const provider = $("voice-provider");
+  const key = $("voice-api-key");
+  const saveKey = $("voice-save-key");
+  const localBox = $("voice-local");
+  const runner = $("voice-runner");
+  const browse = $("voice-browse");
+  const model = $("voice-model");
+  const language = $("voice-language");
+  const checkBtn = $("voice-check");
+  const ptt = $("voice-ptt");
+  const rec = $("voice-record");
+  const status = $("voice-status");
+  const indicator = $("voice-recording");
+  if (!toggle || !rec || !pop) return;
+
+  const read = (k, fallback) => localStorage.getItem(k) ?? fallback;
+  const localMode = () =>
+    pop.querySelector('input[name="voice-local-mode"]:checked')?.value || "standalone";
+  const isLocal = () => provider.value === "faster-whisper";
+
+  provider.value = read(VOICE_KEYS.provider, "deepgram");
+  const savedMode = read(VOICE_KEYS.localMode, "standalone");
+  const savedModeInput = pop.querySelector(`input[name="voice-local-mode"][value="${savedMode}"]`);
+  if (savedModeInput) savedModeInput.checked = true;
+  model.value = read(VOICE_KEYS.model, "small");
+  language.value = read(VOICE_KEYS.language, "ko");
+  ptt.checked = read(VOICE_KEYS.pushToTalk, "1") !== "0";
+
+  // The 🎙 button carries a dot while the local engine has no runner picked,
+  // so a half-finished setup is visible without opening the popover.
+  const syncReadiness = () => {
+    toggle.classList.toggle("not-ready", isLocal() && !runner.value);
+  };
+  const sync = () => {
+    const local = isLocal();
+    $("voice-key-row").classList.toggle("hidden", local);
+    saveKey.classList.toggle("hidden", local);
+    localBox.classList.toggle("hidden", !local);
+    const mode = localMode();
+    $("voice-guide-standalone").classList.toggle("hidden", mode !== "standalone");
+    $("voice-guide-python").classList.toggle("hidden", mode !== "python");
+    runner.value = read(VOICE_KEYS.runner(mode), "");
+    runner.title = runner.value;
+    runner.placeholder =
+      mode === "python" ? "python.exe 를 선택하세요" : "faster-whisper-xxl.exe 를 선택하세요";
+    syncReadiness();
+  };
+  sync();
+
+  toggle.onclick = () => pop.classList.toggle("hidden");
+  provider.onchange = () => {
+    localStorage.setItem(VOICE_KEYS.provider, provider.value);
+    sync();
+  };
+  for (const radio of pop.querySelectorAll('input[name="voice-local-mode"]')) {
+    radio.addEventListener("change", () => {
+      localStorage.setItem(VOICE_KEYS.localMode, localMode());
+      status.textContent = "";
+      sync();
+    });
+  }
+  model.onchange = () => localStorage.setItem(VOICE_KEYS.model, model.value);
+  language.onchange = () => localStorage.setItem(VOICE_KEYS.language, language.value);
+  ptt.onchange = () => localStorage.setItem(VOICE_KEYS.pushToTalk, ptt.checked ? "1" : "0");
+
+  for (const link of pop.querySelectorAll(".voice-link")) {
+    link.addEventListener("click", () =>
+      invoke("open_external", { path: link.dataset.url }).catch((e) => toast(String(e), true))
+    );
+  }
+  for (const copy of pop.querySelectorAll(".voice-copy")) {
+    copy.addEventListener("click", async () => {
+      if (await clipboardWrite(copy.dataset.copy)) toast("복사했습니다.");
+    });
+  }
+  $("voice-pip-run").addEventListener("click", () => {
+    if (!focusedPaneId || !terminals.has(focusedPaneId)) {
+      status.textContent = "터미널 패인을 먼저 선택하세요.";
+      return;
+    }
+    sendMemoToPane(focusedPaneId, "pip install faster-whisper", false);
+    pop.classList.add("hidden");
+  });
+
+  browse.addEventListener("click", async () => {
+    try {
+      const picked = await invoke("voice_pick_runner");
+      if (!picked) return;
+      localStorage.setItem(VOICE_KEYS.runner(localMode()), picked);
+      runner.value = picked;
+      runner.title = picked;
+      status.textContent = "";
+      syncReadiness();
+    } catch (e) {
+      status.textContent = String(e);
+    }
+  });
+
+  checkBtn.addEventListener("click", async () => {
+    if (!runner.value) {
+      status.textContent = "먼저 실행 파일을 선택하세요.";
+      return;
+    }
+    status.textContent = "확인 중…";
+    try {
+      status.textContent = "✅ " + (await invoke("voice_check_local", {
+        mode: localMode(),
+        runnerPath: runner.value,
+      }));
+    } catch (e) {
+      status.textContent = "❌ " + String(e);
+    }
+  });
+
+  saveKey.onclick = async () => {
+    try {
+      await invoke("voice_store_deepgram_key", { key: key.value });
+      key.value = "";
+      status.textContent = "키를 암호화해 저장했습니다.";
+    } catch (e) {
+      status.textContent = String(e);
+    }
+  };
+
+  let stream = null;
+  let recorder = null;
+  let chunks = [];
+  let target = null;
+  const showRecording = (on) => indicator.classList.toggle("hidden", !on);
+  const stop = () => {
+    if (recorder && recorder.state === "recording") recorder.stop();
+  };
+
+  async function transcribe(blob) {
+    if (provider.value === "deepgram") {
+      const token = await invoke("voice_deepgram_token");
+      const ws = new WebSocket(
+        "wss://api.deepgram.com/v1/listen?model=nova-3&language=ko-KR&smart_format=true&interim_results=false&token=" +
+          encodeURIComponent(token)
+      );
+      return await new Promise((resolve, reject) => {
+        let all = "";
+        let done = false;
+        const finish = (err) => {
+          if (done) return;
+          done = true;
+          clearTimeout(timer);
+          try { ws.close(); } catch {}
+          if (err) reject(err); else resolve(all);
+        };
+        const timer = setTimeout(() => finish(Error("Transcription timeout")), 30000);
+        ws.onopen = () => { ws.send(blob); ws.send(JSON.stringify({ type: "CloseStream" })); };
+        ws.onmessage = (event) => {
+          try {
+            const data = JSON.parse(event.data);
+            const part = data.channel?.alternatives?.[0]?.transcript;
+            if (part) all += (all ? " " : "") + part;
+            if (data.speech_final || data.is_final) finish();
+          } catch {}
+        };
+        ws.onerror = () => finish(Error("Deepgram connection failed"));
+        ws.onclose = () => finish();
+      });
+    }
+    const mode = localMode();
+    const runnerPath = read(VOICE_KEYS.runner(mode), "");
+    if (!runnerPath) throw Error("실행 파일이 설정돼 있지 않습니다. 🎙 에서 설치 안내를 확인하세요.");
+    return await invoke("voice_transcribe_local", {
+      audioBase64: await blobToWav16k(blob),
+      mode,
+      runnerPath,
+      model: model.value,
+      language: language.value,
+    });
+  }
+
+  rec.onpointerdown = async (event) => {
+    event.preventDefault();
+    if (recorder) return;
+    try {
+      target = focusedPaneId;
+      if (!target || !terminals.has(target)) throw Error("터미널 패인을 먼저 선택하세요.");
+      stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      chunks = [];
+      recorder = new MediaRecorder(stream);
+      const mr = recorder;
+      mr.ondataavailable = (x) => { if (x.data.size) chunks.push(x.data); };
+      mr.onstop = async () => {
+        recorder = null;
+        stream?.getTracks().forEach((t) => t.stop());
+        stream = null;
+        showRecording(false);
+        status.textContent = "인식 중…";
+        try {
+          const blob = new Blob(chunks, { type: mr.mimeType || "audio/webm" });
+          let text = String(await transcribe(blob))
+            .replace(/[\r\n\x00-\x1f]+/g, " ")
+            .trim();
+          if (text && terminals.has(target)) terminals.get(target).term.paste(text);
+          status.textContent = text ? "입력했습니다." : "인식된 말이 없습니다.";
+        } catch (e) {
+          status.textContent = String(e);
+          toast("음성 인식 실패: " + String(e), true);
+        }
+      };
+      mr.start();
+      showRecording(true);
+      status.textContent = "녹음 중 — 떼면 인식합니다.";
+    } catch (e) {
+      stream?.getTracks().forEach((t) => t.stop());
+      stream = null;
+      recorder = null;
+      showRecording(false);
+      status.textContent = String(e);
+    }
+  };
+  rec.onpointerup = stop;
+  rec.onpointercancel = stop;
+  rec.onpointerleave = (e) => { if (e.buttons === 0) stop(); };
+
+  // Push-to-talk is global, so it can be switched off: it otherwise swallows
+  // Ctrl+Space from whatever is running in the focused pane.
+  let shortcutActive = false;
+  document.addEventListener("keydown", (e) => {
+    if (!ptt.checked || !e.ctrlKey || e.altKey || e.shiftKey || e.code !== "Space" || e.repeat) return;
+    e.preventDefault();
+    shortcutActive = true;
+    rec.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, pointerId: 0, buttons: 1 }));
+  }, true);
+  document.addEventListener("keyup", (e) => {
+    if (!shortcutActive || (e.code !== "Space" && e.key !== "Control")) return;
+    e.preventDefault();
+    shortcutActive = false;
+    rec.dispatchEvent(new PointerEvent("pointerup", { bubbles: true, pointerId: 0, buttons: 0 }));
+  }, true);
 }
 
 async function setupListeners() {
-  setupVoiceInputSafe();
+  setupVoiceInput();
   // Sidebar tabs
   document.querySelectorAll(".sidebar-tab").forEach((tab) => {
     tab.addEventListener("click", () => {
@@ -2524,6 +2812,25 @@ function trackTypedInput(ti, data) {
   ti.typedBuf = buf;
 }
 
+// The command line the user actually submitted, most accurate source first.
+//
+// `getInputRegion` reads the real prompt region off the screen (OSC 133), so it
+// sees a line recalled with ↑ or completed by the shell itself. `typedBuf` only
+// sees literal keystrokes and deliberately bails on escape sequences, which is
+// exactly what ↑ sends. Anything that reacts to what was RUN — Explorer
+// `cd`/`ssh` following, command re-run — has to prefer the screen: relying on
+// keystrokes alone silently ignores every recalled command.
+function submittedCommandLine(ti) {
+  if (!ti || !ti.term) return "";
+  try {
+    const region = getInputRegion(ti);
+    if (region && region.text) return region.text.trim();
+    // No 133 integration (a plain remote shell): fall back to what we saw typed.
+    if (ti.term.buffer.active.type === "normal") return (ti.typedBuf || "").trim();
+  } catch {}
+  return "";
+}
+
 async function createPane(parentEl, shell, args, cwd) {
   const paneEl = document.createElement("div");
   paneEl.className = "pane-leaf";
@@ -2777,19 +3084,25 @@ async function createPane(parentEl, shell, args, cwd) {
     //     keystroke line buffer, so re-run works even without tmux on the remote.
     // Both are gated to the NORMAL buffer, so keystrokes typed INTO a full-screen
     // app (vim/htop/claude, alt-screen) never masquerade as a shell command.
-    if (ti && commandReplayEnabled()) {
+    //
+    // The keystroke buffer is kept even when command replay is switched off:
+    // the Explorer's `ssh`/`cd` following reads the same line and has nothing
+    // to do with the re-run feature.
+    let submittedLine = "";
+    if (ti) {
       try {
         trackTypedInput(ti, data);
         if (data.includes("\r") || data.includes("\n")) {
-          const r = getInputRegion(ti);
-          let cmd = r && r.text ? r.text.trim() : "";
-          if (!cmd && ti.term.buffer.active.type === "normal") cmd = (ti.typedBuf || "").trim();
-          if (cmd) { ti.lastCmd = cmd; if (ti.session) ti.session.lastCmd = cmd; }
+          submittedLine = submittedCommandLine(ti);
+          if (submittedLine && commandReplayEnabled()) {
+            ti.lastCmd = submittedLine;
+            if (ti.session) ti.session.lastCmd = submittedLine;
+          }
           ti.typedBuf = "";
         }
       } catch {}
     }
-    const result = handleTerminalInput(data, id);
+    const result = handleTerminalInput(data, id, submittedLine);
     if (result === "consumed") return;
     // Per-tab broadcast (Ctrl+Shift+B): typing in any pane of a broadcasting
     // tab goes to every pane of that tab — tmux synchronize-panes.
@@ -6114,7 +6427,19 @@ async function adoptTypedSsh(typed, ptyId) {
     // The key did not work, the host refused, the pane closed. Give the pane
     // back to the local Explorer rather than leaving it on a blocked screen
     // it never asked to see.
+    //
+    // Say why, once per pane and target. We resolved the host, so this is a
+    // connection we genuinely tried and failed — staying completely silent is
+    // what made "the Explorer just doesn't follow my ssh" impossible to
+    // diagnose. An unresolvable command still says nothing at all.
+    const failed = terminals.get(ptyId);
+    const reason = failed?.sftpError || "";
+    const attempted = `${target.user}@${target.host}:${target.port}`;
     releaseTypedSsh(ptyId);
+    if (failed && reason && failed.sftpAdoptWarnedFor !== attempted) {
+      failed.sftpAdoptWarnedFor = attempted;
+      toast(`${attempted} 탐색기 연동 실패 — ${reason}`, true);
+    }
     return;
   }
   if (focusedPaneId === ptyId) showExplorerForSession(ptyId);
@@ -6243,7 +6568,8 @@ async function doSshConnect(opts) {
       keyPath: keyPath || null, auth,
       tmux: !!opts.tmux, tmuxName: (opts.tmuxName || "").trim() || null,
       lastCmd: opts.lastCmd || null, // carried through restore so re-run works over SSH
-      memo: opts.memo || null,       // scratch memo rides restore too
+      memos: normalizeMemos(opts),   // scratch memos ride restore too
+      activeMemoId: opts.activeMemoId || null,
     };
     const ptyId = await createPane(rootContainer, "ssh", sshArgs);
     terminals.get(ptyId).sshTarget = target;
@@ -6871,8 +7197,15 @@ function collectSession() {
       // isn't updated as the user types).
       const t0 = tab.panes && terminals.get(tab.panes[0]);
       const lastCmd = (t0 && t0.session && t0.session.lastCmd) || tab.session.lastCmd || null;
-      const memo = (t0 && t0.session && t0.session.memo) || tab.session.memo || null;
-      arr.push({ ...tab.session, lastCmd, memo, label: tab.label });
+      // `||` cannot pick between these: an empty array is truthy, so a pane
+      // whose memos were all deleted would resurrect the saved copy.
+      const live = t0 && t0.session ? normalizeMemos(t0.session) : [];
+      const memos = live.length ? live : normalizeMemos(tab.session);
+      const activeMemoId =
+        (t0 && t0.session && t0.session.activeMemoId) || tab.session.activeMemoId || null;
+      const entry = { ...tab.session, lastCmd, memos, activeMemoId, label: tab.label };
+      delete entry.memo; // migrated into `memos`; do not keep writing the old shape
+      arr.push(entry);
     }
   }
   return { version: 2, tabs: arr };
@@ -6921,7 +7254,14 @@ async function buildPaneNode(parentEl, node) {
       const id = await createPane(parentEl, s.shell || getDefaultShellId(), null, s.cwd || undefined);
       const t = terminals.get(id);
       if (t) {
-        t.session = { kind: "local", shell: s.shell || null, cwd: s.cwd || null, lastCmd: s.lastCmd || null, memo: s.memo || "" };
+        t.session = {
+          kind: "local",
+          shell: s.shell || null,
+          cwd: s.cwd || null,
+          lastCmd: s.lastCmd || null,
+          memos: normalizeMemos(s),
+          activeMemoId: s.activeMemoId || null,
+        };
         markMemoIndicator(id);
       }
     }
@@ -7011,7 +7351,8 @@ async function restoreSession() {
             tmux: !!s.tmux,
             tmuxName: s.tmuxName || null,
             lastCmd: s.lastCmd || null,
-            memo: s.memo || null,
+            memos: normalizeMemos(s),
+            activeMemoId: s.activeMemoId || null,
           });
         } else {
           pwSessions.push(s); // password auth → prompt below
@@ -7020,8 +7361,10 @@ async function restoreSession() {
         const pid = await spawnTerminal(s.shell || undefined, s.cwd || undefined);
         const t = pid != null ? terminals.get(pid) : null;
         if (t && t.session && s.lastCmd) t.session.lastCmd = s.lastCmd;
-        if (t && t.session && s.memo) {
-          t.session.memo = s.memo;
+        const restoredMemos = normalizeMemos(s);
+        if (t && t.session && restoredMemos.length) {
+          t.session.memos = restoredMemos;
+          t.session.activeMemoId = s.activeMemoId || null;
           markMemoIndicator(pid);
         }
       }
@@ -7166,7 +7509,8 @@ function promptSshPasswordRestore(s) {
         tmux: !!s.tmux,
         tmuxName: s.tmuxName || null,
         lastCmd: s.lastCmd || null,
-        memo: s.memo || null,
+        memos: normalizeMemos(s),
+        activeMemoId: s.activeMemoId || null,
       });
       resolve();
     }
@@ -7685,39 +8029,133 @@ function reorderSessionWithin(tab, dragId, targetId, after) {
   refreshSessionList();
 }
 
-// ── Session scratch memo 🗒 ───────────────────────────────────────────────────
-// A per-session temporary notepad. Drag-selecting in the terminal auto-appends
-// to it (on top of the usual clipboard copy); the text is freely editable, can
-// be copied in one click, and can be sent to the pane's command line — typed for
-// review, or run outright. It lives on t.session.memo so it rides the existing
-// session_save/session_load pipeline: it survives a restart and is dropped when
-// the pane is closed.
-function paneMemo(id) {
-  const t = terminals.get(id);
-  return t && t.session && typeof t.session.memo === "string" ? t.session.memo : "";
+// ── Session scratch memos 🗒 ──────────────────────────────────────────────────
+// A per-session notepad holding several separate memos: a title list on the
+// left, the selected memo's body on the right. Drag-selecting in the terminal
+// auto-appends to the current memo (on top of the usual clipboard copy); the
+// text is freely editable, can be copied in one click, saved as a .txt, and
+// sent to the pane's command line — typed for review, or run outright.
+//
+// Memos live on t.session.memos so they ride the existing session_save/
+// session_load pipeline: they survive a restart and are dropped with the pane.
+// A pane holds a LIST of memos. `title` is what the user renamed it to; when
+// it is empty the first non-blank body line stands in, so a memo never needs
+// naming before it is useful.
+const MAX_MEMO_BODY = 64 * 1024; // one memo; drag-collect can append log chunks
+const MAX_MEMOS_PER_PANE = 100;  // every pane's memos share one session.json
+
+function newMemoId() {
+  return Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 5);
 }
-function setPaneMemo(id, text) {
+function newMemo(body = "", title = "") {
+  return { id: newMemoId(), title, body };
+}
+function memoTitle(m) {
+  if (!m) return "(빈 메모)";
+  if (m.title) return m.title;
+  const first = (m.body || "").split("\n").find((line) => line.trim()) || "";
+  return first.trim().slice(0, 200) || "(빈 메모)";
+}
+// Accept whatever session.json holds. An older build wrote a single `memo`
+// string; read it once as memo #1 rather than dropping the user's notes.
+function normalizeMemos(s) {
+  if (!s) return [];
+  if (Array.isArray(s.memos)) {
+    return s.memos
+      .filter((m) => m && typeof m === "object")
+      .slice(0, MAX_MEMOS_PER_PANE)
+      .map((m) => ({
+        id: typeof m.id === "string" && m.id ? m.id : newMemoId(),
+        title: typeof m.title === "string" ? m.title.slice(0, 200) : "",
+        body: typeof m.body === "string" ? m.body.slice(-MAX_MEMO_BODY) : "",
+      }));
+  }
+  if (typeof s.memo === "string" && s.memo.trim()) return [newMemo(s.memo)];
+  return [];
+}
+function paneMemos(id) {
   const t = terminals.get(id);
-  if (!t) return;
+  if (!t) return [];
+  if (!t.session) return [];
+  if (!Array.isArray(t.session.memos)) t.session.memos = normalizeMemos(t.session);
+  return t.session.memos;
+}
+function activeMemo(id) {
+  const list = paneMemos(id);
+  if (!list.length) return null;
+  const t = terminals.get(id);
+  return list.find((m) => m.id === t?.session?.activeMemoId) || list[0];
+}
+function setActiveMemo(id, memoId) {
+  const t = terminals.get(id);
+  if (t && t.session) t.session.activeMemoId = memoId;
+  scheduleMemoSave();
+}
+// Create a memo and make it current. Returns null when the pane is at its cap.
+function addPaneMemo(id, body = "") {
+  const t = terminals.get(id);
+  if (!t) return null;
   if (!t.session) t.session = { kind: "local", shell: null, cwd: null };
-  // Cap runaway growth (drag-collect can append large log chunks) by keeping the
-  // most recent tail; session.json is persisted and reloaded on every restart.
-  const MAX_MEMO = 64 * 1024;
-  t.session.memo = text.length > MAX_MEMO ? text.slice(text.length - MAX_MEMO) : text;
+  const list = paneMemos(id);
+  if (list.length >= MAX_MEMOS_PER_PANE) {
+    toast(`메모는 세션당 ${MAX_MEMOS_PER_PANE}개까지입니다.`, true);
+    return null;
+  }
+  const memo = newMemo(body);
+  list.unshift(memo); // newest on top, right under the ＋ button
+  t.session.activeMemoId = memo.id;
+  markMemoIndicator(id);
+  scheduleMemoSave();
+  return memo;
+}
+function deletePaneMemo(id, memoId) {
+  const t = terminals.get(id);
+  const list = paneMemos(id);
+  const at = list.findIndex((m) => m.id === memoId);
+  if (at < 0) return;
+  list.splice(at, 1);
+  // Never leave the editor with nothing to edit.
+  if (!list.length) list.push(newMemo());
+  if (t && t.session && t.session.activeMemoId === memoId) {
+    t.session.activeMemoId = list[Math.min(at, list.length - 1)].id;
+  }
   markMemoIndicator(id);
   scheduleMemoSave();
 }
-// Drag-select auto-collect: append the selection as its own line, skipping an
-// exact repeat (onSelectionChange settles more than once per drag).
+function setMemoBody(id, memoId, text) {
+  const memo = paneMemos(id).find((m) => m.id === memoId);
+  if (!memo) return;
+  // Keep the most recent tail: drag-collect appends and session.json is
+  // rewritten on every change.
+  memo.body = text.length > MAX_MEMO_BODY ? text.slice(text.length - MAX_MEMO_BODY) : text;
+  markMemoIndicator(id);
+  scheduleMemoSave();
+}
+function setMemoTitle(id, memoId, title) {
+  const memo = paneMemos(id).find((m) => m.id === memoId);
+  if (!memo) return;
+  // An empty title hands the name back to the first body line.
+  memo.title = (title || "").trim().slice(0, 200);
+  scheduleMemoSave();
+}
+// Drag-select auto-collect: append the selection as its own line of the
+// current memo, skipping an exact repeat (onSelectionChange settles more than
+// once per drag).
 function appendPaneMemo(id, sel) {
   const add = (sel || "").replace(/\s+$/, "");
   if (!add) return;
-  const cur = paneMemo(id);
+  const memo = activeMemo(id) || addPaneMemo(id);
+  if (!memo) return;
+  const cur = memo.body || "";
   if (cur === add || cur.endsWith("\n" + add)) return;
-  setPaneMemo(id, cur ? cur.replace(/\n+$/, "") + "\n" + add : add);
+  setMemoBody(id, memo.id, cur ? cur.replace(/\n+$/, "") + "\n" + add : add);
   if (memoPopover && Number(memoPopover.dataset.ptyId) === id) {
+    renderMemoList(id);
     const ta = memoPopover.querySelector(".memo-text");
-    if (ta && document.activeElement !== ta) { ta.value = paneMemo(id); ta.scrollTop = ta.scrollHeight; }
+    if (ta && document.activeElement !== ta && memoPopover.dataset.memoId === memo.id) {
+      ta.value = memo.body;
+      ta.scrollTop = ta.scrollHeight;
+    }
   }
 }
 let memoSaveTimer = null;
@@ -7730,7 +8168,7 @@ function markMemoIndicator(id) {
   const btn = t && t.commandShortcutsEl
     ? t.commandShortcutsEl.querySelector(".pane-command-memo")
     : null;
-  if (btn) btn.classList.toggle("has-memo", !!paneMemo(id));
+  if (btn) btn.classList.toggle("has-memo", paneMemos(id).some((m) => m.body.trim()));
 }
 function makeIconButton(className, icon, label, visibleText = "") {
   const button = document.createElement("button");
@@ -7746,9 +8184,8 @@ function makeIconButton(className, icon, label, visibleText = "") {
   }
   return button;
 }
-const memoCopyFeedback = new WeakMap();
 async function copyPaneMemo(id, feedbackButton = null) {
-  const body = paneMemo(id);
+  const body = activeMemo(id)?.body || "";
   if (!body) {
     toast("복사할 메모가 없습니다.");
     return false;
@@ -7759,31 +8196,58 @@ async function copyPaneMemo(id, feedbackButton = null) {
     return false;
   }
   toast("메모를 복사했습니다.");
-  if (feedbackButton) {
-    const previous = memoCopyFeedback.get(feedbackButton);
-    if (previous) clearTimeout(previous.timer);
-    const state = previous || {
-      html: feedbackButton.innerHTML,
-      title: feedbackButton.title,
-      label: feedbackButton.getAttribute("aria-label"),
-      timer: null,
-    };
-    feedbackButton.innerHTML = ICON.check;
-    feedbackButton.title = "메모 복사 완료";
-    feedbackButton.setAttribute("aria-label", "메모 복사 완료");
-    feedbackButton.classList.add("copy-success");
-    state.timer = setTimeout(() => {
-      memoCopyFeedback.delete(feedbackButton);
-      if (!feedbackButton.isConnected) return;
-      feedbackButton.innerHTML = state.html;
-      feedbackButton.title = state.title;
-      feedbackButton.setAttribute("aria-label", state.label);
-      feedbackButton.classList.remove("copy-success");
-    }, 1000);
-    memoCopyFeedback.set(feedbackButton, state);
-  }
+  if (feedbackButton) flashButtonSuccess(feedbackButton, "메모 복사 완료");
   return true;
 }
+// Export the current memo through the OS "Save as" dialog. The file name is
+// seeded from the memo's title; the backend makes it legal and writes UTF-8
+// with a BOM so Notepad reads Korean correctly.
+async function saveMemoAsTxt(id, feedbackButton = null) {
+  const memo = activeMemo(id);
+  if (!memo || !memo.body.trim()) {
+    toast("저장할 내용이 없습니다.", true);
+    return;
+  }
+  try {
+    const saved = await invoke("save_text_file_as", {
+      suggestedName: memoTitle(memo),
+      content: memo.body,
+    });
+    if (!saved) return; // cancelled
+    toast("저장했습니다: " + saved);
+    if (feedbackButton) flashButtonSuccess(feedbackButton, "저장 완료");
+  } catch (e) {
+    toast("메모 저장 실패: " + String(e), true);
+  }
+}
+
+// Briefly swap a tool button for a checkmark. Shared by copy and save so both
+// confirm in the same place the user just clicked.
+const buttonFlashState = new WeakMap();
+function flashButtonSuccess(button, label) {
+  const previous = buttonFlashState.get(button);
+  if (previous) clearTimeout(previous.timer);
+  const state = previous || {
+    html: button.innerHTML,
+    title: button.title,
+    label: button.getAttribute("aria-label"),
+    timer: null,
+  };
+  button.innerHTML = ICON.check;
+  button.title = label;
+  button.setAttribute("aria-label", label);
+  button.classList.add("copy-success");
+  state.timer = setTimeout(() => {
+    buttonFlashState.delete(button);
+    if (!button.isConnected) return;
+    button.innerHTML = state.html;
+    button.title = state.title;
+    button.setAttribute("aria-label", state.label);
+    button.classList.remove("copy-success");
+  }, 1000);
+  buttonFlashState.set(button, state);
+}
+
 // Type the memo into the pane's command line. run=false pastes it for review
 // (bracketed-paste safe, no Enter); run=true writes it raw and presses Enter.
 async function sendMemoToPane(id, text, run) {
@@ -7810,21 +8274,48 @@ let memoPopoverAnchorOffset = { x: 0, y: 0 };
 let memoPopoverDrag = null;
 let memoNativePaneHidden = false;
 let memoNativePaneTransitions = Promise.resolve();
-const MEMO_POPOVER_SIZE_KEY = "mymux.memoPopoverSize.v1";
+// v2: the single-textarea popover was 300×250. That is too narrow for a title
+// list beside a body, so the key is bumped rather than reused — an old saved
+// size would otherwise reopen the new layout at a width it cannot lay out in.
+const MEMO_POPOVER_SIZE_KEY = "mymux.memoPopoverSize.v2";
+const MEMO_SIDE_WIDTH_KEY = "mymux.memoSideWidth.v1";
+const MEMO_POPOVER_MIN = { width: 420, height: 260 };
+const MEMO_SIDE_MIN = 110;
 function savedMemoPopoverSize() {
   try {
     const value = JSON.parse(localStorage.getItem(MEMO_POPOVER_SIZE_KEY) || "null");
     if (value && Number.isFinite(value.width) && Number.isFinite(value.height)) return value;
   } catch {}
-  return { width: 300, height: 250 };
+  return { width: 560, height: 360 };
 }
 function clampMemoPopoverSize(size) {
   const maxWidth = Math.max(120, window.innerWidth - 16);
   const maxHeight = Math.max(120, window.innerHeight - 16);
   return {
-    width: Math.max(Math.min(260, maxWidth), Math.min(maxWidth, Math.round(size.width))),
-    height: Math.max(Math.min(180, maxHeight), Math.min(maxHeight, Math.round(size.height))),
+    width: Math.max(
+      Math.min(MEMO_POPOVER_MIN.width, maxWidth),
+      Math.min(maxWidth, Math.round(size.width))
+    ),
+    height: Math.max(
+      Math.min(MEMO_POPOVER_MIN.height, maxHeight),
+      Math.min(maxHeight, Math.round(size.height))
+    ),
   };
+}
+function savedMemoSideWidth() {
+  const value = Number(localStorage.getItem(MEMO_SIDE_WIDTH_KEY));
+  return Number.isFinite(value) && value > 0 ? value : 160;
+}
+// The list keeps a fixed width the user chose, but it can never grow past 60%
+// of the popover — past that the body it exists to navigate has no room left.
+function clampMemoSideWidth(width, popoverWidth) {
+  const max = Math.max(MEMO_SIDE_MIN, Math.round(popoverWidth * 0.6));
+  return Math.round(Math.min(max, Math.max(MEMO_SIDE_MIN, width)));
+}
+function applyMemoSideWidth(pop, width) {
+  const next = clampMemoSideWidth(width, pop.offsetWidth || MEMO_POPOVER_MIN.width);
+  pop.style.setProperty("--memo-side-w", `${next}px`);
+  return next;
 }
 function memoPopoverAnchorPosition(pop = memoPopover, anchor = memoPopoverAnchor) {
   if (!pop || !anchor || !anchor.isConnected) return null;
@@ -7928,6 +8419,9 @@ function onMemoOutside(e) {
 }
 function onMemoKey(e) {
   if (e.key !== "Escape") return;
+  // This listener captures, so it would otherwise beat the rename box to the
+  // key and close the whole popover instead of cancelling the rename.
+  if (memoPopover && memoPopover.querySelector(".memo-rename")) return;
   e.preventDefault();
   e.stopPropagation();
   closeMemoPopover();
@@ -7961,19 +8455,56 @@ function openMemoPopover(id, anchorEl) {
   title.appendChild(titleText);
   const xBtn = makeIconButton("memo-x", ICON.close, "메모 닫기");
   head.append(title, xBtn);
+
+  const body = document.createElement("div");
+  body.className = "memo-body";
+
+  // Left: search over titles+bodies, ＋ new memo, then the title list. Fixed
+  // width, draggable wider; each title is one ellipsised line so the list
+  // shows exactly as much as the panel is wide.
+  const side = document.createElement("div");
+  side.className = "memo-side";
+  const searchRow = document.createElement("div");
+  searchRow.className = "memo-search-row";
+  searchRow.innerHTML = ICON.search;
+  const search = document.createElement("input");
+  search.className = "memo-search";
+  search.type = "search";
+  search.placeholder = "검색";
+  search.setAttribute("aria-label", "메모 검색");
+  searchRow.appendChild(search);
+  const addBtn = makeIconButton("memo-add", ICON.plus, "새 메모 추가", "새 메모");
+  const list = document.createElement("ul");
+  list.className = "memo-list";
+  list.setAttribute("role", "listbox");
+  list.setAttribute("aria-label", "메모 목록");
+  side.append(searchRow, addBtn, list);
+
+  const splitter = document.createElement("div");
+  splitter.className = "memo-splitter";
+  splitter.setAttribute("role", "separator");
+  splitter.setAttribute("aria-orientation", "vertical");
+  splitter.setAttribute("aria-label", "목록 너비 조절");
+
+  // Right: the selected memo's body plus the actions that operate on it.
+  const main = document.createElement("div");
+  main.className = "memo-main";
   const ta = document.createElement("textarea");
   ta.className = "memo-text";
-  ta.setAttribute("aria-label", "세션 메모 내용");
+  ta.setAttribute("aria-label", "메모 내용");
   ta.placeholder = "붙여넣기(Ctrl+V) 하거나, 터미널에서 드래그하면 자동으로 쌓입니다.";
-  ta.value = paneMemo(id);
   const tools = document.createElement("div");
   tools.className = "memo-tools";
-  const copyBtn = makeIconButton("memo-btn memo-copy", ICON.copy, "전체 메모 복사", "복사");
+  const copyBtn = makeIconButton("memo-btn memo-copy", ICON.copy, "이 메모 복사", "복사");
   const typeBtn = makeIconButton("memo-btn memo-type", ICON.keyboard, "명령줄에 입력 (검토 후 직접 실행)", "입력");
   const runBtn = makeIconButton("memo-btn memo-run", ICON.play, "명령줄에 입력하고 바로 실행", "실행");
-  const clearBtn = makeIconButton("memo-btn memo-clear", ICON.trash, "메모 비우기", "비우기");
-  tools.append(copyBtn, typeBtn, runBtn, clearBtn);
-  pop.append(head, ta, tools);
+  const saveBtn = makeIconButton("memo-btn memo-save", ICON.save, "이 메모를 txt 파일로 저장", "txt");
+  const delBtn = makeIconButton("memo-btn memo-delete", ICON.trash, "이 메모 삭제", "삭제");
+  tools.append(copyBtn, typeBtn, runBtn, saveBtn, delBtn);
+  main.append(ta, tools);
+
+  body.append(side, splitter, main);
+  pop.append(head, body);
   document.body.appendChild(pop);
   // Restore the user's last resize before positioning. The whole editor is
   // resizable; the textarea flexes to fill the remaining space.
@@ -7984,10 +8515,13 @@ function openMemoPopover(id, anchorEl) {
   memoPopoverAnchor = anchorEl;
   memoPopoverAnchorOffset = { x: 0, y: 0 };
   positionMemoPopover();
+  applyMemoSideWidth(pop, savedMemoSideWidth());
   memoPopoverResizeObserver = new ResizeObserver(() => {
     if (!memoPopover || memoPopover !== pop) return;
     const next = clampMemoPopoverSize({ width: pop.offsetWidth, height: pop.offsetHeight });
     normalizeMemoPopoverAnchorOffset();
+    // Shrinking the popover can push the list past its 60% ceiling.
+    applyMemoSideWidth(pop, savedMemoSideWidth());
     try { localStorage.setItem(MEMO_POPOVER_SIZE_KEY, JSON.stringify(next)); } catch {}
   });
   memoPopoverResizeObserver.observe(pop);
@@ -8027,7 +8561,45 @@ function openMemoPopover(id, anchorEl) {
     document.addEventListener("pointercancel", finish);
     window.addEventListener("blur", onBlur);
   });
-  ta.addEventListener("input", () => setPaneMemo(id, ta.value));
+  // Drag the divider. The width is stored, not the ratio: the user picked a
+  // width that fits their titles, and it should survive resizing the popover.
+  splitter.addEventListener("pointerdown", (event) => {
+    if (event.button !== 0) return;
+    event.preventDefault();
+    const pointerId = event.pointerId;
+    const startX = event.clientX;
+    const startWidth = side.offsetWidth;
+    const onMove = (moveEvent) => {
+      if (moveEvent.pointerId !== pointerId) return;
+      const next = applyMemoSideWidth(pop, startWidth + (moveEvent.clientX - startX));
+      try { localStorage.setItem(MEMO_SIDE_WIDTH_KEY, String(next)); } catch {}
+    };
+    const finish = (finishEvent) => {
+      if (finishEvent.pointerId !== pointerId) return;
+      document.removeEventListener("pointermove", onMove);
+      document.removeEventListener("pointerup", finish);
+      document.removeEventListener("pointercancel", finish);
+      pop.classList.remove("memo-splitting");
+    };
+    pop.classList.add("memo-splitting");
+    document.addEventListener("pointermove", onMove);
+    document.addEventListener("pointerup", finish);
+    document.addEventListener("pointercancel", finish);
+  });
+
+  search.addEventListener("input", () => renderMemoList(id));
+  addBtn.addEventListener("click", () => {
+    if (!addPaneMemo(id)) return;
+    search.value = ""; // a brand-new memo would not match the current filter
+    renderMemoList(id);
+    ta.focus();
+  });
+  ta.addEventListener("input", () => {
+    const current = memoPopover?.dataset.memoId;
+    if (!current) return;
+    setMemoBody(id, current, ta.value);
+    renderMemoList(id); // the title tracks the first line
+  });
   xBtn.addEventListener("click", () => closeMemoPopover());
   copyBtn.addEventListener("click", () => copyPaneMemo(id, copyBtn));
   typeBtn.addEventListener("click", () => { sendMemoToPane(id, ta.value, false); closeMemoPopover(false); });
@@ -8039,11 +8611,118 @@ function openMemoPopover(id, anchorEl) {
     }
     closeMemoPopover(false);
   });
-  clearBtn.addEventListener("click", () => { ta.value = ""; setPaneMemo(id, ""); ta.focus(); });
+  saveBtn.addEventListener("click", () => saveMemoAsTxt(id, saveBtn));
+  // Two-step delete. A confirm() dialog would block the WebView's event loop
+  // (and the CDP checks that drive this UI), so the button asks for itself.
+  let deleteArmedTimer = null;
+  const disarmDelete = () => {
+    clearTimeout(deleteArmedTimer);
+    deleteArmedTimer = null;
+    delBtn.classList.remove("armed");
+    delBtn.querySelector("span").textContent = "삭제";
+  };
+  delBtn.addEventListener("click", () => {
+    const current = memoPopover?.dataset.memoId;
+    if (!current) return;
+    if (!deleteArmedTimer) {
+      delBtn.classList.add("armed");
+      delBtn.querySelector("span").textContent = "삭제?";
+      deleteArmedTimer = setTimeout(disarmDelete, 3000);
+      return;
+    }
+    disarmDelete();
+    deletePaneMemo(id, current);
+    renderMemoList(id);
+    ta.focus();
+  });
+
+  renderMemoList(id);
   setTimeout(() => ta.focus(), 0);
   document.addEventListener("mousedown", onMemoOutside, true);
   document.addEventListener("keydown", onMemoKey, true);
   window.addEventListener("resize", onMemoViewportResize);
+}
+
+// Redraw the title list and load the current memo into the editor. The popover
+// keeps the memo it is showing in `dataset.memoId` so the textarea's `input`
+// handler always writes back to the right one.
+function renderMemoList(id) {
+  const pop = memoPopover;
+  if (!pop || Number(pop.dataset.ptyId) !== id) return;
+  const list = pop.querySelector(".memo-list");
+  const ta = pop.querySelector(".memo-text");
+  const query = (pop.querySelector(".memo-search")?.value || "").trim().toLowerCase();
+
+  let memos = paneMemos(id);
+  if (!memos.length) {
+    addPaneMemo(id);
+    memos = paneMemos(id);
+  }
+  const current = activeMemo(id);
+  pop.dataset.memoId = current ? current.id : "";
+  if (ta && ta.value !== (current?.body || "")) ta.value = current?.body || "";
+
+  const shown = query
+    ? memos.filter(
+        (m) =>
+          memoTitle(m).toLowerCase().includes(query) ||
+          (m.body || "").toLowerCase().includes(query)
+      )
+    : memos;
+
+  list.textContent = "";
+  if (!shown.length) {
+    const empty = document.createElement("li");
+    empty.className = "memo-empty";
+    empty.textContent = "검색 결과 없음";
+    list.appendChild(empty);
+    return;
+  }
+  for (const memo of shown) {
+    const row = document.createElement("li");
+    const name = memoTitle(memo);
+    // One ellipsised line: the list shows exactly as much of each title as the
+    // panel is wide, and widening it reveals more.
+    row.className = "memo-item" + (current && memo.id === current.id ? " active" : "");
+    row.textContent = name;
+    row.title = name + "\n(더블클릭하면 이름을 바꿉니다)";
+    row.setAttribute("role", "option");
+    row.setAttribute("aria-selected", String(!!current && memo.id === current.id));
+    row.addEventListener("click", () => {
+      setActiveMemo(id, memo.id);
+      renderMemoList(id);
+      ta?.focus();
+    });
+    row.addEventListener("dblclick", () => startMemoRename(id, memo, row));
+    list.appendChild(row);
+  }
+}
+
+// Rename in place. Committing an empty name hands the title back to the first
+// body line, which is how a memo gets its name in the first place.
+function startMemoRename(id, memo, row) {
+  if (row.querySelector("input")) return;
+  const input = document.createElement("input");
+  input.className = "memo-rename";
+  input.value = memo.title || memoTitle(memo);
+  input.setAttribute("aria-label", "메모 이름");
+  row.textContent = "";
+  row.appendChild(input);
+  input.focus();
+  input.select();
+
+  let done = false;
+  const commit = (save) => {
+    if (done) return;
+    done = true;
+    if (save) setMemoTitle(id, memo.id, input.value);
+    renderMemoList(id);
+  };
+  input.addEventListener("keydown", (event) => {
+    if (event.key === "Enter") { event.preventDefault(); commit(true); }
+    else if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); commit(false); }
+  });
+  input.addEventListener("blur", () => commit(true));
 }
 
 // Rebuild the full session list, grouped by tab.
@@ -8770,7 +9449,8 @@ function renderPaneCommandShortcuts(ptyId) {
   bindPaneCommandDockDrag(ptyId, handle);
   host.appendChild(handle);
   const memoBtn = makeIconButton(
-    "pane-command-tool pane-command-memo" + (paneMemo(ptyId) ? " has-memo" : ""),
+    "pane-command-tool pane-command-memo" +
+      (paneMemos(ptyId).some((m) => m.body.trim()) ? " has-memo" : ""),
     ICON.memo,
     "이 세션의 메모 열기 및 편집"
   );
@@ -9073,7 +9753,7 @@ function rememberCommand(command) {
   saveCommandHistory();
 }
 
-function handleTerminalInput(data, ptyId) {
+function handleTerminalInput(data, ptyId, submittedLine = "") {
   const tInfo = terminals.get(ptyId);
   if (tInfo && typeof tInfo.acInput !== "string") tInfo.acInput = "";
   const getInput = () => (tInfo ? tInfo.acInput : currentInput);
@@ -9089,23 +9769,36 @@ function handleTerminalInput(data, ptyId) {
     // Enter pressed — detect cd command and sync explorer
     const typedRaw = getInput();
     const typed = typedRaw.trim();
-    presetCtxSourceFromCmd(ptyId, tInfo, typed);
-    syncExplorerOnCd(typed, ptyId);
+    // Keystrokes are exactly what this pane sent, so they win whenever we have
+    // them. The screen covers the case the keystroke buffer structurally cannot
+    // see: a line recalled with ↑, or completed by the shell — `acInput` is
+    // empty there, which is why the Explorer used to ignore those outright.
+    //
+    // The order matters the other way too. Inside an ssh session the pane's OSC
+    // 133 marks still belong to the local shell that scrolled away, so the
+    // screen reads back the remote prompt with the command glued to it.
+    // Preferring that would stop `exit` from ever matching and the Explorer
+    // would never come home.
+    const submitted = typed || submittedLine;
+    presetCtxSourceFromCmd(ptyId, tInfo, submitted);
+    syncExplorerOnCd(submitted, ptyId);
     // `ssh …` typed at a local prompt — adopt it so the Explorer follows.
     // `exit`/`logout` gives the pane back. Both are fire-and-forget.
-    if (/^ssh\s/.test(typed)) adoptTypedSsh(typed, ptyId);
-    else if (/^(exit|logout)$/i.test(typed)) releaseTypedSsh(ptyId);
+    if (/^ssh\s/.test(submitted)) adoptTypedSsh(submitted, ptyId);
+    else if (/^(exit|logout)$/i.test(submitted)) releaseTypedSsh(ptyId);
     setInput("");
     hideAutocomplete();
     // Alias typed at the prompt: erase it and run the full combo instead
-    // (cd into the saved directory, then the command — one Enter).
+    // (cd into the saved directory, then the command — one Enter). Matched on
+    // the literal keystrokes, because the backspace count below has to equal
+    // what this pane actually typed.
     const aliasCmd = typed && savedCmds.find((c) => c.alias && c.alias === typed);
     if (aliasCmd) {
       invoke("pty_write", { id: ptyId, data: "\x7f".repeat(typedRaw.length) });
       runCommandCombo(aliasCmd, ptyId);
       return "consumed";
     }
-    rememberCommand(typed);
+    rememberCommand(submitted);
     return;
   }
 

@@ -934,10 +934,42 @@ html[data-theme="light"] #toolbar-actions #btn-update:hover {
   outline: 1px dashed var(--accent);
   outline-offset: -2px;
 }
-.voice-popover { position:fixed; z-index:50; right:12px; top:48px; width:280px; padding:12px; background:var(--panel-bg,#1e232b); border:1px solid var(--border); border-radius:8px; box-shadow:0 8px 25px #0008; display:grid; gap:8px; font-size:12px; }
+.voice-popover { position:fixed; z-index:50; right:12px; top:48px; width:360px; max-height:calc(100vh - 64px); overflow-y:auto; padding:12px; background:var(--panel-bg,#1e232b); border:1px solid var(--border); border-radius:8px; box-shadow:0 8px 25px #0008; display:grid; gap:8px; font-size:12px; }
 .voice-popover.hidden { display:none; }
 .voice-popover label { display:grid; gap:3px; }
 .voice-popover input,.voice-popover select { min-width:0; background:var(--input-bg,#11151b); color:var(--text); border:1px solid var(--border); padding:4px; }
+.voice-popover button { background:var(--bg); color:var(--text); border:1px solid var(--border); border-radius:6px; padding:5px; font-size:12px; cursor:pointer; }
+.voice-popover button:hover { border-color:var(--accent); color:var(--accent); }
+#voice-local { display:grid; gap:8px; }
+/* Radio rows read as one line, unlike the stacked grid the other labels use. */
+.voice-modes { display:flex; gap:12px; }
+.voice-modes label, .voice-chk { display:flex; align-items:center; gap:5px; }
+.voice-modes input, .voice-chk input { width:auto; }
+.voice-guide { border:1px solid var(--border); border-radius:6px; padding:6px 8px; background:var(--bg); }
+.voice-guide.hidden { display:none; }
+.voice-guide summary { cursor:pointer; color:var(--text-dim); }
+.voice-guide ol { margin:6px 0 0; padding-left:18px; display:grid; gap:6px; line-height:1.6; }
+.voice-guide code { background:var(--surface); border-radius:3px; padding:1px 4px; font-size:11px; }
+.voice-guide button { padding:2px 6px; font-size:11px; }
+.voice-hint { color:var(--text-dim); }
+.voice-runner-row { display:flex; gap:4px; }
+.voice-runner-row input { flex:1 1 auto; min-width:0; text-overflow:ellipsis; }
+.voice-runner-row button { flex:0 0 auto; white-space:nowrap; }
+.voice-two { display:grid; grid-template-columns:1fr 1fr; gap:8px; }
+#voice-status { color:var(--text-dim); overflow-wrap:anywhere; }
+/* A local engine with no runner chosen yet — visible without opening settings. */
+#toolbar-actions #btn-voice-input.not-ready { position:relative; }
+#toolbar-actions #btn-voice-input.not-ready::after {
+  content:""; position:absolute; top:2px; right:2px; width:6px; height:6px;
+  border-radius:50%; background:var(--red);
+}
+.voice-recording {
+  position:fixed; z-index:60; left:50%; bottom:24px; transform:translateX(-50%);
+  padding:6px 14px; border-radius:999px; font-size:12px;
+  background:var(--red); color:#fff; box-shadow:0 6px 18px #0006;
+  pointer-events:none;
+}
+.voice-recording.hidden { display:none; }
 .pane-leaf.file-drop-active {
   border-color: var(--accent);
   box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--accent) 55%, transparent);
@@ -2594,17 +2626,75 @@ html[data-theme="dark"] .pane-command-shortcut {
 .session-item { cursor: grab; }
 
 .memo-popover {
-  position: fixed; z-index: 10000; width: 300px; height: 250px; box-sizing: border-box;
+  --memo-side-w: 160px;
+  position: fixed; z-index: 10000; width: 560px; height: 360px; box-sizing: border-box;
   display: flex; flex-direction: column; gap: 6px; padding: 8px;
   background: var(--surface); border: 1px solid var(--border);
   border-radius: 8px; box-shadow: 0 10px 30px rgba(0, 0, 0, 0.35);
-  min-width: min(260px, calc(100vw - 16px));
-  min-height: min(180px, calc(100vh - 16px));
+  min-width: min(420px, calc(100vw - 16px));
+  min-height: min(260px, calc(100vh - 16px));
   max-width: calc(100vw - 16px);
   max-height: calc(100vh - 16px);
   resize: both;
   overflow: auto;
 }
+/* Title list | divider | body. The list keeps the width the user dragged it
+   to; the body takes whatever is left. */
+.memo-body { flex: 1 1 auto; display: flex; min-height: 0; min-width: 0; }
+.memo-side {
+  flex: 0 0 var(--memo-side-w); min-width: 0;
+  display: flex; flex-direction: column; gap: 4px;
+}
+.memo-search-row {
+  display: flex; align-items: center; gap: 4px;
+  background: var(--bg); color: var(--text-dim);
+  border: 1px solid var(--border); border-radius: 6px; padding: 0 6px;
+}
+.memo-search-row:focus-within { border-color: var(--accent); }
+.memo-search-row .icon { width: 12px; height: 12px; flex: 0 0 auto; }
+.memo-search {
+  flex: 1 1 auto; min-width: 0;
+  background: none; border: none; outline: none;
+  color: var(--text); font: inherit; font-size: 11px; padding: 4px 0;
+}
+.memo-search::-webkit-search-cancel-button { filter: invert(0.5); }
+.memo-add {
+  display: inline-flex; align-items: center; justify-content: center; gap: 4px;
+  background: var(--bg); color: var(--text);
+  border: 1px solid var(--border); border-radius: 6px;
+  padding: 4px; font-size: 11px; cursor: pointer; white-space: nowrap;
+}
+.memo-add .icon { width: 13px; height: 13px; }
+.memo-add:hover { border-color: var(--accent); color: var(--accent); }
+.memo-list {
+  flex: 1 1 auto; min-height: 0; overflow-y: auto; overflow-x: hidden;
+  list-style: none; margin: 0; padding: 0;
+  border: 1px solid var(--border); border-radius: 6px; background: var(--bg);
+}
+/* One line per memo, clipped to the panel: widening the panel reveals more of
+   the title, which is the point of making it resizable. */
+.memo-item {
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  padding: 4px 6px; font-size: 11px; line-height: 1.5;
+  color: var(--text-dim); cursor: pointer;
+}
+.memo-item:hover { background: var(--surface-hover); }
+.memo-item.active {
+  color: var(--text); font-weight: 600; background: var(--surface-hover);
+}
+.memo-empty { padding: 6px; font-size: 11px; color: var(--text-dim); }
+.memo-rename {
+  width: 100%; box-sizing: border-box;
+  background: var(--surface); color: var(--text);
+  border: 1px solid var(--accent); border-radius: 4px;
+  padding: 1px 4px; font: inherit; font-size: 11px; outline: none;
+}
+.memo-splitter {
+  flex: 0 0 4px; cursor: col-resize; align-self: stretch;
+  background: transparent; touch-action: none;
+}
+.memo-splitter:hover, .memo-popover.memo-splitting .memo-splitter { background: var(--accent); }
+.memo-main { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 6px; }
 .memo-head {
   display: flex; align-items: center; justify-content: space-between; gap: 6px;
   cursor: grab;
@@ -2645,6 +2735,9 @@ html[data-theme="dark"] .pane-command-shortcut {
 .memo-btn .icon { width: 13px; height: 13px; }
 .memo-btn:hover { border-color: var(--accent); color: var(--accent); }
 .memo-btn.copy-success { border-color: var(--green); color: var(--green); }
+/* Second click within 3s deletes. Nothing here may open a modal: a blocking
+   dialog freezes the WebView's event loop. */
+.memo-btn.memo-delete.armed { border-color: var(--red); color: var(--red); font-weight: 600; }
 .session-group.drop-target {
   background: var(--surface-hover);
   outline: 1px dashed var(--accent);
