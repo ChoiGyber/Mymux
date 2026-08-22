@@ -87,8 +87,11 @@
     "allow-update-check",
     "allow-update-install",
     "allow-tool-installed",
+    "allow-save-text-file-as",
     "allow-voice-store-deepgram-key",
     "allow-voice-deepgram-token",
-    "allow-voice-transcribe-local"
+    "allow-voice-transcribe-local",
+    "allow-voice-check-local",
+    "allow-voice-pick-runner"
   ]
 }

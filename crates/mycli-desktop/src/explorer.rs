@@ -415,6 +415,55 @@ pub fn explorer_list_drives() -> Vec<String> {
 
 // ── SFTP remote filesystem ──
 
+/// sshd counts every public-key signature against `MaxAuthTries` (6 by
+/// default) and disconnects once the budget is gone. An explicit key and a
+/// password attempt can each take one, so auto-detection keeps well under it
+/// rather than burning the budget on keys this server will never accept.
+const MAX_AUTO_KEY_ATTEMPTS: usize = 4;
+
+/// The three names `ssh` itself looks for. Tried first because a key named
+/// this way is almost always the account's default.
+/// `id_dsa` is intentionally omitted because DSA is obsolete/weak.
+const CANONICAL_KEY_NAMES: [&str; 3] = ["id_ed25519", "id_ecdsa", "id_rsa"];
+
+/// Private keys to offer when the caller gave us no explicit key, best first.
+///
+/// Restricting this to the canonical three silently breaks every per-host key
+/// — `id_ed25519_clp`, `id_rsa_work` and friends are ordinary setups, and the
+/// resulting failure looks like "SFTP just doesn't work" rather than an
+/// authentication problem. Anything with a matching `.pub` beside it is a
+/// private key; that pairing separates real keys from `config`, `known_hosts`
+/// and editor backups without guessing at names.
+fn auto_key_candidates(ssh_dir: &Path) -> Vec<PathBuf> {
+    let mut ordered: Vec<PathBuf> = CANONICAL_KEY_NAMES
+        .iter()
+        .map(|name| ssh_dir.join(name))
+        .filter(|path| path.is_file())
+        .collect();
+
+    let mut extra: Vec<PathBuf> = Vec::new();
+    if let Ok(entries) = std::fs::read_dir(ssh_dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
+                continue;
+            };
+            if name.ends_with(".pub") || CANONICAL_KEY_NAMES.contains(&name) {
+                continue;
+            }
+            if path.is_file() && ssh_dir.join(format!("{name}.pub")).is_file() {
+                extra.push(path);
+            }
+        }
+    }
+    // Directory order is not stable across platforms; a fixed order keeps the
+    // attempt budget spending itself the same way every time.
+    extra.sort();
+    ordered.extend(extra);
+    ordered.truncate(MAX_AUTO_KEY_ATTEMPTS);
+    ordered
+}
+
 async fn connect_sftp_session(
     host: &str,
     port: u16,
@@ -460,29 +509,28 @@ async fn connect_sftp_session(
         }
     }
 
-    if !authenticated {
-        // id_dsa intentionally omitted because DSA is obsolete/weak.
-        let key_names = ["id_ed25519", "id_ecdsa", "id_rsa"];
-        if let Some(ssh_dir) = auto_key_dir {
-            for name in &key_names {
-                let path = ssh_dir.join(name);
-                if !path.exists() {
-                    continue;
-                }
-                match russh::keys::load_secret_key(&path, None) {
-                    Ok(key) => {
-                        let key_with_alg = PrivateKeyWithHashAlg::new(Arc::new(key), None);
-                        match handle.authenticate_publickey(username, key_with_alg).await {
-                            Ok(result) if result.success() => {
-                                authenticated = true;
-                                break;
-                            }
-                            Ok(_) => attempts.push(format!("{name}: server rejected the key")),
-                            Err(e) => attempts.push(format!("{name}: {e}")),
+    if !authenticated
+        && let Some(ssh_dir) = auto_key_dir
+    {
+        for path in auto_key_candidates(&ssh_dir) {
+            let name = path
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or("key")
+                .to_string();
+            match russh::keys::load_secret_key(&path, None) {
+                Ok(key) => {
+                    let key_with_alg = PrivateKeyWithHashAlg::new(Arc::new(key), None);
+                    match handle.authenticate_publickey(username, key_with_alg).await {
+                        Ok(result) if result.success() => {
+                            authenticated = true;
+                            break;
                         }
+                        Ok(_) => attempts.push(format!("{name}: server rejected the key")),
+                        Err(e) => attempts.push(format!("{name}: {e}")),
                     }
-                    Err(e) => attempts.push(format!("{name}: cannot read key ({e})")),
                 }
+                Err(e) => attempts.push(format!("{name}: cannot read key ({e})")),
             }
         }
     }
@@ -2830,5 +2878,99 @@ mod tests {
 
         drop(manifest);
         std::fs::remove_dir_all(temp_dir).unwrap();
+    }
+}
+
+#[cfg(test)]
+mod auto_key_tests {
+    use super::*;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    /// Build a throwaway `.ssh` directory. `files` are created empty; the test
+    /// only cares which paths are picked, never their contents.
+    fn ssh_dir_with(files: &[&str]) -> PathBuf {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let dir = std::env::temp_dir()
+            .join(format!("mymux-autokey-{}-{nonce}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        for name in files {
+            std::fs::write(dir.join(name), b"").unwrap();
+        }
+        dir
+    }
+
+    fn names(paths: &[PathBuf]) -> Vec<String> {
+        paths
+            .iter()
+            .map(|p| p.file_name().unwrap().to_string_lossy().into_owned())
+            .collect()
+    }
+
+    #[test]
+    fn finds_per_host_keys_not_just_the_canonical_names() {
+        // The shape that made clp unreachable: the default key exists but is a
+        // different key, and the one that works has a host suffix.
+        let dir = ssh_dir_with(&[
+            "id_ed25519",
+            "id_ed25519.pub",
+            "id_ed25519_clp",
+            "id_ed25519_clp.pub",
+            "id_rsa_safetyabc",
+            "id_rsa_safetyabc.pub",
+        ]);
+        let found = names(&auto_key_candidates(&dir));
+        assert_eq!(
+            found,
+            vec!["id_ed25519", "id_ed25519_clp", "id_rsa_safetyabc"],
+            "canonical name first, then per-host keys in a stable order"
+        );
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn ignores_everything_that_is_not_a_private_key() {
+        let dir = ssh_dir_with(&[
+            "config",
+            "config.bak_bom_fix",
+            "known_hosts",
+            "known_hosts.old",
+            "authorized_keys",
+            "id_ed25519.pub", // a public key with no private half
+        ]);
+        assert!(
+            auto_key_candidates(&dir).is_empty(),
+            "no file here has a private/.pub pair"
+        );
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn a_canonical_key_counts_even_without_a_public_half() {
+        // `ssh` itself tries these by name, so a missing .pub must not hide one.
+        let dir = ssh_dir_with(&["id_rsa"]);
+        assert_eq!(names(&auto_key_candidates(&dir)), vec!["id_rsa"]);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn stays_within_the_server_auth_try_budget() {
+        let mut files: Vec<String> = Vec::new();
+        for index in 0..10 {
+            files.push(format!("id_ed25519_host{index:02}"));
+            files.push(format!("id_ed25519_host{index:02}.pub"));
+        }
+        let refs: Vec<&str> = files.iter().map(String::as_str).collect();
+        let dir = ssh_dir_with(&refs);
+        assert_eq!(auto_key_candidates(&dir).len(), MAX_AUTO_KEY_ATTEMPTS);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn a_missing_directory_yields_nothing() {
+        let dir = std::env::temp_dir().join("mymux-autokey-does-not-exist");
+        assert!(auto_key_candidates(&dir).is_empty());
     }
 }

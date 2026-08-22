@@ -7,7 +7,8 @@
     },
     "resources": {
       "binaries/conpty.dll": "conpty.dll",
-      "binaries/OpenConsole.exe": "OpenConsole.exe"
+      "binaries/OpenConsole.exe": "OpenConsole.exe",
+      "resources/whisper_wrapper.py": "resources/whisper_wrapper.py"
     }
   }
 }

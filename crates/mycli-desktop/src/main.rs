@@ -56,6 +56,7 @@ fn main() {
             commands::fs_move_path,
             commands::fs_create_dir,
             commands::paste_clipboard_image,
+            commands::save_text_file_as,
             session::session_save,
             session::session_load,
             session::session_clear,
@@ -106,6 +107,8 @@ fn main() {
             voice::voice_store_deepgram_key,
             voice::voice_deepgram_token,
             voice::voice_transcribe_local,
+            voice::voice_check_local,
+            voice::voice_pick_runner,
         ])
         .setup(|_app| {
             #[cfg(debug_assertions)]

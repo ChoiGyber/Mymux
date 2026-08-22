@@ -18,6 +18,7 @@ const APP_COMMANDS: &[&str] = &[
     "set_favorite",
     "read_text_file",
     "write_text_file",
+    "save_text_file_as",
     "codex_rollout_tail",
     "codex_reset_credits",
     "codex_consume_reset_credit",
@@ -85,6 +86,8 @@ const APP_COMMANDS: &[&str] = &[
     "voice_store_deepgram_key",
     "voice_deepgram_token",
     "voice_transcribe_local",
+    "voice_check_local",
+    "voice_pick_runner",
 ];
 
 /// Copy the sideloaded ConPTY host (`conpty.dll` + `OpenConsole.exe`) next to

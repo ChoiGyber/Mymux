@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-voice-pick-runner"
+description = "Enables the voice_pick_runner command without any pre-configured scope."
+commands.allow = ["voice_pick_runner"]
+
+[[permission]]
+identifier = "deny-voice-pick-runner"
+description = "Denies the voice_pick_runner command without any pre-configured scope."
+commands.deny = ["voice_pick_runner"]

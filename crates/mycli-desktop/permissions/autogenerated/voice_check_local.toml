@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-voice-check-local"
+description = "Enables the voice_check_local command without any pre-configured scope."
+commands.allow = ["voice_check_local"]
+
+[[permission]]
+identifier = "deny-voice-check-local"
+description = "Denies the voice_check_local command without any pre-configured scope."
+commands.deny = ["voice_check_local"]
