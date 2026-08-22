@@ -8,6 +8,70 @@ For installers, see the [GitHub Releases](https://github.com/ChoiGyber/Mymux/rel
 
 ---
 
+## v0.1.58 — 2026-08-22
+
+### Added / 새 기능
+
+- **Session memos hold more than one note / 세션 메모를 여러 개로.** The 🗒 popover
+  now has a title list on the left and the selected note's body on the right,
+  with a search box above a "new memo" button and a divider you can drag to
+  whatever width your titles need. Titles come from the first line on their own,
+  or double-click to name one. Each memo saves to a `.txt` through the normal
+  Windows Save dialog. Existing notes are carried over as your first memo.
+
+  🗒 팝오버가 왼쪽 제목 목록 · 오른쪽 본문으로 나뉩니다. 검색창과 ＋ 새 메모 버튼이
+  위에 있고, 가운데 구분선을 끌어 제목이 보이는 만큼 목록 폭을 넓힐 수 있습니다.
+  제목은 본문 첫 줄에서 자동으로 붙고 더블클릭하면 직접 이름을 줍니다. 메모마다
+  Windows 기본 저장 대화상자로 `.txt` 저장이 됩니다. 쓰던 메모는 첫 번째 메모로
+  그대로 옮겨집니다.
+
+- **Local voice input says what to install / 음성입력 설치 안내.** Choosing local
+  faster-whisper now shows the exact steps and links for either route — a single
+  standalone executable with no Python, or `pip install faster-whisper` with the
+  wrapper script bundled in the app. An "설치 확인" button runs your setup and
+  reports what is missing. Recording is converted to WAV in the app, so no
+  separate ffmpeg is needed.
+
+  로컬 faster-whisper 를 고르면 무엇을 설치해야 하는지와 링크가 그대로 나옵니다.
+  Python 이 필요 없는 단독 실행 파일, 또는 `pip install faster-whisper` 두 경로를
+  고를 수 있고 래퍼 스크립트는 앱에 동봉돼 있습니다. [설치 확인] 버튼이 실제로
+  실행해 보고 빠진 것을 알려줍니다. 녹음은 앱이 WAV 로 바꿔 넘기므로 ffmpeg 를
+  따로 깔지 않아도 됩니다.
+
+- **Dragging a session puts the pane where you dropped it / 세션을 끌면 그 자리로.**
+  A vertical stack takes the session as an equal sibling at the drop point; a
+  horizontal row splits the pane you dropped on and puts the arrival underneath.
+  Works across tabs too, and the list order now always matches the screen.
+
+  세로로 쌓인 곳에 놓으면 그 자리에 균등하게 끼워지고, 가로로 늘어선 곳에 놓으면
+  놓은 패인 아래로 들어갑니다. 다른 탭에서 끌어와도 같고, 목록 순서와 화면 위치가
+  이제 항상 일치합니다.
+
+### Fixed / 버그 수정
+
+- **The Explorer ignored `ssh` recalled with ↑ / ↑ 로 부른 `ssh` 를 놓치던 문제.**
+  Typing `ssh host` made the Explorer follow the session, but pressing ↑ to reuse
+  the command did nothing at all — adoption only watched literal keystrokes, and
+  an arrow key clears that buffer. It now reads the submitted line off the screen
+  when no keystrokes were seen.
+
+  `ssh host` 를 직접 치면 탐색기가 따라왔지만, ↑ 로 같은 명령을 불러 실행하면
+  아무 일도 일어나지 않았습니다. 감지가 눌린 키만 보고 있었고 방향키는 그 버퍼를
+  비우기 때문입니다. 이제 키 입력이 없으면 화면에서 제출된 명령줄을 읽습니다.
+
+- **Per-host SSH keys were never tried / 호스트별 SSH 키를 안 쓰던 문제.** Key
+  auto-detection only looked for `id_ed25519`, `id_ecdsa` and `id_rsa`, so a key
+  named for its host (`id_ed25519_myserver`) was never offered and the connection
+  failed with no explanation. Any key in `~/.ssh` with a matching `.pub` is now
+  tried as well, and a connection that fails after the host was resolved says why.
+
+  키 자동 탐지가 `id_ed25519`·`id_ecdsa`·`id_rsa` 세 이름만 봐서, 호스트 이름을 붙인
+  키(`id_ed25519_myserver`)는 아예 시도되지 않고 이유 없이 실패했습니다. 이제
+  `~/.ssh` 안에서 `.pub` 짝이 있는 키도 함께 시도하고, 접속에 실패하면 이유를
+  알려줍니다.
+
+---
+
 ## v0.1.57 — 2026-08-14
 
 ### Fixed
