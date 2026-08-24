@@ -1,0 +1,5 @@
+Before state
+- Declared Electron: ^37.3.1
+- Declared electron-builder: ^25.1.8
+- Installed lock version: electron 37.10.3
+- Baseline build in the fresh issue worktree could not run before npm install because node_modules was absent.
