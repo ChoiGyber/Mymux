@@ -28,8 +28,8 @@
   "homepage": "https://github.com/ChoiGyber/Mymux#readme",
   "devDependencies": {
     "@types/node": "^25.5.0",
-    "electron": "^37.3.1",
-    "electron-builder": "^25.1.8",
+    "electron": "^43.4.1",
+    "electron-builder": "^26.15.3",
     "tsx": "^4.21.0",
     "typescript": "^5.9.3"
   },
