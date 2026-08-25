@@ -1,0 +1,8 @@
+After state
+- npm ls electron electron-builder --depth=0: electron 43.4.1, electron-builder 26.15.3
+- npx electron --version: v43.4.1
+- npm run build: passed
+- npm audit --omit=dev --audit-level=high: found 0 vulnerabilities
+- Electron process launch: launcher remained alive after 6 seconds; targeted process tree was then stopped.
+- npm run package:portable: blocked during electron-builder native rebuild of node-pty.
+- Blocking error: MSB8040, Spectre-mitigated libraries required by the installed Visual Studio toolset.
