@@ -166,6 +166,19 @@ function setCommandHistoryEnabled(on) {
   try { localStorage.setItem(COMMAND_HISTORY_ENABLED_KEY, on ? "1" : "0"); } catch {}
   if (!on) hideAutocomplete();
 }
+const SAVED_SUGGEST_ENABLED_KEY = "mymux.savedCommandSuggestions.enabled";
+// The popup's other source: the saved commands (built-in seeds included). When
+// off they are left out of the autocomplete popup only — the Commands panel
+// still lists them, and alias+Enter still runs the full combo, because those are
+// deliberate actions rather than suggestions. With both toggles off the popup
+// has nothing to show, so showAutocomplete's empty-match branch hides it.
+// Default on. Toggle lives next to the history one in the Commands panel.
+let savedCommandSuggestionsEnabled = localStorage.getItem(SAVED_SUGGEST_ENABLED_KEY) !== "0";
+function setSavedCommandSuggestionsEnabled(on) {
+  savedCommandSuggestionsEnabled = !!on;
+  try { localStorage.setItem(SAVED_SUGGEST_ENABLED_KEY, on ? "1" : "0"); } catch {}
+  if (!on) hideAutocomplete();
+}
 let acSelectedIdx = -1;
 let currentExplorerPath = "";
 let currentSftpId = null;
@@ -803,6 +816,11 @@ async function setupListeners() {
   if (cmdHistToggle) {
     cmdHistToggle.checked = commandHistoryEnabled;
     cmdHistToggle.addEventListener("change", () => setCommandHistoryEnabled(cmdHistToggle.checked));
+  }
+  const cmdSavedToggle = document.getElementById("cmd-saved-toggle");
+  if (cmdSavedToggle) {
+    cmdSavedToggle.checked = savedCommandSuggestionsEnabled;
+    cmdSavedToggle.addEventListener("change", () => setSavedCommandSuggestionsEnabled(cmdSavedToggle.checked));
   }
   btnCancel.addEventListener("click", closeModal);
   modalOverlay.addEventListener("click", (e) => { if (e.target === modalOverlay) closeModal(); });
@@ -9965,7 +9983,7 @@ function handleTerminalInput(data, ptyId, submittedLine = "") {
 
 function showAutocomplete(input, ptyId) {
   const lower = input.toLowerCase();
-  let matches = savedCmds.filter(
+  let matches = (savedCommandSuggestionsEnabled ? savedCmds : []).filter(
     (c) =>
       (c.alias && c.alias.toLowerCase().startsWith(lower)) ||
       c.name.toLowerCase().includes(lower) ||
