@@ -1,0 +1,5 @@
+After
+- cargo install tauri-cli --version 2.11.4 --force --jobs 1: completed
+- cargo tauri --version: tauri-cli 2.11.4
+- cargo metadata --format-version 1 --no-deps: completed
+- Project Tauri dependency remains tauri ^2.11.5 and tauri-build ^2.6.3; no project source changes were needed.

@@ -1,0 +1,4 @@
+Before
+- cargo tauri --version: tauri-cli 2.11.3
+- Project manifest: tauri ^2.11.5, tauri-build ^2.6.3
+- crates.io search: tauri-cli 2.11.4 available
