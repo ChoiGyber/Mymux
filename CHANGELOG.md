@@ -8,6 +8,30 @@ For installers, see the [GitHub Releases](https://github.com/ChoiGyber/Mymux/rel
 
 ---
 
+## v0.1.59 — 2026-08-25
+
+### Changed / 개선
+
+- **Command suggestions now have two switches / 명령 제안 스위치가 두 개로.** The
+  Commands panel used to offer one checkbox, and it only silenced the typing
+  history — your saved commands kept filling the popup with no way to stop them.
+  There is a second checkbox now: turn off **Saved command suggestions** and the
+  saved list (built-in shortcuts included) stays out of the autocomplete popup,
+  and with both off the popup never appears at all. The panel itself is
+  untouched — the list still runs on click, and an alias plus Enter still runs
+  its full command. Both switches are remembered across restarts. The two labels
+  and their tooltips are English only now.
+
+  Commands 패널에는 체크박스가 하나뿐이었고 그 하나는 입력 히스토리만 껐습니다.
+  처음부터 들어 있던 `cl`·`cy` 같은 저장된 명령은 끌 방법이 없어 타이핑할 때마다
+  팝업이 계속 떴습니다. 이제 체크박스가 하나 더 있습니다 — **Saved command
+  suggestions** 를 끄면 저장된 명령이 자동완성 팝업에서 빠지고, 둘 다 끄면 팝업이
+  아예 뜨지 않습니다. 패널 자체는 그대로입니다. 목록은 여전히 클릭으로 실행되고,
+  약어 + Enter 도 전체 명령을 그대로 실행합니다. 두 스위치 모두 재시작해도
+  유지됩니다. 두 라벨과 툴팁은 영어로만 표시됩니다.
+
+---
+
 ## v0.1.58 — 2026-08-22
 
 ### Added / 새 기능
