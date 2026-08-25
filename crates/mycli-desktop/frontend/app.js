@@ -70,6 +70,7 @@ async function pasteIntoPane(id) {
 let sidebar, btnToggleSidebar, btnNewTerminal;
 let explorerPath, btnExplorerUp, explorerMode, fileListEl;
 let cmdListEl, emptyEl, btnAdd;
+let commandsPanel, btnToggleCommands, btnDockCommands, commandsDragHandle;
 let modalOverlay, modalTitle, form, inputName, inputCommand, inputDesc, btnCancel;
 let terminalTabs, terminalContainer, terminalWelcome;
 let sshInput, sshPort, sshPassword, sshKeyfile, btnSshConnect;
@@ -196,6 +197,11 @@ let explorerEntries = []; // current dir listing (for in-folder name search)
 let showHiddenFiles = (() => {
   try { return localStorage.getItem("mymux.showHidden") !== "false"; } catch { return true; }
 })();
+const COMMANDS_VISIBLE_KEY = "mymux.commandsVisible.v1";
+const COMMANDS_FLOAT_KEY = "mymux.commandsFloating.v1";
+let commandsVisible = (() => {
+  try { return localStorage.getItem(COMMANDS_VISIBLE_KEY) === "true"; } catch { return false; }
+})();
 
 // ── Init: wait for both DOM and Tauri ──
 window.addEventListener("DOMContentLoaded", async () => {
@@ -221,6 +227,10 @@ window.addEventListener("DOMContentLoaded", async () => {
   explorerMode = document.getElementById("explorer-mode");
   fileListEl = document.getElementById("file-list");
   cmdListEl = document.getElementById("command-list");
+  commandsPanel = document.getElementById("panel-commands");
+  btnToggleCommands = document.getElementById("btn-toggle-commands");
+  btnDockCommands = document.getElementById("btn-dock-commands");
+  commandsDragHandle = document.getElementById("commands-drag-handle");
   emptyEl = document.getElementById("empty-state");
   btnAdd = document.getElementById("btn-add");
   modalOverlay = document.getElementById("modal-overlay");
@@ -250,6 +260,7 @@ window.addEventListener("DOMContentLoaded", async () => {
   btnEqualHeight = document.getElementById("btn-equal-height");
   btnTheme = document.getElementById("btn-theme");
   explorerDrives = document.getElementById("explorer-drives");
+  restoreCommandsPanelState();
 
   // Apply saved theme/accent before anything renders
   initTheme();
@@ -621,12 +632,22 @@ async function setupListeners() {
   // Sidebar tabs
   document.querySelectorAll(".sidebar-tab").forEach((tab) => {
     tab.addEventListener("click", () => {
+      if (tab.dataset.tab === "commands" && !commandsVisible) setCommandsVisible(true);
       document.querySelectorAll(".sidebar-tab").forEach((t) => t.classList.remove("active"));
       document.querySelectorAll(".sidebar-panel").forEach((p) => p.classList.remove("active"));
       tab.classList.add("active");
       document.getElementById(`panel-${tab.dataset.tab}`).classList.add("active");
     });
   });
+  if (btnToggleCommands) {
+    btnToggleCommands.addEventListener("click", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      setCommandsVisible(!commandsVisible);
+    });
+  }
+  if (btnDockCommands) btnDockCommands.addEventListener("click", dockCommandsPanel);
+  bindCommandsPanelDrag();
 
   btnToggleSidebar.addEventListener("click", () => { sidebar.classList.toggle("collapsed"); persistPanelState(); updatePanelToggleIcons(); });
   btnToggleSessions.addEventListener("click", () => { sessionPanel.classList.toggle("collapsed"); persistPanelState(); updatePanelToggleIcons(); });
@@ -2084,6 +2105,118 @@ async function openLocalLink(target) {
   } else {
     toast("Opened in Explorer: " + name);
   }
+}
+
+function updateCommandsVisibilityButton() {
+  if (!btnToggleCommands) return;
+  btnToggleCommands.setAttribute("aria-pressed", commandsVisible ? "true" : "false");
+  btnToggleCommands.title = commandsVisible ? "Hide Commands" : "Show Commands";
+  btnToggleCommands.setAttribute("aria-label", btnToggleCommands.title);
+}
+
+function setCommandsVisible(visible) {
+  commandsVisible = Boolean(visible);
+  try { localStorage.setItem(COMMANDS_VISIBLE_KEY, commandsVisible ? "true" : "false"); } catch {}
+  if (commandsPanel) commandsPanel.classList.toggle("commands-hidden", !commandsVisible);
+  updateCommandsVisibilityButton();
+  if (commandsVisible && commandsPanel && !commandsPanel.classList.contains("is-floating")) {
+    document.querySelectorAll(".sidebar-tab").forEach((t) => t.classList.toggle("active", t.dataset.tab === "commands"));
+    document.querySelectorAll(".sidebar-panel").forEach((p) => p.classList.toggle("active", p.id === "panel-commands"));
+  }
+  if (!commandsVisible) {
+    document.querySelectorAll(".sidebar-tab").forEach((t) => t.classList.toggle("active", t.dataset.tab === "explorer"));
+    document.querySelectorAll(".sidebar-panel").forEach((p) => p.classList.toggle("active", p.id === "panel-explorer"));
+  }
+}
+
+function saveCommandsFloatingState() {
+  if (!commandsPanel || !commandsPanel.classList.contains("is-floating")) return;
+  const rect = commandsPanel.getBoundingClientRect();
+  try {
+    localStorage.setItem(COMMANDS_FLOAT_KEY, JSON.stringify({ x: Math.round(rect.left), y: Math.round(rect.top) }));
+  } catch {}
+}
+
+function applyCommandsFloatingPosition(position) {
+  if (!commandsPanel || !position) return;
+  const width = commandsPanel.offsetWidth || 320;
+  const height = commandsPanel.offsetHeight || 360;
+  const x = Math.max(8, Math.min(Number(position.x) || 0, window.innerWidth - width - 8));
+  const y = Math.max(8, Math.min(Number(position.y) || 0, window.innerHeight - height - 8));
+  commandsPanel.style.left = `${Math.round(x)}px`;
+  commandsPanel.style.top = `${Math.round(y)}px`;
+}
+
+function floatCommandsPanel(position = null) {
+  if (!commandsPanel) return;
+  const rect = commandsPanel.getBoundingClientRect();
+  commandsPanel.classList.add("is-floating");
+  commandsPanel.style.width = `${Math.max(240, Math.round(rect.width || 280))}px`;
+  commandsPanel.style.left = `${Math.round(rect.left)}px`;
+  commandsPanel.style.top = `${Math.round(rect.top)}px`;
+  if (position) applyCommandsFloatingPosition(position);
+  if (btnDockCommands) btnDockCommands.classList.remove("hidden");
+}
+
+function dockCommandsPanel() {
+  if (!commandsPanel) return;
+  commandsPanel.classList.remove("is-floating");
+  commandsPanel.style.removeProperty("left");
+  commandsPanel.style.removeProperty("top");
+  commandsPanel.style.removeProperty("width");
+  if (btnDockCommands) btnDockCommands.classList.add("hidden");
+  try { localStorage.removeItem(COMMANDS_FLOAT_KEY); } catch {}
+}
+
+function restoreCommandsPanelState() {
+  updateCommandsVisibilityButton();
+  if (!commandsPanel) return;
+  commandsPanel.classList.toggle("commands-hidden", !commandsVisible);
+  if (!commandsVisible) return;
+  try {
+    const position = JSON.parse(localStorage.getItem(COMMANDS_FLOAT_KEY) || "null");
+    if (position && Number.isFinite(Number(position.x)) && Number.isFinite(Number(position.y))) {
+      // Mark the panel active BEFORE floating it. A sidebar panel is display:none
+      // unless it is the selected one, and the floating branch used to skip that —
+      // so a panel left floating at shutdown came back invisible until the user
+      // happened to click the Commands tab. setCommandsVisible only reassigns the
+      // tab selection while the panel is docked, so this order is required.
+      setCommandsVisible(true);
+      floatCommandsPanel(position);
+    } else {
+      setCommandsVisible(true);
+    }
+  } catch {}
+}
+
+function bindCommandsPanelDrag() {
+  if (!commandsDragHandle || !commandsPanel) return;
+  commandsDragHandle.addEventListener("pointerdown", (event) => {
+    if (event.button !== 0) return;
+    event.preventDefault();
+    const wasFloating = commandsPanel.classList.contains("is-floating");
+    if (!wasFloating) floatCommandsPanel();
+    const rect = commandsPanel.getBoundingClientRect();
+    const offsetX = event.clientX - rect.left;
+    const offsetY = event.clientY - rect.top;
+    const move = (moveEvent) => {
+      const width = commandsPanel.offsetWidth;
+      const height = commandsPanel.offsetHeight;
+      const x = Math.max(8, Math.min(moveEvent.clientX - offsetX, window.innerWidth - width - 8));
+      const y = Math.max(8, Math.min(moveEvent.clientY - offsetY, window.innerHeight - height - 8));
+      commandsPanel.style.left = `${Math.round(x)}px`;
+      commandsPanel.style.top = `${Math.round(y)}px`;
+    };
+    const finish = () => {
+      document.removeEventListener("pointermove", move);
+      document.removeEventListener("pointerup", finish);
+      document.removeEventListener("pointercancel", finish);
+      saveCommandsFloatingState();
+    };
+    document.addEventListener("pointermove", move);
+    document.addEventListener("pointerup", finish);
+    document.addEventListener("pointercancel", finish);
+  });
 }
 
 function activateSidebarTab(name) {

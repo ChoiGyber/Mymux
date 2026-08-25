@@ -1,0 +1,3 @@
+Before
+- Commands tab was a full-width sidebar tab.
+- Commands panel had no visibility toggle or drag-to-move behavior.

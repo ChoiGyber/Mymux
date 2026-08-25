@@ -425,6 +425,29 @@ html[data-theme="light"] #toolbar-actions #btn-update:hover {
   border-bottom-color: var(--accent);
   background: var(--surface);
 }
+.sidebar-tab-commands {
+  flex: 0 0 88px;
+  padding: 6px 3px;
+  font-size: 10px;
+  letter-spacing: 0.25px;
+}
+.commands-visibility-toggle {
+  flex: 0 0 27px;
+  border: none;
+  border-left: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text-dim);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+}
+.commands-visibility-toggle:hover,
+.commands-visibility-toggle[aria-pressed="true"] { color: var(--accent); background: var(--surface); }
+.commands-eye-closed { display: none; }
+.commands-visibility-toggle[aria-pressed="true"] .commands-eye-open { display: none; }
+.commands-visibility-toggle[aria-pressed="true"] .commands-eye-closed { display: block; }
 
 /* Sidebar panels */
 .sidebar-panel {
@@ -436,6 +459,23 @@ html[data-theme="light"] #toolbar-actions #btn-update:hover {
 .sidebar-panel.active {
   display: flex;
 }
+.sidebar-panel.commands-hidden { display: none !important; }
+#panel-commands.is-floating {
+  position: fixed;
+  z-index: 40;
+  width: min(360px, calc(100vw - 24px));
+  height: min(62vh, 560px);
+  min-height: 180px;
+  background: var(--surface);
+  border: 1px solid var(--accent);
+  border-radius: 6px;
+  box-shadow: 0 16px 38px rgba(0, 0, 0, 0.35);
+}
+#sidebar.collapsed #panel-commands.is-floating { display: flex; }
+#commands-drag-handle { cursor: grab; user-select: none; }
+#commands-drag-handle:active { cursor: grabbing; }
+#commands-header-actions { display: flex; align-items: center; gap: 4px; }
+#commands-header-actions .hidden { display: none; }
 
 /* ── Explorer panel ── */
 #explorer-nav {
@@ -764,6 +804,10 @@ html[data-theme="light"] #toolbar-actions #btn-update:hover {
 #sidebar-header button:hover {
   background: var(--accent);
   color: #fff;
+}
+#sidebar-header .commands-dock-button {
+  color: var(--text-dim);
+  font-size: 13px;
 }
 
 #cmd-search {

@@ -1,0 +1,11 @@
+After
+- Commands tab has a compact fixed width and an eye visibility toggle.
+- Visibility is persisted in localStorage key `mymux.commandsVisible.v1`.
+- Commands header drag converts the panel to a bounded floating panel and persists position in `mymux.commandsFloating.v1`.
+- Dock button returns the panel to the sidebar.
+- `node --check crates/mycli-desktop/frontend/app.js`: passed.
+- `git diff --check`: passed.
+- `cargo check -p mycli-desktop --locked`: passed.
+- Required DOM IDs verified: passed.
+- Separate development executable launched: `D:\Project\Mymux-issue-19\target\debug\Mymux.exe`.
+- Native Computer Use UI interaction was unavailable because its pipe could not connect in this environment.
