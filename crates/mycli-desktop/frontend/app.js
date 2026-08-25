@@ -2176,6 +2176,12 @@ function restoreCommandsPanelState() {
   try {
     const position = JSON.parse(localStorage.getItem(COMMANDS_FLOAT_KEY) || "null");
     if (position && Number.isFinite(Number(position.x)) && Number.isFinite(Number(position.y))) {
+      // Mark the panel active BEFORE floating it. A sidebar panel is display:none
+      // unless it is the selected one, and the floating branch used to skip that —
+      // so a panel left floating at shutdown came back invisible until the user
+      // happened to click the Commands tab. setCommandsVisible only reassigns the
+      // tab selection while the panel is docked, so this order is required.
+      setCommandsVisible(true);
       floatCommandsPanel(position);
     } else {
       setCommandsVisible(true);
