@@ -56,8 +56,12 @@ B 가 그대로 남습니다. 낡은 캐시를 들고 있는 프로세스 자체
 
 ## 증거
 
-- [before — 창을 닫아도 프로세스가 남는다](https://raw.githubusercontent.com/ChoiGyber/Mymux/main/.issue/27/evidence/before/process-lifecycle.md)
-- [after — 창을 닫으면 프로세스도 끝난다](https://raw.githubusercontent.com/ChoiGyber/Mymux/main/.issue/27/evidence/after/process-lifecycle.md)
+계측 원본은 저장소의 `main` 브랜치에 함께 커밋했습니다.
+
+```text
+.issue/27/evidence/before/process-lifecycle.md   창을 닫아도 프로세스가 남는다
+.issue/27/evidence/after/process-lifecycle.md    창을 닫으면 프로세스도 끝난다
+```
 
 **스크린샷은 넣지 않았습니다.** 이 이슈의 대상은 화면이 아니라 프로세스 수명이라 캡처로
 증명되지 않습니다. 유일하게 그림이 될 만한 오버레이 창은 `transparent: true` 라 뒤의 사용자
