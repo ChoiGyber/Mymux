@@ -144,12 +144,14 @@ fn main() {
             voice::voice_pick_runner,
         ])
         .setup(|_app| {
-            // The plugin only writes its file on `RunEvent::Exit`, and this app
-            // never gets there: closing the main window leaves `buddy-overlay`
-            // alive, so the process lingers and the geometry is never persisted.
-            // Save the moment the main window is destroyed instead. The plugin
-            // keeps its cache current from Moved/Resized/CloseRequested, so
-            // writing after the window is gone still records the last geometry.
+            // Save the window geometry the moment the main window is
+            // destroyed, then quit. The plugin only writes its file on
+            // `RunEvent::Exit`; saving here keeps that from being the single
+            // point of failure, and the plugin keeps its cache current from
+            // Moved/Resized/CloseRequested, so writing after the window is gone
+            // still records the last real geometry. Exit now fires too (see the
+            // `handle.exit` note below), which makes the plugin's own save a
+            // second, redundant write of the same values rather than the only one.
             //
             // The frontend takes the same path on a normal quit: its
             // `onCloseRequested` handler calls `preventDefault()` to ask about
@@ -163,6 +165,22 @@ fn main() {
                     win.on_window_event(move |event| {
                         if matches!(event, WindowEvent::Destroyed) {
                             let _ = handle.save_window_state(window_state_flags());
+                            // Then quit. Closing the main window is not enough on
+                            // its own: wry only raises ExitRequested once its
+                            // window map is empty, and `buddy-overlay` is created
+                            // at startup and merely shown/hidden, never destroyed.
+                            // The process would linger with no visible window,
+                            // still holding a RunEvent::Exit handler and its own
+                            // geometry cache — a later graceful exit (logoff, say)
+                            // would then overwrite a newer run's saved size.
+                            //
+                            // `exit` posts through the event-loop proxy rather
+                            // than dispatching inline, so calling it from this
+                            // callback does not re-enter the window map. That is
+                            // deliberate upstream: request_exit is documented as
+                            // unable to use send_user_message, and the main-thread
+                            // path for it panics outright.
+                            handle.exit(0);
                         }
                     });
                 }
