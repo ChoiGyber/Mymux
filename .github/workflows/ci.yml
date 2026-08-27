@@ -26,6 +26,18 @@ jobs:
       - name: Check macOS WebKit source invariants
         run: node scripts/check-macos-gotchas.mjs
 
+  # vendor/tao is a patched copy of a crates.io crate. Re-vendoring it to bump the
+  # version would drop the reentrancy fix silently: the app still builds, and only
+  # freezes for good when a focus change lands mid-IME-input. Cheap, runs first —
+  # see issue #36.
+  vendored-tao:
+    name: vendored tao guard
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check vendored tao deadlock fix is intact
+        run: node scripts/check-vendored-tao.mjs
+
   build:
     name: build (${{ matrix.os }})
     runs-on: ${{ matrix.os }}

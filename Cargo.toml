@@ -3,8 +3,22 @@ members = [
     "crates/mycli-core",
     "crates/mycli-tui",
     "crates/mycli-desktop",
+    # A member, not just a patch source, so `cargo test --workspace` runs the
+    # reentrancy regression test that guards the fix described below.
+    "vendor/tao",
 ]
 resolver = "2"
+
+# Tauri's windowing crate holds two process-global mutexes across `PeekMessageW`,
+# which delivers *sent* messages — so an IME/focus message re-enters the same window
+# procedure and blocks on a lock the thread already owns. That froze the app for
+# hours in the wild (issue #36). Upstream fixed it in tao 0.36/0.37 by dropping the
+# global `KEY_EVENT_BUILDERS` map, but `tauri-runtime-wry 2.11.4` pins `tao = "^0.35"`,
+# so the fix cannot be pulled in by version. Vendor 0.35.3 and patch it instead.
+#
+# Delete `vendor/tao` and this section once Tauri ships a release built on tao >= 0.36.
+[patch.crates-io]
+tao = { path = "vendor/tao" }
 
 [workspace.dependencies]
 serde = { version = "1", features = ["derive"] }
