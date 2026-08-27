@@ -16,6 +16,10 @@ tauri-plugin-shell = "2"
 tauri-plugin-clipboard-manager = "2"
 tauri-plugin-updater = "2"
 tauri-plugin-dialog = "2"
+# Persists the main window's size/position/maximized state across runs. Restores
+# on window creation and constrains a saved position that no longer lands on a
+# connected monitor, so we do not have to reimplement either.
+tauri-plugin-window-state = "2"
 serde = { workspace = true }
 serde_json = { workspace = true }
 uuid = { workspace = true }
