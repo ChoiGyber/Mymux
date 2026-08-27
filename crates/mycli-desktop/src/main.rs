@@ -144,12 +144,14 @@ fn main() {
             voice::voice_pick_runner,
         ])
         .setup(|_app| {
-            // The plugin only writes its file on `RunEvent::Exit`, and this app
-            // never gets there: closing the main window leaves `buddy-overlay`
-            // alive, so the process lingers and the geometry is never persisted.
-            // Save the moment the main window is destroyed instead. The plugin
-            // keeps its cache current from Moved/Resized/CloseRequested, so
-            // writing after the window is gone still records the last geometry.
+            // Save the window geometry the moment the main window is
+            // destroyed, then quit. The plugin only writes its file on
+            // `RunEvent::Exit`; saving here keeps that from being the single
+            // point of failure, and the plugin keeps its cache current from
+            // Moved/Resized/CloseRequested, so writing after the window is gone
+            // still records the last real geometry. Exit now fires too (see the
+            // `handle.exit` note below), which makes the plugin's own save a
+            // second, redundant write of the same values rather than the only one.
             //
             // The frontend takes the same path on a normal quit: its
             // `onCloseRequested` handler calls `preventDefault()` to ask about
@@ -163,6 +165,30 @@ fn main() {
                     win.on_window_event(move |event| {
                         if matches!(event, WindowEvent::Destroyed) {
                             let _ = handle.save_window_state(window_state_flags());
+                            // Then quit. Closing the main window does not end the
+                            // app on its own: wry raises ExitRequested when its
+                            // window map empties, and `buddy-overlay` is created
+                            // at startup and only ever shown/hidden, so the map
+                            // never empties. The process would linger with no
+                            // visible window, still holding a RunEvent::Exit
+                            // handler and its own geometry cache — a later
+                            // graceful exit (logoff, say) would then overwrite a
+                            // newer run's saved size.
+                            //
+                            // Quitting outright rather than destroying the
+                            // overlay: destroying it only empties the map while
+                            // no other window happens to exist, so adding a third
+                            // window later would silently bring this bug back.
+                            // Asking the app to exit says what we mean.
+                            //
+                            // Not during an update install — that path renames
+                            // the running binary out of the way before writing
+                            // the new one, so dying mid-write can leave nothing
+                            // to launch. update_install clears the flag and, if
+                            // the window is already gone by then, exits itself.
+                            if !update::installing() {
+                                handle.exit(0);
+                            }
                         }
                     });
                 }
