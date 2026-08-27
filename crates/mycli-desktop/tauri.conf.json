@@ -13,8 +13,8 @@
     "windows": [
       {
         "title": "Mymux — Command Manager",
-        "width": 800,
-        "height": 560,
+        "width": 1280,
+        "height": 800,
         "resizable": true,
         "minWidth": 520,
         "minHeight": 400,

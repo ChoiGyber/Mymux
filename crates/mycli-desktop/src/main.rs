@@ -15,6 +15,17 @@ use explorer::ExplorerManager;
 use std::sync::Arc;
 use terminal::TerminalManager;
 
+/// Window geometry we persist across runs.
+///
+/// Not `StateFlags::all()` (the plugin default): VISIBLE would persist the
+/// hidden state of `buddy-overlay`, and DECORATIONS / FULLSCREEN are not
+/// user-adjustable here. Both the plugin registration and the explicit save on
+/// main-window destroy read this, so the two can never drift apart.
+fn window_state_flags() -> tauri_plugin_window_state::StateFlags {
+    use tauri_plugin_window_state::StateFlags;
+    StateFlags::SIZE | StateFlags::POSITION | StateFlags::MAXIMIZED
+}
+
 fn main() {
     // Claude Code runs its statusline command on every render. Answer that and
     // exit before Tauri starts, so no window is ever created for it.
@@ -28,6 +39,28 @@ fn main() {
         .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_dialog::init())
+        // Restore the main window's last size/position/maximized state. Without
+        // this the window reopens at the config default every run, and that
+        // default is small enough that the two 280px side panels leave the
+        // terminal ~300px — a split pane lands at 18 columns, so the shell wraps
+        // its output into a vertical sliver that survives in the scrollback even
+        // after the window is enlarged again.
+        //
+        // Only SIZE | POSITION | MAXIMIZED. The default is StateFlags::all(),
+        // whose VISIBLE flag would persist the hidden state of `buddy-overlay`;
+        // DECORATIONS and FULLSCREEN are not user-adjustable here.
+        //
+        // `buddy-overlay` is denied outright: it is a fixed-size, undecorated
+        // companion window whose position the app computes on every show, so a
+        // restored geometry would fight that. The browser pane is not affected
+        // either way — it is a child webview (browser.rs `add_child`), not a
+        // window, so the plugin never sees it.
+        .plugin(
+            tauri_plugin_window_state::Builder::default()
+                .with_state_flags(window_state_flags())
+                .with_denylist(&["buddy-overlay"])
+                .build(),
+        )
         .manage(Arc::new(TerminalManager::new()))
         .manage(Arc::new(ExplorerManager::new()))
         .manage(Arc::new(BrowserManager::new()))
@@ -111,6 +144,30 @@ fn main() {
             voice::voice_pick_runner,
         ])
         .setup(|_app| {
+            // The plugin only writes its file on `RunEvent::Exit`, and this app
+            // never gets there: closing the main window leaves `buddy-overlay`
+            // alive, so the process lingers and the geometry is never persisted.
+            // Save the moment the main window is destroyed instead. The plugin
+            // keeps its cache current from Moved/Resized/CloseRequested, so
+            // writing after the window is gone still records the last geometry.
+            //
+            // The frontend takes the same path on a normal quit: its
+            // `onCloseRequested` handler calls `preventDefault()` to ask about
+            // saving the session and then destroys the window itself, so
+            // `Destroyed` is the one event guaranteed to fire on every exit.
+            {
+                use tauri::{Manager, WindowEvent};
+                use tauri_plugin_window_state::AppHandleExt;
+                if let Some(win) = _app.get_webview_window("main") {
+                    let handle = _app.handle().clone();
+                    win.on_window_event(move |event| {
+                        if matches!(event, WindowEvent::Destroyed) {
+                            let _ = handle.save_window_state(window_state_flags());
+                        }
+                    });
+                }
+            }
+
             #[cfg(debug_assertions)]
             {
                 use tauri::Manager;
