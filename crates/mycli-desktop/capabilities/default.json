@@ -16,7 +16,6 @@
     "clipboard-manager:allow-read-image",
     "updater:default",
     "dialog:allow-open",
-    "window-state:default",
     "allow-list-commands",
     "allow-add-command",
     "allow-update-command",

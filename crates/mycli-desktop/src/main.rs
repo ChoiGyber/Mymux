@@ -26,6 +26,83 @@ fn window_state_flags() -> tauri_plugin_window_state::StateFlags {
     StateFlags::SIZE | StateFlags::POSITION | StateFlags::MAXIMIZED
 }
 
+/// The usable desktop area of the monitor a window sits on, in physical pixels.
+///
+/// `Monitor::size()` is the whole panel; the taskbar (or Dock, or a panel) eats
+/// into that, and a window sized to the full panel has its bottom edge — and on
+/// Windows its resize grip — under the bar. Windows can report the real work
+/// area per monitor, so use it there and fall back to a margin elsewhere. The
+/// fallback mirrors what `commands.rs` already reserves when placing the buddy
+/// overlay, so the two agree about how much room the system furniture takes.
+#[cfg(windows)]
+fn monitor_work_area<R: tauri::Runtime>(win: &tauri::WebviewWindow<R>) -> Option<(u32, u32)> {
+    use windows_sys::Win32::Graphics::Gdi::{
+        GetMonitorInfoW, MonitorFromWindow, MONITORINFO, MONITOR_DEFAULTTONEAREST,
+    };
+    let hwnd = win.hwnd().ok()?;
+    let monitor = unsafe { MonitorFromWindow(hwnd.0 as _, MONITOR_DEFAULTTONEAREST) };
+    if monitor.is_null() {
+        return None;
+    }
+    let mut info: MONITORINFO = unsafe { std::mem::zeroed() };
+    info.cbSize = std::mem::size_of::<MONITORINFO>() as u32;
+    if unsafe { GetMonitorInfoW(monitor, &mut info) } == 0 {
+        return None;
+    }
+    let work = info.rcWork;
+    let w = work.right - work.left;
+    let h = work.bottom - work.top;
+    (w > 0 && h > 0).then(|| (w as u32, h as u32))
+}
+
+#[cfg(not(windows))]
+fn monitor_work_area<R: tauri::Runtime>(win: &tauri::WebviewWindow<R>) -> Option<(u32, u32)> {
+    let monitor = win.current_monitor().ok().flatten()?;
+    let size = monitor.size();
+    // Same reserve `commands.rs` uses to keep the buddy overlay clear of the
+    // taskbar / Dock. Scales with DPI: a fixed logical margin is more physical
+    // pixels at high scale.
+    let reserve = (56.0 * monitor.scale_factor()) as u32;
+    Some((size.width, size.height.saturating_sub(reserve)))
+}
+
+/// Shrink a freshly created window that does not fit on its monitor.
+///
+/// Tauri does not clamp the configured default size at creation, so on a small
+/// or heavily scaled display the window can open larger than the screen — its
+/// title bar reachable but its lower edge, and the controls there, off-screen.
+/// The window-state plugin does check monitor bounds, but only for geometry it
+/// restored, which leaves exactly the first run unprotected.
+///
+/// Only ever shrinks, and only on that first run: once a saved state exists the
+/// plugin has already vetted it against the current monitors, and second-guessing
+/// that would take away a size the user chose deliberately.
+fn clamp_new_window_to_work_area<R: tauri::Runtime>(win: &tauri::WebviewWindow<R>) {
+    let Some((max_w, max_h)) = monitor_work_area(win) else {
+        return;
+    };
+    let (Ok(outer), Ok(inner)) = (win.outer_size(), win.inner_size()) else {
+        return;
+    };
+    if outer.width <= max_w && outer.height <= max_h {
+        return;
+    }
+    // The fit is judged on the outer size (frame included) but `set_size` sets
+    // the *inner* size, so subtract the frame or the window lands that much
+    // over the edge.
+    let frame_w = outer.width.saturating_sub(inner.width);
+    let frame_h = outer.height.saturating_sub(inner.height);
+    let _ = win.set_size(tauri::PhysicalSize::new(
+        inner.width.min(max_w.saturating_sub(frame_w)),
+        inner.height.min(max_h.saturating_sub(frame_h)),
+    ));
+    // Re-seat it: a window that was too big is usually also parked at an offset
+    // that now pushes it off the edge.
+    if let Ok(pos) = win.outer_position() {
+        let _ = win.set_position(tauri::PhysicalPosition::new(pos.x.max(0), pos.y.max(0)));
+    }
+}
+
 fn main() {
     // Claude Code runs its statusline command on every render. Answer that and
     // exit before Tauri starts, so no window is ever created for it.
@@ -161,6 +238,22 @@ fn main() {
                 use tauri::{Manager, WindowEvent};
                 use tauri_plugin_window_state::AppHandleExt;
                 if let Some(win) = _app.get_webview_window("main") {
+                    // Only the first run needs clamping. Once a saved state
+                    // exists the plugin restored it and already checked it
+                    // against the current monitors; overriding that would take
+                    // away a size the user chose.
+                    let restored = _app
+                        .path()
+                        .app_config_dir()
+                        .map(|dir| {
+                            dir.join(tauri_plugin_window_state::DEFAULT_FILENAME)
+                                .exists()
+                        })
+                        .unwrap_or(false);
+                    if !restored {
+                        clamp_new_window_to_work_area(&win);
+                    }
+
                     let handle = _app.handle().clone();
                     win.on_window_event(move |event| {
                         if matches!(event, WindowEvent::Destroyed) {
