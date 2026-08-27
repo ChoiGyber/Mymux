@@ -165,22 +165,30 @@ fn main() {
                     win.on_window_event(move |event| {
                         if matches!(event, WindowEvent::Destroyed) {
                             let _ = handle.save_window_state(window_state_flags());
-                            // Then quit. Closing the main window is not enough on
-                            // its own: wry only raises ExitRequested once its
-                            // window map is empty, and `buddy-overlay` is created
-                            // at startup and merely shown/hidden, never destroyed.
-                            // The process would linger with no visible window,
-                            // still holding a RunEvent::Exit handler and its own
-                            // geometry cache — a later graceful exit (logoff, say)
-                            // would then overwrite a newer run's saved size.
+                            // Then quit. Closing the main window does not end the
+                            // app on its own: wry raises ExitRequested when its
+                            // window map empties, and `buddy-overlay` is created
+                            // at startup and only ever shown/hidden, so the map
+                            // never empties. The process would linger with no
+                            // visible window, still holding a RunEvent::Exit
+                            // handler and its own geometry cache — a later
+                            // graceful exit (logoff, say) would then overwrite a
+                            // newer run's saved size.
                             //
-                            // `exit` posts through the event-loop proxy rather
-                            // than dispatching inline, so calling it from this
-                            // callback does not re-enter the window map. That is
-                            // deliberate upstream: request_exit is documented as
-                            // unable to use send_user_message, and the main-thread
-                            // path for it panics outright.
-                            handle.exit(0);
+                            // Quitting outright rather than destroying the
+                            // overlay: destroying it only empties the map while
+                            // no other window happens to exist, so adding a third
+                            // window later would silently bring this bug back.
+                            // Asking the app to exit says what we mean.
+                            //
+                            // Not during an update install — that path renames
+                            // the running binary out of the way before writing
+                            // the new one, so dying mid-write can leave nothing
+                            // to launch. update_install clears the flag and, if
+                            // the window is already gone by then, exits itself.
+                            if !update::installing() {
+                                handle.exit(0);
+                            }
                         }
                     });
                 }
