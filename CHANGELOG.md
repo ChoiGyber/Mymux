@@ -8,6 +8,71 @@ For installers, see the [GitHub Releases](https://github.com/ChoiGyber/Mymux/rel
 
 ---
 
+## v0.2.0 — 2026-08-27
+
+### Fixed / 버그 수정
+
+- **The window remembers its size again / 창 크기를 다시 기억합니다.** Mymux opened at
+  the same small default every single time, and that default was tight enough that the
+  two side panels left the terminal about 300px. Split that pane and each half came out
+  at 18 columns, so the shell wrapped its output into a vertical sliver — and once a line
+  was drawn that narrow, enlarging the window did not bring it back. Size, position and
+  the maximized state now carry over between runs, and a saved position that no longer
+  lands on a connected monitor is pulled back into view.
+
+  Mymux 는 실행할 때마다 같은 작은 기본 크기로 떴고, 그 크기에서는 좌우 사이드바가 폭을
+  차지하고 나면 터미널에 300px 남짓만 남았습니다. 그 상태로 패인을 나누면 각 패인이 18칸이
+  되어 셸 출력이 세로로 한 글자씩 쌓였고, 한 번 그렇게 그려진 줄은 창을 키워도 돌아오지
+  않았습니다. 이제 크기·위치·최대화 상태가 실행 사이에 유지되고, 저장된 위치가 지금 연결된
+  모니터 밖이면 보이는 자리로 당겨 옵니다.
+
+- **Closing the window actually quits / 창을 닫으면 앱도 끝납니다.** The main window
+  going away did not end the process: a hidden companion window kept it alive, so
+  `Mymux.exe` stayed in the background with nothing on screen. That leftover process also
+  held its own copy of the window geometry, and a later shutdown could write the stale
+  size back over a newer one. An update that is downloading is the one case that still
+  holds the app open — killing it mid-install can leave a Linux AppImage with no
+  executable at all.
+
+  main 창이 사라져도 프로세스는 끝나지 않았습니다. 숨겨진 보조 창이 앱을 붙들고 있어서
+  화면에 아무것도 없는 채로 `Mymux.exe` 가 백그라운드에 남았습니다. 그렇게 남은 프로세스는
+  자기 세대의 창 크기를 들고 있어서, 나중에 종료될 때 낡은 값이 최신 크기를 덮어쓸 수도
+  있었습니다. 업데이트를 내려받는 중일 때만 예외로 앱을 붙들어 둡니다 — 설치 도중에 죽이면
+  리눅스 AppImage 는 실행 파일이 통째로 사라질 수 있기 때문입니다.
+
+### Added / 새 기능
+
+- **The Commands panel folds and moves / Commands 패널을 접고 옮길 수 있습니다.** A
+  compact toggle shrinks the panel to its essentials, and the panel can be dragged to a
+  spot that suits your layout. A floating panel now reappears where you left it without
+  needing a tab click first.
+
+  컴팩트 토글로 패널을 최소 형태로 줄일 수 있고, 원하는 자리로 끌어다 놓을 수 있습니다.
+  플로팅 상태로 둔 패널은 탭을 한 번 눌러 주지 않아도 두었던 자리에 그대로 다시 나타납니다.
+
+### Changed / 개선
+
+- **A first-run window no longer opens larger than the screen / 첫 실행 창이 화면을 넘지
+  않습니다.** The configured size is in logical pixels, so on a display scaled to 150%
+  the default could be taller than the desktop itself — reachable title bar, off-screen
+  bottom edge. The window is now measured against the monitor's work area on first run
+  and shrunk to fit, taskbar excluded. It is only ever made smaller, and a size you
+  chose yourself is left alone.
+
+  설정의 창 크기는 논리 픽셀이라, 배율이 150% 인 화면에서는 기본값이 바탕화면보다 커질 수
+  있었습니다. 제목 표시줄은 잡히는데 아래쪽이 화면 밖으로 나가는 상태입니다. 이제 첫 실행에
+  한해 모니터의 작업 영역(작업표시줄 제외)과 견주어 넘치면 맞춰 줄입니다. 늘리는 일은 없고,
+  직접 정한 크기는 건드리지 않습니다.
+
+- **Internal upkeep / 내부 정리.** The Electron runtime and its packaging tooling moved to
+  current stable releases, and an IPC permission the frontend never used was removed from
+  the app's capability set.
+
+  Electron 런타임과 패키징 도구를 현재 안정 버전으로 올렸고, 프런트엔드가 쓰지 않는 IPC 권한
+  하나를 앱 권한 목록에서 뺐습니다.
+
+---
+
 ## v0.1.59 — 2026-08-25
 
 ### Changed / 개선
