@@ -8,6 +8,40 @@ For installers, see the [GitHub Releases](https://github.com/ChoiGyber/Mymux/rel
 
 ---
 
+## v0.2.1 — 2026-08-28
+
+### Fixed / 버그 수정
+
+- **The app no longer freezes for good while you type Korean / 한글을 입력하다 앱이 영구히
+  멈추는 일이 없어졌습니다.** If the focus moved while an IME composition was in flight —
+  Alt-Tab, another window stealing focus, waking the PC from sleep — Mymux could lock up
+  permanently. The window stayed on screen and the shells inside the panes kept running,
+  so it looked like the app alone had died, and nothing short of killing the process
+  brought it back. One report had it wedged for over seven hours overnight.
+
+  The cause was in Tauri's windowing layer, not in Mymux: `tao 0.35.3` held two
+  process-wide locks across a `PeekMessage` call, and that call hands focus messages
+  straight back to the same window procedure. The window procedure then tried to take a
+  lock the very same thread was already holding, and stopped there forever — no CPU use,
+  no error, no recovery. Upstream fixed this in a later `tao`, but the Tauri release we
+  build on pins the older one, so a patched copy now lives in `vendor/tao` and a guard in
+  CI refuses to publish a build that has lost it.
+
+  IME 로 한글을 조합하는 도중 포커스가 바뀌면 — Alt-Tab, 다른 창이 포커스를 가져갈 때,
+  절전에서 복귀할 때 — Mymux 가 영구히 멈출 수 있었습니다. 창은 그대로 떠 있고 패인 안의
+  셸도 계속 살아 있어서 앱만 죽은 것처럼 보였고, 프로세스를 강제 종료하는 것 말고는 돌아올
+  방법이 없었습니다. 실제로 밤사이 7시간 넘게 잠긴 사례가 있었습니다.
+
+  원인은 Mymux 가 아니라 Tauri 의 창 라이브러리였습니다. `tao 0.35.3` 이 프로세스 전역 락
+  두 개를 `PeekMessage` 호출을 건너 쥐고 있었는데, 이 호출은 포커스 메시지를 같은 창
+  프로시저로 그대로 되돌려 줍니다. 창 프로시저는 자기 스레드가 이미 쥐고 있는 락을 다시
+  잠그려 하다 그대로 멈췄습니다 — CPU 도 안 쓰고, 에러도 없고, 회복도 없었습니다.
+  업스트림 `tao` 는 이후 버전에서 고쳤지만 우리가 쓰는 Tauri 릴리즈가 옛 버전을 고정하고
+  있어, 수정한 사본을 `vendor/tao` 에 두고 그 수정이 사라진 빌드는 게시되지 않도록 CI 에
+  검사를 걸었습니다.
+
+---
+
 ## v0.2.0 — 2026-08-27
 
 ### Fixed / 버그 수정
