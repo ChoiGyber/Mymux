@@ -3215,6 +3215,16 @@ async function createPane(parentEl, shell, args, cwd) {
     return true;
   });
 
+  // A full-screen program leaving the alternate screen has ended, so the modes it
+  // turned on end with it. This is the backstop for shells with no OSC 133 marks
+  // (a plain remote server over ssh), where markPaneReturnedToShell never runs.
+  // Only alt → normal is acted on; entering the alternate screen changes nothing.
+  try {
+    term.buffer.onBufferChange(() => {
+      if (term.buffer.active.type === "normal") clearStaleFocusReporting(term);
+    });
+  } catch {}
+
   term.onData((data) => {
     // NOTE: do NOT re-arm the task-done notification here. onData is not only
     // user typing — xterm also routes terminal-GENERATED data through it:
@@ -3227,6 +3237,16 @@ async function createPane(parentEl, shell, args, cwd) {
     // inside a mouse-tracking TUI (picking a Claude Code menu option is input
     // too). SGR press reports only; hover/move/wheel reports must not re-arm.
     const ti = terminals.get(id);
+    // Drop the focus report that a SYNTHETIC focus event just produced. The focus
+    // keeper re-applies xterm's focus state with a hand-made FocusEvent (see
+    // startFocusKeeper) and xterm answers every focus event with CSI I while mode
+    // 1004 is on — but the OS window focus never actually changed, so there is
+    // nothing to report, and the genuine event that follows already carries one.
+    // That duplicate is why the leftover showed up as `[I[I` and not a single `[I`.
+    if (data === "\x1b[I" && ti && performance.now() < (ti.suppressFocusReportUntil || 0)) {
+      ti.suppressFocusReportUntil = 0;
+      return;
+    }
     if (/\x1b\[<[0-2];\d+;\d+M/.test(data)) armNotifyCycle(id);
     // Remember the command being submitted so a restored session can offer to
     // re-run it (e.g. relaunch `claude`/`codex`). Two capture paths:
@@ -3613,6 +3633,12 @@ function startFocusKeeper() {
       // never reads the event object, so it re-applies the class / cursor / DECSET-
       // 1004 report exactly the same, with zero OS-level focus churn to disturb
       // the IME. (Fixes the "AI CLI 한글 첫 글자 깨짐 after window return" report.)
+      //
+      // "exactly the same" includes the DECSET-1004 focus report, and that one we
+      // do NOT want: nothing about the OS focus changed here, and the real focus
+      // event this is standing in for emits its own. term.onData drops the report
+      // while this window is open (#38).
+      t.suppressFocusReportUntil = performance.now() + 120;
       try { ta.dispatchEvent(new FocusEvent("focus")); } catch {}
     } else {
       try { t.term.focus(); } catch {}
@@ -4097,12 +4123,38 @@ function parseCodexFooter(text) {
   return found;
 }
 
+// Undo focus reporting (DECSET 1004) left behind by a program that has ended.
+//
+// A full-screen TUI turns the mode on and does not always turn it back off on
+// the way out — Claude Code is one. xterm keeps DEC private modes for the life
+// of the pane, so whatever runs NEXT inherits a report stream it never asked
+// for. codex is the case that surfaced this (#38): its binary carries only the
+// DISABLE sequence for 1004 and never the enable, yet it was getting CSI I on
+// every window return. It parses ESC as "cancel" and drops the rest into the
+// input box as text, so the leftover `[I` shows up where the user types.
+//
+// Turn the mode off through xterm's own parser, so the mode dies with the
+// program that asked for it and every other DEC mode stays untouched.
+function clearStaleFocusReporting(term) {
+  try {
+    if (!term) return;
+    const core = term._core && term._core.coreService;
+    const modes = core && core.decPrivateModes;
+    if (modes && !modes.sendFocus) return; // nothing left on — don't queue a write
+    term.write("\x1b[?1004l");
+  } catch {}
+}
+
 // OSC 133;D means the shell prompt has taken ownership of the pane again.
 // xterm invokes the OSC handler during term.write(), before that write's
 // scanCtxUsage callback. Drop the just-finished TUI's detector state and skip
 // that one callback so its final footer cannot immediately switch the dock
 // back to AI mode.
 function markPaneReturnedToShell(id, t) {
+  // The shell is back, so the program that owned the pane is gone with whatever
+  // it turned on. This runs before the AI-mode early return below: a plain TUI
+  // (never in AI mode) leaks the mode just as well.
+  clearStaleFocusReporting(t.term);
   t._ctxTail = "";
   t.skipCtxScanOnce = true;
   const ownedByAi = t.aiMode
