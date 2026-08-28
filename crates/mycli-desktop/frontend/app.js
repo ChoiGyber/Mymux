@@ -3014,10 +3014,16 @@ async function createPane(parentEl, shell, args, cwd) {
   // Ctrl+Click opens URLs in the in-app browser. Login URLs are the one
   // intentional exception: a normal click opens them in Mymux too, because
   // Claude Code/Codex print an OAuth URL as the action the user must take.
-  term.loadAddon(new WebLinksAddon.WebLinksAddon((event, uri) => {
-    if (event.ctrlKey || event.metaKey || isAiLoginUrl(uri)) openLinkFromTerminal(uri, isAiLoginUrl(uri));
-    else hintLinkOnce();
-  }));
+  //
+  // A terminal has TWO independent link paths and both must land here:
+  //   • WebLinksAddon — finds bare URL text with a regex.
+  //   • OSC 8 — the program marks a range as a hyperlink itself (the modern way,
+  //     and what Claude Code / codex actually emit). This one is routed by the
+  //     `linkHandler` terminal option, NOT by the addon. With no linkHandler
+  //     xterm falls back to its own default, which is a `confirm()` followed by
+  //     `window.open()` — in a Tauri webview that dialog and that popup are both
+  //     unavailable, so the click did nothing at all (#42).
+  term.loadAddon(new WebLinksAddon.WebLinksAddon(handleTerminalLink));
   term.open(termWrap);
 
   // Renderer: xterm's DEFAULT DOM renderer lays out each row's glyphs via the
@@ -5147,6 +5153,16 @@ function isAiLoginUrl(uri) {
   } catch {
     return false;
   }
+}
+
+// The single gate every terminal link click goes through, whichever path found
+// the link — the WebLinks addon's regex or an OSC 8 hyperlink the program drew
+// itself. Keeping one gate means the two cannot drift apart: a plain click still
+// belongs to the running TUI (menus, buttons), Ctrl/Cmd+Click opens the link, and
+// an auth URL opens regardless because that IS the action the user was asked for.
+function handleTerminalLink(event, uri) {
+  if (event.ctrlKey || event.metaKey || isAiLoginUrl(uri)) openLinkFromTerminal(uri, isAiLoginUrl(uri));
+  else hintLinkOnce();
 }
 
 // Ctrl+Click routes into the in-app browser tab when the Browser feature is
@@ -7886,6 +7902,10 @@ function createXterm() {
     fontWeight: 300,
     fontWeightBold: 500,
     theme: terminalTheme(),
+    // OSC 8 hyperlinks (what modern CLIs emit) are routed here, not through the
+    // WebLinks addon. Without this xterm uses its own default — confirm() then
+    // window.open() — which a Tauri webview silently swallows (#42).
+    linkHandler: { activate: handleTerminalLink },
   });
 }
 
