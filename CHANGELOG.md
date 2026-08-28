@@ -8,6 +8,33 @@ For installers, see the [GitHub Releases](https://github.com/ChoiGyber/Mymux/rel
 
 ---
 
+## v0.2.3 — 2026-08-29
+
+### Fixed / 버그 수정
+
+- **터미널의 링크를 눌렀을 때 아무 일도 안 일어나던 문제를 고쳤습니다 / Clicking a link in the
+  terminal no longer does nothing.** Ctrl+클릭을 해도 내장 브라우저도, 밖의 브라우저도, 오류 안내도
+  뜨지 않았습니다.
+
+  터미널에서 링크가 만들어지는 길은 두 개입니다. 하나는 화면에 찍힌 URL 글자를 찾아내는 길이고,
+  다른 하나는 프로그램이 스스로 "여기부터 여기까지가 링크다" 라고 표시하는 길(OSC 8)입니다.
+  요즘 CLI 는 뒤쪽을 씁니다. Mymux 는 앞쪽에만 처리기를 달아 둔 탓에, 뒤쪽 링크는 터미널
+  라이브러리의 기본 동작으로 흘렀고 그 기본 동작은 이 앱에서 뜨지 않는 확인 창을 여는 것이어서
+  클릭이 통째로 사라졌습니다. 이제 두 길이 같은 처리기를 지나갑니다.
+
+  A terminal has two independent paths for links: one finds bare URL text on screen, the other
+  is a hyperlink the program marks out itself (OSC 8). Modern CLIs use the latter. Mymux had a
+  handler on the first path only, so the second fell through to the terminal library's own
+  default — a confirmation dialog this app never shows — and the click vanished entirely.
+  Both paths now go through the same handler.
+
+  평범한 클릭은 여전히 실행 중인 프로그램의 몫이고, 링크를 여는 것은 Ctrl+클릭입니다.
+  A plain click still belongs to the running program; Ctrl+Click opens the link.
+
+  ([#42](https://github.com/ChoiGyber/Mymux/issues/42))
+
+---
+
 ## v0.2.2 — 2026-08-28
 
 ### Fixed / 버그 수정
