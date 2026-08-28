@@ -8,6 +8,38 @@ For installers, see the [GitHub Releases](https://github.com/ChoiGyber/Mymux/rel
 
 ---
 
+## v0.2.2 — 2026-08-28
+
+### Fixed / 버그 수정
+
+- **codex 입력창에 저절로 찍히던 `[I` 가 사라졌습니다 / No more stray `[I` typed into the
+  codex prompt.** Switching away to another window — or moving between sessions — and coming
+  back would leave characters in the codex input box that nobody typed. They were the remains
+  of a terminal *focus report*: an escape sequence the terminal sends to say "the window got
+  focus again". codex never asked for those reports (its binary does not even contain the
+  sequence that turns them on), but it was receiving them anyway, and it printed what it could
+  not interpret straight into the prompt.
+
+  The reports were switched on by ConPTY, the Windows console layer, at the moment each pane
+  is created — so every pane was born with them enabled and nothing ever switched them back
+  off. Mymux now turns them off when the shell prompt takes the pane back, and again when a
+  full-screen program leaves the alternate screen. Programs that genuinely ask for focus
+  reports keep receiving them exactly as before.
+
+  창을 다른 곳으로 옮겼다 돌아오거나 세션 사이를 오가면, 입력한 적 없는 글자가 codex 입력창에
+  남아 있었습니다. 터미널이 "창이 다시 포커스를 받았다" 고 알리는 *포커스 리포트* 의 잔해였습니다.
+  codex 는 그 리포트를 요청한 적이 없는데(그걸 켜는 시퀀스가 실행 파일에 아예 없습니다) 계속
+  받고 있었고, 해석하지 못한 부분을 그대로 입력창에 찍었습니다.
+
+  리포트를 켜는 것은 Windows 콘솔 계층인 ConPTY 였고, 패인이 만들어지는 순간에 켰습니다. 그래서
+  모든 패인이 켜진 상태로 태어났고 아무도 다시 끄지 않았습니다. 이제 셸 프롬프트가 패인을 되찾을
+  때, 그리고 전체 화면 프로그램이 대체 화면에서 나올 때 정리합니다. 포커스 리포트를 정말로
+  요청한 프로그램은 예전과 똑같이 받습니다.
+
+  ([#38](https://github.com/ChoiGyber/Mymux/issues/38))
+
+---
+
 ## v0.2.1 — 2026-08-28
 
 ### Fixed / 버그 수정
