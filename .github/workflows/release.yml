@@ -47,6 +47,12 @@ jobs:
       - name: Check macOS WebKit source invariants
         run: node scripts/check-macos-gotchas.mjs
 
+      # vendor/tao carries the reentrancy fix for the IME/focus deadlock (issue #36).
+      # Shipping a build that lost it means a Windows app that freezes for good, so
+      # refuse to publish before checking.
+      - name: Check vendored tao deadlock fix is intact
+        run: node scripts/check-vendored-tao.mjs
+
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
 
