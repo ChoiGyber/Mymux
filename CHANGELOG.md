@@ -8,6 +8,43 @@ For installers, see the [GitHub Releases](https://github.com/ChoiGyber/Mymux/rel
 
 ---
 
+## v0.2.4 — 2026-09-01
+
+### Fixed / 버그 수정
+
+- **Claude Code 패인에서 답변을 드래그해도 선택이 안 되던 문제를 고쳤습니다 / Dragging over a
+  Claude Code answer selects text again.** 같은 앱인데 Codex 패인은 드래그 복사가 잘 되고 Claude
+  Code 패인만 드래그 자체가 되지 않았습니다. 특정 PC 에서만 그런 것처럼 보였지만, PC 차이가 아니라
+  그 순간 Claude Code 가 마우스 트래킹을 켰는지의 차이였습니다.
+
+  프로그램이 마우스 트래킹을 켜면 터미널은 모든 버튼 동작을 그 프로그램에 넘깁니다. 그래서 드래그가
+  선택을 만들지 못했고, 선택이 없으니 자동 복사도 돌지 않았습니다. 게다가 그 드래그는 프로그램에
+  시작 지점과 끝 지점이 다른 **엉뚱한 클릭 한 번**으로 전달되고 있었습니다. 이제 프로그램이 클릭만
+  요청한 경우(모션은 요청하지 않은 경우)에 한해 드래그를 터미널이 되찾아 선택으로 씁니다. vim 이나
+  htop 처럼 드래그 자체를 요청한 프로그램은 예전 그대로 동작하고, 클릭은 어느 경우에도 프로그램에
+  그대로 전달되므로 Claude Code 메뉴 선택도 계속 됩니다.
+
+  A program that turns on mouse tracking receives every button action, so a drag produced no
+  selection — and with no selection the auto-copy never ran. Worse, that drag reached the program
+  as a stray click whose press and release were at different columns. The terminal now reclaims
+  the drag, but only when the program asked for clicks alone and never for motion. Programs that
+  did ask for motion (vim's mouse visual select, htop) are untouched, and clicks still reach the
+  program in every case, so picking a Claude Code menu option keeps working.
+
+  맥에서는 텍스트를 강제로 선택하는 키가 Shift 가 아니라 Option 이고 그 동작이 기본으로 꺼져 있어,
+  같은 증상이 있으면서 우회 방법조차 없었습니다. 이번에 함께 켜서 맥에서도 드래그 선택이 되고,
+  Option+드래그로 직접 선택하는 것도 가능해졌습니다 — 다만 맥에서는 이제 vim 같은 화면에서도
+  Option+드래그가 터미널 선택이 됩니다.
+
+  On macOS the modifier that forces a selection is Option, not Shift, and it was off by default —
+  so the Mac had the same symptom with no workaround at all. It is now enabled, which both fixes
+  the drag and gives Mac users Option+drag to select directly, at the cost of Option+drag no
+  longer reaching a motion-tracking TUI there.
+
+  ([#45](https://github.com/ChoiGyber/Mymux/issues/45))
+
+---
+
 ## v0.2.3 — 2026-08-29
 
 ### Fixed / 버그 수정
