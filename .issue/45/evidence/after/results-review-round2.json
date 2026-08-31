@@ -1,0 +1,63 @@
+{
+  "phase": "after",
+  "scope": "2차 비판 검토(itachi-merge-critic, VERDICT=revise)가 남긴 지적을 코드 수정 후 실측",
+  "fixes": [
+    "창 포커스 상실 시 대기 중이던 press 를 버리지 않고 클릭으로 전달한다 — 1차 수정에서는 클릭이 통째로 사라졌고, 이 저장소 메모리에 기록된 그 PC 의 Veraport 가 몇 초마다 포커스를 훔치므로 실제로 클릭이 무작위로 증발할 수 있었다",
+    "대기 press 를 패인 스코프에서 모듈 전역으로 옮겨, 한 패인에 고아로 남은 press 가 다른 패인의 press 뒤에도 살아남지 못하게 했다"
+  ],
+  "measurements": {
+    "blurMidPressDeliversClick": {
+      "expect": "누른 채 포커스를 잃으면 클릭이 프로그램에 전달된다",
+      "reports": ["[<0;1;3M", "[<0;1;3m"],
+      "selection": "",
+      "verdict": "PASS — press/release 쌍이 전달된다. 1차 수정에서는 여기가 0건(클릭 증발)이었다"
+    },
+    "afterBlurRelease": {
+      "expect": "뒤늦게 도착한 진짜 mouseup 이 클릭을 한 번 더 만들지 않는다",
+      "reports": ["[<0;1;3M", "[<0;1;3m"],
+      "verdict": "PASS — 리포트가 늘지 않았다(중복 클릭 없음)"
+    },
+    "dragAfterBlur": {
+      "selection": "I answer: drag this line to co",
+      "copied": ["I answer", "I answer: drag this line to co"],
+      "verdict": "PASS — blur 처리 뒤에도 같은 패인의 정상 드래그가 그대로 동작한다"
+    },
+    "x10Drag": {
+      "expect": "?9(x10) 도 되찾기 대상이므로 드래그가 선택돼야 한다",
+      "mode": "x10",
+      "selection": "I answer: drag this line to co",
+      "copied": ["I answer"],
+      "reports": [],
+      "verdict": "PASS — 1차까지 한 번도 측정하지 않았던 모드다"
+    },
+    "x10Click": {
+      "expect": "x10 은 release 를 아예 리포트하지 않으므로 press 1건만 나가야 한다",
+      "mode": "x10",
+      "reports": ["[<0;8;3M"],
+      "verdict": "PASS — press 1건. x10 에서는 이 press 가 버튼을 뗄 때 도착하므로 지연이 홀드 시간 전체다(코드 주석과 PR 에 명시)"
+    },
+    "macMotionTuiPlainDrag": {
+      "expect": "맥에서도 모션 트래킹 TUI 의 일반 드래그는 그대로 TUI 로 간다",
+      "mode": "drag",
+      "buffer": "alternate",
+      "selection": "",
+      "reportCount": 26,
+      "verdict": "PASS"
+    },
+    "macMotionTuiOptionDrag": {
+      "expect": "측정해서 사실을 기록한다 — 가정하지 않는다",
+      "mode": "drag",
+      "selection": "I answer: drag this line to copy i",
+      "copied": ["I answer: ", "I answer: drag this line to copy i"],
+      "reports": [],
+      "verdict": "의도된 동작 변경 — `macOptionClickForcesSelection` 은 전역 옵션이라 맥에서는 ?1002/?1003 TUI 안에서도 Option+드래그가 TUI 대신 터미널 선택을 만든다. Terminal.app·iTerm2 와 같은 관례지만 이번 변경의 부수 효과이므로 '모션 TUI 에 회귀 없음' 주장은 **수식키 없는 드래그에 한정**된다"
+    },
+    "orphanIsolation": {
+      "expect": "다른 패인을 누른 뒤 앞 패인의 옛 좌표가 재생되지 않는다",
+      "paneA": { "selection": "" },
+      "paneB": { "selection": "I answer: drag this line to co" },
+      "pendingDragReclaimAfterwards": null,
+      "verdict": "PASS — A 에는 선택이 생기지 않고 대기 press 도 남지 않았다 (copied 는 하네스에서 패인 구분 없이 모으는 배열이라 양쪽 읽기에 같은 값이 보인다)"
+    }
+  }
+}
