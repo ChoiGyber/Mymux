@@ -3472,6 +3472,63 @@ async function createPane(parentEl, shell, args, cwd) {
   // webview's native HTML5 drag, which would otherwise hijack a drag that begins
   // over terminal text and stop xterm's selection — suppress it inside the pane.
   termWrap.addEventListener("dragstart", (e) => e.preventDefault());
+  // ...and a drag must still select once the program turns mouse tracking ON.
+  // xterm hands every button event to the program in that state and only lets
+  // Shift force a selection through, so dragging over a Claude Code answer
+  // selects nothing (and with no selection the auto-copy below never runs) while
+  // the program receives a stray click: press at the drag's start column,
+  // release at its end. Reclaim the drag — but only in the CLICK-tracking modes
+  // (?9 x10 / ?1000 vt200), where the program asked for press+release and never
+  // for motion, so a drag carries nothing it could act on anyway. ?1002/?1003
+  // programs (vim's mouse visual-select, htop) DID ask for motion; leave them
+  // alone, the same way the wheel handler above leaves alt-screen TUIs alone.
+  // Which mode is in play decides this, not which buffer is on screen: Claude
+  // Code turns on ?1000h in both.
+  const CLICK_ONLY_TRACKING = new Set(["x10", "vt200"]);
+  const DRAG_SELECT_SLOP_PX = 4; // Windows SM_CXDRAG — below this it's a click
+  termWrap.addEventListener("mousedown", (e) => {
+    if (e.__mymuxReplay) return; // our own replay, on its way to xterm
+    if (e.button !== 0 || e.shiftKey || e.ctrlKey || e.altKey || e.metaKey) return;
+    if (!CLICK_ONLY_TRACKING.has(term.modes.mouseTrackingMode || "none")) return;
+    // Swallow the press: a click and a drag are indistinguishable until the
+    // mouse moves (or doesn't), and replaying it later is what keeps both
+    // meanings intact.
+    e.preventDefault();
+    e.stopPropagation();
+    const target = e.target, startX = e.clientX, startY = e.clientY, detail = e.detail;
+    const replay = (type, x, y, extra) => {
+      const ev = new MouseEvent(type, Object.assign({
+        bubbles: true, cancelable: true, view: window, detail,
+        clientX: x, clientY: y, button: 0, buttons: type === "mouseup" ? 0 : 1,
+      }, extra || {}));
+      ev.__mymuxReplay = true;
+      target.dispatchEvent(ev);
+    };
+    const stop = () => {
+      document.removeEventListener("mousemove", onMove, true);
+      document.removeEventListener("mouseup", onUp, true);
+    };
+    const onMove = (me) => {
+      if (!(me.buttons & 1)) { stop(); return; } // released off-window: forget it
+      if (Math.abs(me.clientX - startX) < DRAG_SELECT_SLOP_PX &&
+          Math.abs(me.clientY - startY) < DRAG_SELECT_SLOP_PX) return;
+      stop();
+      // Shift routes the press into xterm's own selection, which then owns the
+      // rest of the drag through the document listeners it installs itself.
+      replay("mousedown", startX, startY, { shiftKey: true });
+      replay("mousemove", me.clientX, me.clientY);
+    };
+    const onUp = (ue) => {
+      stop();
+      // Never moved — a real click. Hand the program the press/release pair it
+      // would have gotten, just a few ms late (picking a Claude Code menu
+      // option has to keep working).
+      replay("mousedown", startX, startY);
+      replay("mouseup", ue.clientX, ue.clientY);
+    };
+    document.addEventListener("mousemove", onMove, true);
+    document.addEventListener("mouseup", onUp, true);
+  }, true);
   // Finishing a drag-select copies automatically (PuTTY-style) — no Ctrl+C
   // needed. onSelectionChange fires on every drag step, so let it settle before
   // touching the clipboard; an empty selection (a clear) is skipped.
