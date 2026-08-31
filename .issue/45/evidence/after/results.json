@@ -1,0 +1,53 @@
+{
+  "phase": "after",
+  "capturedWith": "frontend verification harness (Tauri IPC stubbed, real frontend/ served from the worktree, Playwright trusted mouse input) — identical script to the before run",
+  "claudeCodeProbe": "installed claude.exe v2.1.236 contains ?1000h/?1006h/?1049h and no ?1002h/?1003h — Claude Code asks for CLICK tracking only",
+  "panes": { "A": "Claude Code repro (?1000h ?1006h)", "B": "Codex repro (no tracking)" },
+  "results": {
+    "dragOnTrackingPane": {
+      "expect": "drag selects text and auto-copies",
+      "selection": "I answer: drag this line to co",
+      "copied": ["I answer", "I answer: drag this line to co"],
+      "reports": [],
+      "mode": "vt200",
+      "buffer": "normal",
+      "verdict": "FIXED — was empty selection + a stray click to the program; now selects, auto-copies, and sends nothing"
+    },
+    "clickOnTrackingPane": {
+      "expect": "click still reaches the program",
+      "selection": "",
+      "reports": ["[<0;8;4M", "[<0;8;4m"],
+      "mode": "vt200",
+      "verdict": "PASS — byte-identical to the before run (Claude Code menu clicks keep working)"
+    },
+    "shiftDragOnTrackingPane": {
+      "expect": "documented xterm workaround still selects",
+      "selection": "I answer: drag this line to co",
+      "copied": ["I answer"],
+      "reports": [],
+      "mode": "vt200",
+      "verdict": "PASS (the copy list is shorter only because the 120ms debounce coalesced)"
+    },
+    "dragOnPlainPane": {
+      "expect": "no tracking -> normal selection",
+      "selection": "I answer: drag this line to co",
+      "copied": ["I answe", "I answer: drag this line to co"],
+      "reports": [],
+      "mode": "none",
+      "verdict": "PASS — untouched"
+    },
+    "dragOnMotionTrackingTui": {
+      "expect": "vim-like TUI that asked for motion keeps receiving the drag",
+      "selection": "",
+      "reportCount": 26,
+      "mode": "drag",
+      "buffer": "alternate",
+      "verdict": "PASS — same 26 reports as before, no selection stolen from the TUI"
+    }
+  },
+  "staticGuards": {
+    "scripts/check-macos-gotchas.mjs": "13/13 pass",
+    "scripts/check-vendored-tao.mjs": "6/6 pass"
+  },
+  "notResolvedHere": "The affected Windows machine was not available; this is harness evidence, not a real-machine confirmation."
+}
