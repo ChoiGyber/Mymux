@@ -2982,6 +2982,12 @@ function submittedCommandLine(ti) {
   return "";
 }
 
+// At most one swallowed mouse press is outstanding at a time, across every
+// pane — a press orphaned in one pane must not survive a press in another, or
+// its stale coordinates get replayed into the pane it came from. Pane-scoped
+// state cannot express that, so this lives here.
+let pendingDragReclaim = null;
+
 async function createPane(parentEl, shell, args, cwd) {
   const paneEl = document.createElement("div");
   paneEl.className = "pane-leaf";
@@ -3484,10 +3490,13 @@ async function createPane(parentEl, shell, args, cwd) {
   // alone, the same way the wheel handler above leaves alt-screen TUIs alone.
   // Which mode is in play decides this, not which buffer is on screen: Claude
   // Code turns on ?1000h in both.
-  // One trade-off is deliberate: the program now hears the press at RELEASE
-  // time, as a press/release pair, instead of at push time. Under click-only
-  // tracking it has no motion to miss in between, so the only thing that can
-  // notice is a program that paints a pressed state while the button is held.
+  // One trade-off is deliberate: the program hears the press when the button
+  // comes UP, as a press/release pair, instead of when it goes down. Click-only
+  // tracking has no motion to miss in between, so what changes is timing, not
+  // content — a program that paints a held-down state, or measures how long the
+  // button was held (hold-to-repeat, long-press), sees a 0ms click instead. In
+  // ?9 (x10) the delay is the whole hold, since that mode never reports a
+  // release at all and the press is all the program will ever get.
   const CLICK_ONLY_TRACKING = new Set(["x10", "vt200"]);
   const DRAG_SELECT_SLOP_PX = 4; // Windows SM_CXDRAG — below this it's a click
   // The modifier that makes xterm force a selection is platform-specific:
@@ -3495,12 +3504,11 @@ async function createPane(parentEl, shell, args, cwd) {
   // which createXterm turns on). Replaying the wrong one on a Mac would hand the
   // press straight back to the program and fix nothing.
   const FORCE_SELECT_MODIFIER = IS_MAC ? { altKey: true } : { shiftKey: true };
-  let cancelPendingReclaim = null; // at most one press is pending per pane
   termWrap.addEventListener("mousedown", (e) => {
     if (e.__mymuxReplay) return; // our own replay, on its way to xterm
     if (e.button !== 0 || e.shiftKey || e.ctrlKey || e.altKey || e.metaKey) return;
     if (!CLICK_ONLY_TRACKING.has(term.modes.mouseTrackingMode || "none")) return;
-    if (cancelPendingReclaim) cancelPendingReclaim(); // a press we never saw end
+    if (pendingDragReclaim) pendingDragReclaim(); // a press some pane never saw end
     // Swallow the press: a click and a drag are indistinguishable until the
     // mouse moves (or doesn't), and replaying it later is what keeps both
     // meanings intact.
@@ -3516,11 +3524,19 @@ async function createPane(parentEl, shell, args, cwd) {
       target.dispatchEvent(ev);
     };
     const stop = () => {
-      cancelPendingReclaim = null;
+      if (pendingDragReclaim === stop) pendingDragReclaim = null;
       document.removeEventListener("mousemove", onMove, true);
       document.removeEventListener("mouseup", onUp, true);
       document.removeEventListener("pointercancel", stop, true);
-      window.removeEventListener("blur", stop);
+      window.removeEventListener("blur", onBlur);
+    };
+    // Hand the program the press/release pair it would have gotten (picking a
+    // Claude Code menu option has to keep working).
+    const clickThrough = (x, y) => {
+      stop();
+      if (!termWrap.isConnected) return;
+      replay("mousedown", startX, startY);
+      replay("mouseup", x, y);
     };
     const onMove = (me) => {
       // A press can end without a mouseup ever arriving — released outside the
@@ -3538,20 +3554,18 @@ async function createPane(parentEl, shell, args, cwd) {
       replay("mousedown", startX, startY, FORCE_SELECT_MODIFIER);
       replay("mousemove", me.clientX, me.clientY);
     };
-    const onUp = (ue) => {
-      stop();
-      if (!termWrap.isConnected) return;
-      // Never moved — a real click. Hand the program the press/release pair it
-      // would have gotten, just a few ms late (picking a Claude Code menu
-      // option has to keep working).
-      replay("mousedown", startX, startY);
-      replay("mouseup", ue.clientX, ue.clientY);
-    };
-    cancelPendingReclaim = stop;
+    const onUp = (ue) => clickThrough(ue.clientX, ue.clientY); // never moved: a click
+    // Losing focus mid-press must still deliver the click. Dropping it would
+    // make clicks vanish at random on machines where something steals focus on
+    // a timer — WIZVERA Veraport does exactly that here, every few seconds
+    // (see the focus-keeper notes) — and before this handler existed the
+    // program got that press regardless of focus.
+    const onBlur = () => clickThrough(startX, startY);
+    pendingDragReclaim = stop;
     document.addEventListener("mousemove", onMove, true);
     document.addEventListener("mouseup", onUp, true);
-    document.addEventListener("pointercancel", stop, true);
-    window.addEventListener("blur", stop); // focus left mid-press: the press is gone
+    document.addEventListener("pointercancel", stop, true); // the gesture is void: no click
+    window.addEventListener("blur", onBlur);
   }, true);
   // Finishing a drag-select copies automatically (PuTTY-style) — no Ctrl+C
   // needed. onSelectionChange fires on every drag step, so let it settle before
