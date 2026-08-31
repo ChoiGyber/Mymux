@@ -1,0 +1,15 @@
+{
+  "phase": "before",
+  "scope": "macOS path — measured on the UNPATCHED tree (origin/main, served from .issue/merge/base)",
+  "why": "merge 검토에서 itachi-merge-critic 이 지적: xterm 은 macOS 에서 Shift 가 아니라 Option + macOptionClickForcesSelection 을 본다. Windows 측정만으로는 맥에서 고쳐졌는지 알 수 없다.",
+  "howMeasured": "Playwright 컨텍스트에서 navigator.platform 을 'MacIntel' 로 스푸핑 — xterm 의 Browser.isMac(=[Macintosh,MacIntel,MacPPC,Mac68K].includes(platform))과 app.js 의 IS_MAC 이 동시에 참이 된다",
+  "result": {
+    "isMacApp": true,
+    "macOptionClickForcesSelection": false,
+    "mode": "vt200",
+    "selection": "",
+    "copied": [],
+    "reports": ["[<0;1;3M", "[<0;36;3m"],
+    "verdict": "FAIL — 맥에서도 Windows 와 똑같이 선택이 만들어지지 않고, 드래그가 프로그램에 엉뚱한 클릭(시작 열 press, 끝 열 release)으로 전달된다. 맥에는 Shift 우회로조차 없다(macOptionClickForcesSelection 이 꺼져 있어 Option 도 안 먹는다)."
+  }
+}
