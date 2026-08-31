@@ -3484,12 +3484,23 @@ async function createPane(parentEl, shell, args, cwd) {
   // alone, the same way the wheel handler above leaves alt-screen TUIs alone.
   // Which mode is in play decides this, not which buffer is on screen: Claude
   // Code turns on ?1000h in both.
+  // One trade-off is deliberate: the program now hears the press at RELEASE
+  // time, as a press/release pair, instead of at push time. Under click-only
+  // tracking it has no motion to miss in between, so the only thing that can
+  // notice is a program that paints a pressed state while the button is held.
   const CLICK_ONLY_TRACKING = new Set(["x10", "vt200"]);
   const DRAG_SELECT_SLOP_PX = 4; // Windows SM_CXDRAG — below this it's a click
+  // The modifier that makes xterm force a selection is platform-specific:
+  // Shift everywhere, Option on macOS (paired with macOptionClickForcesSelection,
+  // which createXterm turns on). Replaying the wrong one on a Mac would hand the
+  // press straight back to the program and fix nothing.
+  const FORCE_SELECT_MODIFIER = IS_MAC ? { altKey: true } : { shiftKey: true };
+  let cancelPendingReclaim = null; // at most one press is pending per pane
   termWrap.addEventListener("mousedown", (e) => {
     if (e.__mymuxReplay) return; // our own replay, on its way to xterm
     if (e.button !== 0 || e.shiftKey || e.ctrlKey || e.altKey || e.metaKey) return;
     if (!CLICK_ONLY_TRACKING.has(term.modes.mouseTrackingMode || "none")) return;
+    if (cancelPendingReclaim) cancelPendingReclaim(); // a press we never saw end
     // Swallow the press: a click and a drag are indistinguishable until the
     // mouse moves (or doesn't), and replaying it later is what keeps both
     // meanings intact.
@@ -3505,29 +3516,42 @@ async function createPane(parentEl, shell, args, cwd) {
       target.dispatchEvent(ev);
     };
     const stop = () => {
+      cancelPendingReclaim = null;
       document.removeEventListener("mousemove", onMove, true);
       document.removeEventListener("mouseup", onUp, true);
+      document.removeEventListener("pointercancel", stop, true);
+      window.removeEventListener("blur", stop);
     };
     const onMove = (me) => {
-      if (!(me.buttons & 1)) { stop(); return; } // released off-window: forget it
+      // A press can end without a mouseup ever arriving — released outside the
+      // window, or the pane closed under it. Leaving the pair attached would
+      // let a LATER drag replay this dead press's coordinates into a disposed
+      // terminal, silently overwriting the clipboard through the auto-copy
+      // below, so every exit checks that the press and the pane are both alive.
+      if (!(me.buttons & 1) || !termWrap.isConnected) { stop(); return; }
       if (Math.abs(me.clientX - startX) < DRAG_SELECT_SLOP_PX &&
           Math.abs(me.clientY - startY) < DRAG_SELECT_SLOP_PX) return;
       stop();
-      // Shift routes the press into xterm's own selection, which then owns the
-      // rest of the drag through the document listeners it installs itself.
-      replay("mousedown", startX, startY, { shiftKey: true });
+      // The forcing modifier routes the press into xterm's own selection, which
+      // then owns the rest of the drag through the document listeners it
+      // installs itself.
+      replay("mousedown", startX, startY, FORCE_SELECT_MODIFIER);
       replay("mousemove", me.clientX, me.clientY);
     };
     const onUp = (ue) => {
       stop();
+      if (!termWrap.isConnected) return;
       // Never moved — a real click. Hand the program the press/release pair it
       // would have gotten, just a few ms late (picking a Claude Code menu
       // option has to keep working).
       replay("mousedown", startX, startY);
       replay("mouseup", ue.clientX, ue.clientY);
     };
+    cancelPendingReclaim = stop;
     document.addEventListener("mousemove", onMove, true);
     document.addEventListener("mouseup", onUp, true);
+    document.addEventListener("pointercancel", stop, true);
+    window.addEventListener("blur", stop); // focus left mid-press: the press is gone
   }, true);
   // Finishing a drag-select copies automatically (PuTTY-style) — no Ctrl+C
   // needed. onSelectionChange fires on every drag step, so let it settle before
@@ -7963,6 +7987,14 @@ function createXterm() {
     // WebLinks addon. Without this xterm uses its own default — confirm() then
     // window.open() — which a Tauri webview silently swallows (#42).
     linkHandler: { activate: handleTerminalLink },
+    // What lets a selection override a program that has mouse tracking on.
+    // xterm asks shouldForceSelection(), which is Shift everywhere EXCEPT macOS,
+    // where it is Option AND this option — off by default, so on a Mac there was
+    // no way at all to select inside a tracking program. Turning it on gives the
+    // Mac the same escape hatch every other platform already had (and is what
+    // Terminal.app/iTerm2 train the fingers to expect), and it is what the drag
+    // reclaim in createPane replays to start a selection (#45).
+    macOptionClickForcesSelection: true,
   });
 }
 
