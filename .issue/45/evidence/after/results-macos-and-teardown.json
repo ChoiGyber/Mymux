@@ -1,0 +1,38 @@
+{
+  "phase": "after",
+  "scope": "merge 검토(itachi-merge-critic)가 block 을 내며 요구한 두 축 — macOS 경로와 리스너 정리",
+  "macOS": {
+    "howMeasured": "before/results-macos.json 과 같은 방식(navigator.platform='MacIntel' 스푸핑). 수정 전은 origin/main 트리(포트 8460), 수정 후는 이 워크트리(포트 8459)로 각각 측정",
+    "result": {
+      "isMacApp": true,
+      "macOptionClickForcesSelection": true,
+      "mode": "vt200",
+      "selection": "I answer: drag this line to copy i",
+      "copied": ["I answer: drag this line to copy i"],
+      "reports": []
+    },
+    "verdict": "FIXED — 맥에서도 드래그가 선택을 만들고 자동 복사되며, 프로그램으로 나가는 오전달이 0 이 됐다. 첫 구현은 Shift 만 재전달해 맥에서는 아무것도 고치지 못했고, 이 측정이 그것을 잡아냈다."
+  },
+  "teardown": {
+    "why": "mousedown 을 삼킨 뒤 mouseup 이 오지 않는 경로(창 밖에서 뗌, 패인이 눌린 채 사라짐)에서 document 리스너가 남으면, 나중의 드래그가 죽은 좌표로 replay 되어 클립보드를 조용히 덮어쓸 수 있다는 지적",
+    "blurMidPress": {
+      "selection": "",
+      "reports": [],
+      "copied": [],
+      "verdict": "PASS — 누른 채 창 포커스를 잃으면 대기 중이던 press 를 버린다. 선택도, 프로그램으로 나간 리포트도 없다"
+    },
+    "dragAfterBlur": {
+      "selection": "I answer: drag this line to co",
+      "copied": ["I answer: drag this line to co"],
+      "reports": [],
+      "verdict": "PASS — 위 취소 뒤에도 같은 패인에서 정상 드래그가 그대로 동작한다(취소가 영구 손상을 남기지 않는다)"
+    },
+    "closeMidPress": {
+      "paneGone": true,
+      "writesAfterClose": 0,
+      "copiedAfterClose": 0,
+      "pageErrors": [],
+      "verdict": "PASS — 버튼을 누른 채 패인을 닫고 드래그·release 를 이어가도 죽은 터미널로 replay 되지 않고, PTY 로 나간 바이트도 클립보드 변경도 예외도 없다"
+    }
+  }
+}
