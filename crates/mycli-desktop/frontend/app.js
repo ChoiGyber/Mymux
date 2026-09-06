@@ -3515,7 +3515,10 @@ async function createPane(parentEl, shell, args, cwd) {
   // Same rule as the drag reclaim below: only in the CLICK-tracking modes. A
   // ?1002/?1003 program (vim, htop) asked for every button and may have its own
   // right-click gesture, so it keeps receiving them. A modifier-held right-click
-  // is left alone as well, as the program's own escape hatch.
+  // is left alone as well — measured: Ctrl+right-click still reaches the program
+  // as ESC[<18;… before and after. Shift is the exception, and not one this code
+  // creates: xterm spends Shift on shouldForceSelection() and never reports that
+  // press to the program, with or without this branch.
   termWrap.addEventListener("mousedown", (e) => {
     if (e.__mymuxReplay) return; // our own replay, on its way to xterm
     if (e.button === 2 && !(e.shiftKey || e.ctrlKey || e.altKey || e.metaKey) &&
