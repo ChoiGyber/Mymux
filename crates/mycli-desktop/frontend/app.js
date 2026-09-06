@@ -3504,8 +3504,31 @@ async function createPane(parentEl, shell, args, cwd) {
   // which createXterm turns on). Replaying the wrong one on a Mac would hand the
   // press straight back to the program and fix nothing.
   const FORCE_SELECT_MODIFIER = IS_MAC ? { altKey: true } : { shiftKey: true };
+  // Right-click belongs to the terminal, not to the program (#47). Claude Code
+  // reads the OS clipboard itself the moment it receives a right-button report
+  // and types it into its prompt, so with the contextmenu handler below also
+  // pasting, one right-click pasted twice. Keeping the report from leaving is
+  // what makes Mymux the single paste path — and it restores copy-on-right-click
+  // too, because xterm clears the selection when it hands a press to a program,
+  // which left the contextmenu handler with nothing to copy and pasting instead.
+  //
+  // Same rule as the drag reclaim below: only in the CLICK-tracking modes. A
+  // ?1002/?1003 program (vim, htop) asked for every button and may have its own
+  // right-click gesture, so it keeps receiving them. A modifier-held right-click
+  // is left alone as well — measured: Ctrl+right-click still reaches the program
+  // as ESC[<18;… before and after. Shift is the exception, and not one this code
+  // creates: xterm spends Shift on shouldForceSelection() and never reports that
+  // press to the program, with or without this branch.
   termWrap.addEventListener("mousedown", (e) => {
     if (e.__mymuxReplay) return; // our own replay, on its way to xterm
+    if (e.button === 2 && !(e.shiftKey || e.ctrlKey || e.altKey || e.metaKey) &&
+        CLICK_ONLY_TRACKING.has(term.modes.mouseTrackingMode || "none")) {
+      // Swallow the press only. `contextmenu` still fires (it is a separate
+      // event, not this one's default action) and does the copy/paste.
+      e.preventDefault();
+      e.stopPropagation();
+      return;
+    }
     if (e.button !== 0 || e.shiftKey || e.ctrlKey || e.altKey || e.metaKey) return;
     if (!CLICK_ONLY_TRACKING.has(term.modes.mouseTrackingMode || "none")) return;
     if (pendingDragReclaim) pendingDragReclaim(); // a press some pane never saw end
