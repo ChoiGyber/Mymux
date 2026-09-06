@@ -2,7 +2,7 @@
 
 | 전 | 후 |
 | --- | --- |
-| ![변경 전 - 왼쪽 Claude Code 재현 패인은 우클릭 한 번에 두 번 붙는다](BEFORE_URL) | ![변경 후 - 두 패인 모두 우클릭 한 번에 한 번만 붙는다](AFTER_URL) |
+| ![변경 전 - 왼쪽 Claude Code 재현 패인은 우클릭 한 번에 두 번 붙는다](https://raw.githubusercontent.com/ChoiGyber/Mymux/main/.issue/47/evidence/before/rclick-paste.webp) | ![변경 후 - 두 패인 모두 우클릭 한 번에 한 번만 붙는다](https://raw.githubusercontent.com/ChoiGyber/Mymux/main/.issue/47/evidence/after/rclick-paste.webp) |
 
 빨간 박스가 우클릭한 프롬프트입니다. 왼쪽이 Claude Code 재현 패인(마우스 트래킹 ON), 오른쪽이 Codex 재현 패인(트래킹 OFF)이고, 두 패인에 완전히 같은 우클릭을 한 직후입니다. 변경 전에는 왼쪽만 두 번 붙었습니다.
 
