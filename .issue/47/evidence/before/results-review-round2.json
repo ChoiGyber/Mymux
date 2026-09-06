@@ -1,0 +1,100 @@
+{
+  "phase": "before",
+  "round": "review-round2",
+  "capturedWith": "frontend verification harness (Tauri IPC stubbed, real frontend/ from the worktree)",
+  "note": "scenarios the merge critic flagged as unmeasured; both panes have click tracking ON here",
+  "panes": {
+    "A": 1,
+    "B": 3
+  },
+  "results": {
+    "shiftRightClick_trackingPane": {
+      "selection": "",
+      "mode": "vt200",
+      "reportsToProgram": [],
+      "reportCount": 0,
+      "mymuxPasted": true,
+      "contextMenuFired": 1,
+      "copied": [],
+      "focusedPaneId": 1,
+      "ptyWrites": [
+        "CLIPBOARD-TEXT-47"
+      ]
+    },
+    "ctrlRightClick_trackingPane": {
+      "selection": "",
+      "mode": "vt200",
+      "reportsToProgram": [
+        "\u001b[<18;5;4M",
+        "\u001b[<18;5;4m"
+      ],
+      "reportCount": 2,
+      "mymuxPasted": true,
+      "contextMenuFired": 1,
+      "copied": [],
+      "focusedPaneId": 1,
+      "ptyWrites": [
+        "\u001b[<18;5;4M",
+        "\u001b[<18;5;4m",
+        "CLIPBOARD-TEXT-47"
+      ]
+    },
+    "rightClickDrag_trackingPane": {
+      "selection": "",
+      "mode": "vt200",
+      "reportsToProgram": [
+        "\u001b[<2;3;4M",
+        "\u001b[<2;28;4m"
+      ],
+      "reportCount": 2,
+      "mymuxPasted": true,
+      "contextMenuFired": 1,
+      "copied": [],
+      "focusedPaneId": 1,
+      "ptyWrites": [
+        "\u001b[<2;3;4M",
+        "\u001b[<2;28;4m",
+        "CLIPBOARD-TEXT-47"
+      ]
+    },
+    "rightClickOtherPane_focus": {
+      "focusBefore": 1,
+      "selection": "",
+      "mode": "vt200",
+      "reportsToProgram": [
+        "\u001b[<2;5;4M",
+        "\u001b[<2;5;4m"
+      ],
+      "reportCount": 2,
+      "mymuxPasted": true,
+      "contextMenuFired": 1,
+      "copied": [],
+      "focusedPaneId": 3,
+      "ptyWrites": [
+        "\u001b[<2;5;4M",
+        "\u001b[<2;5;4m",
+        "CLIPBOARD-TEXT-47"
+      ]
+    },
+    "leftPressPending_thenRightClick": {
+      "selection": "",
+      "mode": "vt200",
+      "reportsToProgram": [
+        "\u001b[<2;5;4M",
+        "\u001b[<0;5;4M",
+        "\u001b[<0;5;4m"
+      ],
+      "reportCount": 3,
+      "mymuxPasted": true,
+      "contextMenuFired": 1,
+      "copied": [],
+      "focusedPaneId": 1,
+      "ptyWrites": [
+        "\u001b[<2;5;4M",
+        "\u001b[<0;5;4M",
+        "\u001b[<0;5;4m",
+        "CLIPBOARD-TEXT-47"
+      ]
+    }
+  }
+}
