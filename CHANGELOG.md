@@ -8,6 +8,28 @@ For installers, see the [GitHub Releases](https://github.com/ChoiGyber/Mymux/rel
 
 ---
 
+## v0.2.5 — 2026-09-06
+
+### Fixed / 버그 수정
+
+- **Claude Code 패인에서 우클릭 붙여넣기가 두 번 되던 문제를 고쳤습니다 / One right-click pastes
+  once again in a Claude Code pane.** 드래그로 복사한 뒤 프롬프트 입력창에 마우스 오른쪽 버튼을
+  누르면 같은 내용이 두 번 입력됐습니다. 붙여넣는 주체가 둘이었기 때문입니다. Claude Code 가
+  우클릭을 받으면 스스로 클립보드를 읽어 넣고, Mymux 의 우클릭 붙여넣기도 함께 돌았습니다.
+
+  이제 프로그램이 클릭만 요청한 경우에 한해 우클릭을 터미널이 가져가고, 붙여넣기는 Mymux 한
+  쪽에서만 일어납니다. 선택해 둔 상태로 우클릭하면 복사 대신 붙여넣기가 되던 것도 함께
+  사라졌습니다. vim 이나 htop 처럼 드래그까지 요청한 프로그램의 우클릭은 예전 그대로 프로그램에
+  전달되고, Ctrl 을 누른 우클릭도 그대로 전달됩니다.
+
+  One right-click was pasting twice because two things pasted: Claude Code reads the OS
+  clipboard itself when it receives a right-button report, and Mymux pasted as well. The
+  terminal now keeps that report to itself in click-only tracking modes, so Mymux is the
+  single paste path. Right-clicking with a selection copies again instead of pasting.
+  Motion-tracking programs (vim, htop) and modifier-held right-clicks are unchanged.
+
+---
+
 ## v0.2.4 — 2026-09-01
 
 ### Fixed / 버그 수정
