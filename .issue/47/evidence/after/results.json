@@ -1,0 +1,149 @@
+{
+  "phase": "after",
+  "capturedWith": "frontend verification harness (Tauri IPC stubbed, real frontend/ from the worktree)",
+  "claudeCodeProbe": "claude.exe 2.1.258 pastes powershell Get-Clipboard on a right-button press report (verified with node-pty under ConPTY)",
+  "note": "effectivePastes = Mymux paste + (1 if any mouse report reached the program, because Claude Code pastes on it)",
+  "panes": {
+    "A": 1,
+    "B": 3
+  },
+  "results": {
+    "rightClickNoSelection_trackingPane": {
+      "mode": "vt200",
+      "buffer": "normal",
+      "selection": "",
+      "mymuxPasted": true,
+      "reportsToProgram": [],
+      "reportCount": 0,
+      "effectivePastes": 1,
+      "copied": [],
+      "clipboardReads": 1,
+      "ptyWrites": [
+        "CLIPBOARD-TEXT-47"
+      ]
+    },
+    "rightClickWithSelection_trackingPane": {
+      "mode": "vt200",
+      "buffer": "normal",
+      "selection": "",
+      "mymuxPasted": false,
+      "reportsToProgram": [],
+      "reportCount": 0,
+      "effectivePastes": 0,
+      "copied": [
+        "I answer: right-click the prom"
+      ],
+      "clipboardReads": 0,
+      "ptyWrites": []
+    },
+    "rightClickNoSelection_plainPane": {
+      "mode": "none",
+      "buffer": "normal",
+      "selection": "",
+      "mymuxPasted": true,
+      "reportsToProgram": [],
+      "reportCount": 0,
+      "effectivePastes": 1,
+      "copied": [],
+      "clipboardReads": 1,
+      "ptyWrites": [
+        "CLIPBOARD-TEXT-47"
+      ]
+    },
+    "rightClickWithSelection_plainPane": {
+      "mode": "none",
+      "buffer": "normal",
+      "selection": "",
+      "mymuxPasted": false,
+      "reportsToProgram": [],
+      "reportCount": 0,
+      "effectivePastes": 0,
+      "copied": [
+        "I answer: right-click the prom"
+      ],
+      "clipboardReads": 0,
+      "ptyWrites": []
+    },
+    "leftClick_trackingPane": {
+      "mode": "vt200",
+      "buffer": "normal",
+      "selection": "",
+      "mymuxPasted": false,
+      "reportsToProgram": [
+        "\u001b[<0;5;4M",
+        "\u001b[<0;5;4m"
+      ],
+      "reportCount": 2,
+      "effectivePastes": 1,
+      "copied": [],
+      "clipboardReads": 0,
+      "ptyWrites": [
+        "\u001b[<0;5;4M",
+        "\u001b[<0;5;4m"
+      ]
+    },
+    "leftDrag_trackingPane": {
+      "mode": "vt200",
+      "buffer": "normal",
+      "selection": "I answer: right-click the prom",
+      "mymuxPasted": false,
+      "reportsToProgram": [],
+      "reportCount": 0,
+      "effectivePastes": 0,
+      "copied": [
+        "I answer"
+      ],
+      "clipboardReads": 0,
+      "ptyWrites": []
+    },
+    "rightClick_motionTrackingTui": {
+      "mode": "drag",
+      "buffer": "alternate",
+      "selection": "",
+      "mymuxPasted": true,
+      "reportsToProgram": [
+        "\u001b[<2;5;4M",
+        "\u001b[<2;5;4m"
+      ],
+      "reportCount": 2,
+      "effectivePastes": 2,
+      "copied": [],
+      "clipboardReads": 1,
+      "ptyWrites": [
+        "\u001b[<2;5;4M",
+        "\u001b[<2;5;4m",
+        "CLIPBOARD-TEXT-47"
+      ]
+    }
+  },
+  "screenshotState": {
+    "A": {
+      "mode": "vt200",
+      "buffer": "normal",
+      "selection": "",
+      "mymuxPasted": true,
+      "reportsToProgram": [],
+      "reportCount": 0,
+      "effectivePastes": 1,
+      "copied": [],
+      "clipboardReads": 1,
+      "ptyWrites": [
+        "CLIPBOARD-TEXT-47"
+      ]
+    },
+    "B": {
+      "mode": "none",
+      "buffer": "normal",
+      "selection": "",
+      "mymuxPasted": true,
+      "reportsToProgram": [],
+      "reportCount": 0,
+      "effectivePastes": 1,
+      "copied": [],
+      "clipboardReads": 2,
+      "ptyWrites": [
+        "CLIPBOARD-TEXT-47"
+      ]
+    }
+  }
+}
