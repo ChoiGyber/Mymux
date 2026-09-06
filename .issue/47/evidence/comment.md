@@ -46,6 +46,23 @@ Claude Code 에는 이런 겹침을 막는 가드가 있습니다. 터미널에 
 
 측정 원본은 `.issue/47/evidence/{before,after}/results.json` 입니다. 정적 가드도 통과했습니다 — `scripts/check-macos-gotchas.mjs` 13/13, `scripts/check-vendored-tao.mjs` 6/6.
 
+## 통합 검토에서 나온 2차 측정
+
+merge 전 비판 검토가 "수식키 우클릭, 우클릭 드래그, 다른 패인 포커스 전환, contextmenu 발생 여부가 측정되지 않았다" 고 지적했습니다. 맞는 지적이라 전후 양쪽을 다시 쟀습니다(수정 파일을 잠시 되돌려 before 를 다시 측정).
+
+| 시나리오 | 전 | 후 |
+| --- | --- | --- |
+| Ctrl + 우클릭 | 프로그램에 전달 (`ESC[<18;…`) | **동일 — escape hatch 유지** |
+| Shift + 우클릭 | 프로그램에 안 감 | 동일 (아래 설명) |
+| 우클릭 드래그 | 리포트 2건 (시작 열 press, 끝 열 release) | 리포트 0건 |
+| 다른 패인 우클릭 | 포커스 전환됨 · 리포트 2건 | **포커스 전환됨** · 리포트 0건 |
+| 왼쪽 버튼 누른 채 우클릭 후 떼기 | 왼쪽 클릭 정상 전달 | **동일 — [#45](https://github.com/ChoiGyber/Mymux/issues/45) 무회귀** |
+| `contextmenu` 이벤트 | 모든 경우 1회 발생 | **동일 1회 — 누름을 삼켜도 막히지 않음** |
+
+이 측정이 **제 주석의 오류를 하나 잡았습니다.** "수식키를 누른 우클릭은 프로그램에 그대로 전달된다" 고 적었는데, Shift 는 그렇지 않습니다. xterm 이 Shift 를 강제 선택용으로 먼저 소비해서, 이 수정이 있든 없든 프로그램에 리포트되지 않습니다. 실제로 전달되는 것은 Ctrl·Alt·Meta 입니다. 코드 주석을 실측에 맞게 고쳤습니다.
+
+측정 원본은 `.issue/47/evidence/{before,after}/results-review-round2.json` 입니다.
+
 ## 변경 파일
 
 - `crates/mycli-desktop/frontend/app.js` — 패인 마우스 처리에 우클릭 분기 추가 (20줄)
