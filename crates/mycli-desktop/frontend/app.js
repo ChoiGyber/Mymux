@@ -3112,7 +3112,7 @@ async function createPane(parentEl, shell, args, cwd) {
   const cwdLabel = cwd ? baseName(cwd) : "~";
   const cwdText = cwdLabel === sessionLabel ? "" : cwdLabel;
   statusBar.innerHTML = `
-    <span class="pane-grip" title="Drag to move pane">&#10287;</span>
+    <span class="pane-grip" title="Drag to move pane · drop on another tab header to move it there">&#10287;</span>
     <span class="pane-label">${esc(sessionLabel)}</span>
     ${shell !== "ssh" ? `<span class="pane-cwd">${esc(cwdText)}</span>` : ""}
     <span class="pane-actions">
@@ -5719,7 +5719,11 @@ function captureBottomPins() {
 // A pane can arrive here with an old flex value from a divider drag or a
 // re-tile. Normalize every new split branch before xterm measures it so the
 // branch cannot retain an intrinsic min-content width/height or cover its
-// sibling during the first layout pass.
+// sibling during the first layout pass. Also clears the width/height pins
+// equalizeActiveTabSplits writes: an explicit width:0 survives into a
+// column (stacked) container and beats align-items:stretch, collapsing that
+// pane into a zero-width strip stuck at the left edge — invisible top pane
+// right after a split-down. Same for a stale height:0 in a row container.
 function normalizeSplitChildren(container) {
   if (!container || !container.children) return;
   container.style.flex = "1 1 0";
@@ -5730,6 +5734,10 @@ function normalizeSplitChildren(container) {
     child.style.flex = "1 1 0";
     child.style.minWidth = "0";
     child.style.minHeight = "0";
+    child.style.width = "";     // equalize pins — must not leak across axes
+    child.style.height = "";
+    child.style.maxWidth = "";
+    child.style.maxHeight = "";
   }
 }
 
@@ -5930,6 +5938,15 @@ function flipSplitDirection() {
   const toVertical = c.classList.contains("horizontal");
   c.classList.toggle("horizontal", !toVertical);
   c.classList.toggle("vertical", toVertical);
+  // The axis changed: an equalize pin for the old axis (width:0 in a row,
+  // height:0 in a column) would collapse every pane against the new axis.
+  // Clear the pins but keep each pane's flex ratio.
+  for (const kid of kids) {
+    kid.style.width = "";
+    kid.style.height = "";
+    kid.style.maxWidth = "";
+    kid.style.maxHeight = "";
+  }
   refitAllPanes();
   saveSessionNow();
 }
@@ -6096,6 +6113,9 @@ function movePaneToTab(ptyId, targetTabIdx, dropTargetId = null, after = true) {
       !!dropTarget && insertLeafBeside(leaf, dropTarget.paneEl, after);
     if (!placed) {
       // Append into the destination root as a new split column/row.
+      // The arriving leaf may carry an equalize width/height pin from its
+      // old tab — clear it or it collapses to a strip in the new layout.
+      resetSplitChildSizing(leaf);
       if (dstRoot.children.length > 0) {
         const vertical = dstRoot.classList.contains("vertical");
         const divider = document.createElement("div");
@@ -6314,6 +6334,12 @@ function startPaneDrag(srcId, startEvent) {
   let dragging = false;
   let curTarget = null;
   let curPos = null;
+  let curTabIdx = null;
+  let curDropTargetId = null;
+  let curDropAfter = true;
+  const clearTabHighlight = () => {
+    document.querySelectorAll("#terminal-tabs .tab.drop-target").forEach((el) => el.classList.remove("drop-target"));
+  };
   const onMove = (e) => {
     if (!dragging) {
       if (Math.abs(e.clientX - startEvent.clientX) + Math.abs(e.clientY - startEvent.clientY) < 5) return;
@@ -6321,7 +6347,68 @@ function startPaneDrag(srcId, startEvent) {
       document.body.style.cursor = "grabbing";
       document.body.style.userSelect = "none";
     }
+    // 1) Hovering a top tab header → move the session to that tab on drop.
+    const tabEl = (() => {
+      const el = document.elementFromPoint(e.clientX, e.clientY);
+      return el && el.closest ? el.closest("#terminal-tabs .tab[data-id]") : null;
+    })();
+    if (tabEl) {
+      const targetIdx = Number(tabEl.dataset.id);
+      const srcTab = findTabForPane(srcId);
+      if (srcTab && targetIdx !== srcTab.tabIdx && tabs.has(targetIdx)) {
+        curTarget = null;
+        curDropTargetId = null;
+        curTabIdx = targetIdx;
+        hideDropIndicator();
+        clearTabHighlight();
+        tabEl.classList.add("drop-target");
+        return;
+      }
+    }
+    clearTabHighlight();
+    curTabIdx = null;
+    curDropTargetId = null;
     const el = document.elementFromPoint(e.clientX, e.clientY);
+    // 2) Hovering a session-list row/group of another tab → move there on drop.
+    const sessRow = el && el.closest ? el.closest(".session-item[data-pty-id]") : null;
+    const sessGroup = el && el.closest ? el.closest(".session-group") : null;
+    if (sessRow) {
+      const targetPty = Number(sessRow.dataset.ptyId);
+      const dstTab = Number.isFinite(targetPty) ? findTabForPane(targetPty) : null;
+      const srcTab = findTabForPane(srcId);
+      if (dstTab && srcTab && dstTab.tabIdx !== srcTab.tabIdx && targetPty !== srcId) {
+        curTarget = null;
+        curPos = null;
+        curTabIdx = dstTab.tabIdx;
+        curDropTargetId = targetPty;
+        const rect = sessRow.getBoundingClientRect();
+        curDropAfter = (e.clientY - rect.top) > rect.height / 2;
+        sessRow.classList.toggle("drop-below", curDropAfter);
+        sessRow.classList.toggle("drop-above", !curDropAfter);
+        hideDropIndicator();
+        return;
+      }
+      sessRow.classList.remove("drop-above", "drop-below");
+    }
+    document.querySelectorAll(".session-item.drop-above,.session-item.drop-below").forEach((row) => {
+      if (row !== sessRow) row.classList.remove("drop-above", "drop-below");
+    });
+    if (!sessRow && sessGroup) {
+      const groupTabIdx = Number(sessGroup.dataset.tabIdx);
+      const srcTab = findTabForPane(srcId);
+      if (Number.isFinite(groupTabIdx) && tabs.has(groupTabIdx) && srcTab && groupTabIdx !== srcTab.tabIdx) {
+        curTarget = null;
+        curPos = null;
+        curDropTargetId = null;
+        curTabIdx = groupTabIdx;
+        sessGroup.classList.add("drop-target");
+        hideDropIndicator();
+        return;
+      }
+    }
+    document.querySelectorAll(".session-group.drop-target").forEach((g) => {
+      if (g !== sessGroup) g.classList.remove("drop-target");
+    });
     const leaf = el && el.closest ? el.closest(".pane-leaf") : null;
     const tid = leaf && leaf.dataset && leaf.dataset.ptyId ? Number(leaf.dataset.ptyId) : null;
     if (leaf && tid && tid !== srcId && terminals.has(tid)) {
@@ -6339,7 +6426,16 @@ function startPaneDrag(srcId, startEvent) {
     document.body.style.cursor = "";
     document.body.style.userSelect = "";
     hideDropIndicator();
-    if (dragging && curTarget != null) movePane(srcId, curTarget, curPos);
+    clearTabHighlight();
+    document.querySelectorAll(".session-item.drop-above,.session-item.drop-below,.session-group.drop-target").forEach((row) => row.classList.remove("drop-above", "drop-below", "drop-target"));
+    if (!dragging) return;
+    // Dropped on another tab's header / session-list row / group → move there.
+    if (curTabIdx != null) {
+      const srcTab = findTabForPane(srcId);
+      if (srcTab && srcTab.tabIdx !== curTabIdx) movePaneToTab(srcId, curTabIdx, curDropTargetId, curDropAfter);
+      return;
+    }
+    if (curTarget != null) movePane(srcId, curTarget, curPos);
   };
   document.addEventListener("mousemove", onMove);
   document.addEventListener("mouseup", onUp);
@@ -6383,6 +6479,12 @@ function insertLeafBeside(leaf, targetLeaf, after) {
   const parent = targetLeaf && targetLeaf.parentElement;
   if (!parent || leaf === targetLeaf) return false;
   leaf.style.flex = "1 1 0";
+  // The arrival always lands in a column (stacked) container — either the
+  // parent already is one or a new one is built below. A stale equalize
+  // width pin would collapse it to a left-edge strip, so drop the cross-axis
+  // pin (main-axis height pins are left alone).
+  leaf.style.width = "";
+  leaf.style.maxWidth = "";
   const divider = document.createElement("div");
   divider.className = "pane-divider";
 
@@ -8059,7 +8161,33 @@ function addTab(tabIdx, label) {
     e.stopPropagation();
     startRenameTabInBar(tabIdx, tab);
   });
-  tab.title = "Double-click to rename";
+  tab.title = "Double-click to rename · drop a session here to move it to this tab";
+  // Accept drops from the session list (HTML5 DnD): drop a session row onto
+  // another tab's header to move the pane there.
+  tab.addEventListener("dragover", (e) => {
+    let hasSession = false;
+    try {
+      hasSession = Array.from(e.dataTransfer.types || []).includes("text/plain");
+    } catch { hasSession = true; }
+    if (!hasSession) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = "move";
+    tab.classList.add("drop-target");
+  });
+  tab.addEventListener("dragleave", (e) => {
+    if (tab.contains(e.relatedTarget)) return;
+    tab.classList.remove("drop-target");
+  });
+  tab.addEventListener("drop", (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    tab.classList.remove("drop-target");
+    const pid = Number(e.dataTransfer.getData("text/plain"));
+    if (!pid) return;
+    const srcTab = findTabForPane(pid);
+    if (!srcTab || srcTab.tabIdx === tabIdx) return;
+    movePaneToTab(pid, tabIdx);
+  });
   const newTabButton = document.getElementById("btn-tab-new");
   if (newTabButton) terminalTabs.insertBefore(tab, newTabButton);
   else terminalTabs.appendChild(tab);
@@ -9183,6 +9311,7 @@ function refreshSessionList() {
 
     const group = document.createElement("li");
     group.className = "session-group";
+    group.dataset.tabIdx = String(tabIdx);
     group.textContent = tab.label || `Tab ${tabIdx + 1}`;
     group.title = "Double-click to rename · drop a session here to move it to this tab";
     group.addEventListener("dblclick", () => startRenameTab(tabIdx, group));

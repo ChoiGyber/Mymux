@@ -716,8 +716,23 @@ html[data-theme="light"] #toolbar-actions #btn-update:hover {
   margin-right: 6px;
   font-size: 13px;
   user-select: none;
+  flex: 0 0 auto;
 }
 .pane-grip:hover { color: var(--accent); }
+/* Narrow pane: shed status-bar chrome before the close button gets pushed
+   out. Order = least essential first; .close is never hidden (shortcuts:
+   Ctrl+Shift+D/E/O/W still work when a button is hidden). */
+@container (max-width: 230px) {
+  .pane-statusbar .pane-btn.flip { display: none; }
+}
+@container (max-width: 190px) {
+  .pane-statusbar .pane-btn.split-h,
+  .pane-statusbar .pane-btn.split-v { display: none; }
+  .pane-statusbar .pane-cwd { display: none; }
+}
+@container (max-width: 130px) {
+  .pane-statusbar .pane-label { display: none; }
+}
 #drop-indicator {
   position: fixed;
   display: none;
@@ -1191,6 +1206,13 @@ html[data-theme="light"] #toolbar-actions #btn-update:hover {
 .tab.active {
   color: var(--text);
   border-bottom-color: var(--accent);
+}
+.tab.drop-target {
+  color: var(--accent);
+  border-bottom-color: var(--accent);
+  background: var(--surface-hover);
+  outline: 1px dashed var(--accent);
+  outline-offset: -2px;
 }
 .tab .tab-close,
 .tab .tab-rename,
@@ -2001,6 +2023,11 @@ html[data-theme="light"] #toolbar-actions #btn-update:hover {
   flex: 1 1 0;
   min-width: 0;
   min-height: 0;
+  /* Query container so the status bar can shed buttons before the close
+     button gets pushed out (see the container queries below). Inline-size
+     containment also stops xterm's intrinsic width from forcing the leaf
+     wider than its flex share. */
+  container-type: inline-size;
   /* Terminal on top, status bar underneath. This belongs to the class, NOT to
      an inline style: layout code rewrites a surviving pane's inline styles
      when a split collapses, and an inline display:flex got wiped there. The
@@ -2431,12 +2458,15 @@ html[data-theme="dark"] .pane-command-shortcut {
   font-size: 10px;
   color: var(--text-dim);
   flex-shrink: 0;
+  min-width: 0;
+  overflow: hidden;
 }
 .pane-statusbar .pane-shortcuts {
   opacity: 0.6;
 }
 .pane-statusbar .pane-label {
-  flex: 0 0 auto;
+  flex: 0 1 auto;
+  min-width: 0;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -2459,6 +2489,7 @@ html[data-theme="dark"] .pane-command-shortcut {
   display: flex;
   gap: 4px;
   flex-shrink: 0;
+  margin-left: auto;
 }
 .pane-btn {
   border: 1px solid var(--border);
