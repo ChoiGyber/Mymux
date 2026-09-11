@@ -8,6 +8,39 @@ For installers, see the [GitHub Releases](https://github.com/ChoiGyber/Mymux/rel
 
 ---
 
+## v0.2.6 — 2026-09-11
+
+### Added / 새로 추가
+
+- **세션을 드래그해서 다른 탭으로 옮길 수 있습니다 / Drag a session into another tab.**
+  세션 리스트 행을 상단 탭 헤더에 떨구면 해당 탭으로 이동합니다. 세션창 하단 바를
+  드래그한 채 다른 탭 헤더나 세션 행·그룹에 떨궈도 이동합니다.
+
+  Drop a session-list row onto a top tab header to move it there. Dragging the
+  session pane's bottom bar onto another tab's header (or its session rows)
+  moves it too.
+
+### Fixed / 버그 수정
+
+- **균등화 뒤 아래·옆으로 분리하면 pane이 안 보이던 문제를 고쳤습니다 / A pane no longer
+  vanishes after equalizing then splitting.** 너비·높이 균등화가 남긴 `width: 0` /
+  `height: 0` 핀이 새 분할 축까지 살아남아, 윗쪽 pane이 왼쪽 끝에 붙은 줄처럼
+  납작해졌습니다. 분할·방향전환·탭간 이동 경로에서 핀을 제거합니다.
+
+  Equalizing left `width: 0` / `height: 0` pins behind, and a later split on the
+  other axis collapsed the pane into an invisible strip. Those pins are now
+  cleared on every split, flip, and cross-tab move.
+
+- **Pane이 옆으로 좁아져도 X 버튼이 유지됩니다 / The close button stays visible in
+  narrow panes.** 세션 이름이 버튼들을 밖으로 밀어내 X가 잘리던 것을, 라벨
+  말줄임 + 버튼 점진적 숨김(닫기는 항상 표시)으로 바꿨습니다.
+
+  The session label used to push the action buttons out of view. It now
+  ellipsizes first, then split/flip buttons hide progressively — close is
+  never hidden.
+
+---
+
 ## v0.2.5 — 2026-09-06
 
 ### Fixed / 버그 수정
