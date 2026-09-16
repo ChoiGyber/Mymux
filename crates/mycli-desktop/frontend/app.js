@@ -3147,20 +3147,56 @@ async function createPane(parentEl, shell, args, cwd) {
   // those reports don't round-trip usefully, so the wheel goes dead (only the
   // scrollbar drag still works) and the program's wheel-triggered redraws can
   // leave half-painted / blank regions. Reclaim the wheel here: on the normal
-  // buffer we scroll the viewport ourselves and swallow the event. Alt-screen
-  // TUIs (vim/htop/less) keep receiving wheel reports as before, and
-  // Ctrl+wheel is left alone for future zoom gestures.
+  // buffer we scroll the viewport ourselves and swallow the event.
+  // Full-screen TUIs (OpenCode and friends) run on the ALT screen, where the
+  // wheel belongs to the program and there is no scrollback to move — the
+  // scrollbar is gone too, so when the program doesn't handle the wheel
+  // itself nothing scrolls at all. Cover that case: on the alt screen with
+  // NO mouse tracking, translate the wheel into Up/Down keys (the classic
+  // alternate-scroll behavior), so the app's own list/selection still moves.
+  // When tracking IS on the program owns the wheel (Codex-style in-app
+  // scroll) and we stay out of the way. Shift+wheel is the override that
+  // always scrolls the viewport on the normal buffer (mirrors the
+  // Shift-forces-selection rule used for drags). Ctrl+wheel is left alone
+  // for future zoom gestures.
   if (term.attachCustomWheelEventHandler) {
+    const wheelLines = (e) => {
+      // deltaMode 1 = lines, 0 = pixels (~one row per ≈ fontSize*1.2 px).
+      const rowPx = (term.options.fontSize || 14) * 1.2;
+      return e.deltaMode === 1
+        ? Math.trunc(e.deltaY)
+        : Math.sign(e.deltaY) * Math.max(1, Math.round(Math.abs(e.deltaY) / rowPx / 3));
+    };
     term.attachCustomWheelEventHandler((e) => {
       try {
         if (e.ctrlKey) return true;
-        if (term.buffer.active.type !== "normal") return true;
+        if (term.buffer.active.type !== "normal") {
+          // Alt screen: app-owned wheel when it asked for mouse reports…
+          if ((term.modes.mouseTrackingMode || "none") !== "none") return true;
+          // …otherwise the wheel would die here: send Up/Down instead so the
+          // app's list moves. `id` is assigned by the time a wheel can arrive;
+          // paneEl carries it as backup for the spawn window.
+          const lines = wheelLines(e);
+          const steps = Math.min(3, Math.max(1, Math.abs(lines || 1)));
+          const target = (typeof id === "number" && terminals.has(id))
+            ? id
+            : Number(paneEl.dataset && paneEl.dataset.ptyId);
+          if (lines && Number.isFinite(target) && terminals.has(target)) {
+            invoke("pty_write", {
+              id: target,
+              data: (lines < 0 ? "\x1b[A" : "\x1b[B").repeat(steps),
+            });
+          }
+          return false;
+        }
+        if (e.shiftKey) {
+          // Explicit scrollback scroll on the normal buffer.
+          const lines = wheelLines(e);
+          if (lines) term.scrollLines(lines);
+          return false;
+        }
         if ((term.modes.mouseTrackingMode || "none") === "none") return true; // no conflict — default handling already scrolls
-        // deltaMode 1 = lines, 0 = pixels (~one row per ≈ fontSize*1.2 px).
-        const rowPx = (term.options.fontSize || 14) * 1.2;
-        const lines = e.deltaMode === 1
-          ? Math.trunc(e.deltaY)
-          : Math.sign(e.deltaY) * Math.max(1, Math.round(Math.abs(e.deltaY) / rowPx / 3));
+        const lines = wheelLines(e);
         if (lines) term.scrollLines(lines);
         return false;
       } catch { return true; }
