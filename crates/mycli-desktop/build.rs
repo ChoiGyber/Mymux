@@ -23,6 +23,8 @@ const APP_COMMANDS: &[&str] = &[
     "codex_reset_credits",
     "codex_consume_reset_credit",
     "claude_account_usage",
+    "claude_agent_activity",
+    "browser_import_data",
     "claude_statusline_status",
     "claude_statusline_install",
     "claude_statusline_remove",

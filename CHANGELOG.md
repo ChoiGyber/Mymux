@@ -8,6 +8,65 @@ For installers, see the [GitHub Releases](https://github.com/ChoiGyber/Mymux/rel
 
 ---
 
+## v0.3.0 — 2026-09-16
+
+### Added / 새로 추가
+
+- **AI 세션이 띄운 agent 작업이 세션 하위에 표시됩니다 / A session's AI agents now
+  appear beneath it.** 패인에서 Claude Code 가 서브에이전트(코드 리뷰·검토·탐색
+  등)를 띄우면, 그 목록이 세션 행 아래에 종류·설명·진행 상태와 함께 나타납니다.
+  기본은 실행 중인 것과 최신 몇 개만 보여 주고, `+N개 더 보기`로 전체를 펴거나
+  세션 옆 개수 배지로 통째로 접을 수 있습니다. 항목을 누르면 프롬프트 전문과
+  소요 시간·토큰이 담긴 상세 창이 열립니다. 화면을 긁지 않고 Claude Code 의
+  세션 기록(transcript)에서 직접 읽어 정확합니다.
+
+  When Claude Code in a pane spawns subagents, they show up as child rows under
+  that session — agent type, description and status. The list previews the
+  running ones plus the newest few, with `+N more` to expand and a count badge
+  to fold the whole group; clicking a row opens its full prompt, duration and
+  token totals. Read straight from Claude Code's session transcript, not scraped
+  from the screen.
+
+- **크롬·엣지의 북마크·방문 기록·저장된 비밀번호를 가져올 수 있습니다 / Import
+  Chrome/Edge bookmarks, history and saved passwords.** 브라우저 패널의 새
+  “크롬·엣지에서 가져오기”에서 프로필을 골라 읽어옵니다. 북마크·기록은 클릭하면
+  Mymux 내장 브라우저에서 열리고, 비밀번호는 가린 채 표시하며 눈 버튼으로만
+  잠깐 드러냅니다. 원본 프로필은 읽기만 하고 바꾸지 않으며, 명시적 동의를 받은
+  뒤에만 실행합니다. 최신 크롬·엣지의 App-Bound Encryption 으로 잠긴 비밀번호는
+  브라우저 밖에서 읽을 수 없어 “읽을 수 없음”으로 정직하게 표시합니다.
+
+  A new "Import from Chrome/Edge" control in the browser panel reads a chosen
+  profile. Bookmarks and history open in the in-app browser on click; passwords
+  stay masked behind a reveal toggle. The source profile is read-only and
+  nothing runs without explicit consent. Passwords locked by the newest
+  Chrome/Edge App-Bound Encryption cannot be read outside the browser and are
+  shown as such rather than guessed.
+
+### Fixed / 버그 수정
+
+- **터미널 안의 링크를 그냥 클릭하면 내장 브라우저에서 열립니다 / A plain click on a
+  terminal link opens it in the in-app browser.** 이전에는 Ctrl+클릭만 열렸습니다.
+  이제 링크 클릭이 곧바로 Mymux 브라우저로 들어갑니다. 다만 vim·htop 처럼 마우스를
+  쓰는 프로그램이 켜져 있을 때는 클릭이 그 프로그램의 것이므로, 그 경우에만
+  Ctrl+클릭으로 엽니다.
+
+  Previously only Ctrl+Click opened a link. A plain click now goes straight to
+  the Mymux browser — except while a mouse-using program (vim, htop) owns the
+  click, where Ctrl+Click still applies.
+
+- **세션 드래그로 탭을 옮기는 기능이 실제로 동작합니다 / Dragging a session between
+  tabs actually works now.** v0.2.6 에 이 기능 코드가 들어갔지만, 탐색기 파일
+  드롭을 위해 켠 설정 하나 때문에 Windows 에서 세션 드래그가 전부 죽어 있었습니다.
+  두 기능이 공존하도록 세션 드래그를 포인터 기반으로 다시 구현해, 탭간 이동과 같은
+  탭 안 순서 변경이 모두 동작합니다.
+
+  v0.2.6 shipped the code for this, but a setting enabled for the explorer's file
+  drop silently killed every session drag on Windows. Session dragging is now
+  pointer-based so both features coexist — cross-tab moves and same-tab
+  reordering both work.
+
+---
+
 ## v0.2.6 — 2026-09-11
 
 ### Added / 새로 추가

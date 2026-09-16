@@ -271,6 +271,17 @@
           <span class="muted">Copies the selected profile into Mymux; the source is not changed.</span>
         </div>
 
+        <!-- Read (not copy) the selected profile's bookmarks / history / passwords
+             into Mymux. Read-only against the user's own data, gated on consent. -->
+        <div class="browser-import browser-data-import" id="browser-data-import">
+          <label>크롬·엣지에서 가져오기</label>
+          <label class="bd-chk"><input type="checkbox" id="bd-bookmarks" checked /> 북마크</label>
+          <label class="bd-chk"><input type="checkbox" id="bd-history" checked /> 방문 기록</label>
+          <label class="bd-chk"><input type="checkbox" id="bd-passwords" /> 저장된 비밀번호</label>
+          <button id="btn-browser-data-import" class="secondary" disabled>동의하고 불러오기</button>
+          <span class="muted">위 프로필에서 읽기만 합니다. 원본은 바뀌지 않습니다.</span>
+        </div>
+
         <div id="browser-page-tabs" class="browser-page-tabs" style="display:none">
           <button id="btn-browser-new-page" class="browser-page-new" type="button" title="New browser page">+</button>
         </div>
@@ -620,6 +631,43 @@
       <div id="whatsnew-notes" class="update-notes"></div>
       <div class="modal-actions">
         <button id="whatsnew-ok">확인</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Detail for one subagent row in the session list: what it was asked to do
+       and the full prompt it was handed. -->
+  <div id="agent-modal" class="hidden" role="dialog" aria-modal="true" aria-labelledby="agent-modal-title">
+    <div class="modal-box agent-box">
+      <button id="agent-modal-close" class="modal-close" type="button" aria-label="Close">×</button>
+      <h2 id="agent-modal-title">Agent</h2>
+      <p id="agent-modal-desc" class="agent-desc"></p>
+      <dl id="agent-modal-meta" class="agent-meta"></dl>
+      <pre id="agent-modal-prompt" class="agent-prompt"></pre>
+      <div class="modal-actions">
+        <button id="agent-modal-copy" class="secondary" type="button">프롬프트 복사</button>
+        <button id="agent-modal-ok" type="button">확인</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Results of a Chrome/Edge data import: bookmarks, history, saved passwords.
+       Each list opens its links in the in-app browser. Passwords stay masked
+       until explicitly revealed. -->
+  <div id="browser-data-modal" class="hidden" role="dialog" aria-modal="true" aria-labelledby="browser-data-title">
+    <div class="modal-box browser-data-box">
+      <button id="browser-data-close" class="modal-close" type="button" aria-label="Close">×</button>
+      <h2 id="browser-data-title">가져온 브라우저 데이터</h2>
+      <p id="browser-data-notes" class="browser-data-notes"></p>
+      <div class="browser-data-tabs">
+        <button class="bd-tab active" data-kind="bookmarks">북마크 <span class="bd-count" id="bd-count-bookmarks">0</span></button>
+        <button class="bd-tab" data-kind="history">방문 기록 <span class="bd-count" id="bd-count-history">0</span></button>
+        <button class="bd-tab" data-kind="passwords">비밀번호 <span class="bd-count" id="bd-count-passwords">0</span></button>
+      </div>
+      <input type="text" id="browser-data-search" placeholder="검색…" spellcheck="false" autocomplete="off" />
+      <div id="browser-data-list" class="browser-data-list"></div>
+      <div class="modal-actions">
+        <button id="browser-data-ok" type="button">확인</button>
       </div>
     </div>
   </div>

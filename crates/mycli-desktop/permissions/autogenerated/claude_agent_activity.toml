@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-claude-agent-activity"
+description = "Enables the claude_agent_activity command without any pre-configured scope."
+commands.allow = ["claude_agent_activity"]
+
+[[permission]]
+identifier = "deny-claude-agent-activity"
+description = "Denies the claude_agent_activity command without any pre-configured scope."
+commands.deny = ["claude_agent_activity"]

@@ -405,6 +405,12 @@
           "markdownDescription": "Enables the browser_close_tab command without any pre-configured scope."
         },
         {
+          "description": "Enables the browser_import_data command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-browser-import-data",
+          "markdownDescription": "Enables the browser_import_data command without any pre-configured scope."
+        },
+        {
           "description": "Enables the browser_import_profile command without any pre-configured scope.",
           "type": "string",
           "const": "allow-browser-import-profile",
@@ -529,6 +535,12 @@
           "type": "string",
           "const": "allow-claude-account-usage",
           "markdownDescription": "Enables the claude_account_usage command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the claude_agent_activity command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-claude-agent-activity",
+          "markdownDescription": "Enables the claude_agent_activity command without any pre-configured scope."
         },
         {
           "description": "Enables the claude_statusline_install command without any pre-configured scope.",
@@ -867,6 +879,12 @@
           "markdownDescription": "Denies the browser_close_tab command without any pre-configured scope."
         },
         {
+          "description": "Denies the browser_import_data command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-browser-import-data",
+          "markdownDescription": "Denies the browser_import_data command without any pre-configured scope."
+        },
+        {
           "description": "Denies the browser_import_profile command without any pre-configured scope.",
           "type": "string",
           "const": "deny-browser-import-profile",
@@ -991,6 +1009,12 @@
           "type": "string",
           "const": "deny-claude-account-usage",
           "markdownDescription": "Denies the claude_account_usage command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the claude_agent_activity command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-claude-agent-activity",
+          "markdownDescription": "Denies the claude_agent_activity command without any pre-configured scope."
         },
         {
           "description": "Denies the claude_statusline_install command without any pre-configured scope.",

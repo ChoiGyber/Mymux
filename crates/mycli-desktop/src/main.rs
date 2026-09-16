@@ -1,6 +1,8 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod agents;
 mod browser;
+mod browser_data;
 mod commands;
 mod explorer;
 mod session;
@@ -189,6 +191,8 @@ fn main() {
             commands::codex_reset_credits,
             commands::codex_consume_reset_credit,
             commands::claude_account_usage,
+            agents::claude_agent_activity,
+            browser_data::browser_import_data,
             statusline::claude_statusline_status,
             statusline::claude_statusline_install,
             statusline::claude_statusline_remove,

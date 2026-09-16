@@ -1,6 +1,6 @@
 [package]
 name = "mycli-desktop"
-version = "0.2.6"
+version = "0.3.0"
 edition = "2024"
 
 # The executable (and therefore the OS process / Task Manager name) is "Mymux".
@@ -38,6 +38,13 @@ image = { version = "0.25", default-features = false, features = ["png"] }
 # reqwest is already in the tree (via tauri-plugin-updater) with json + rustls
 # enabled, so this adds no new build-toolchain requirement.
 reqwest = { version = "0.13", default-features = false, features = ["json", "rustls"] }
+# Read Chrome/Edge History and Login Data, which are SQLite files. `bundled`
+# compiles SQLite from the amalgamation so there is no system-sqlite dependency;
+# it needs the C toolchain the build already requires (MSVC).
+rusqlite = { version = "0.32", features = ["bundled"] }
+# Decrypt Chrome/Edge saved passwords (the v10 scheme: an AES-256-GCM key that
+# DPAPI unwraps). aes-gcm is pure Rust, so it adds no build-toolchain dependency.
+aes-gcm = "0.10"
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_UI_WindowsAndMessaging", "Win32_Graphics_Gdi", "Win32_Storage_FileSystem", "Win32_Security_Cryptography"] }

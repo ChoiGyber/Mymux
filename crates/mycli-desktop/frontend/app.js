@@ -16,6 +16,7 @@ const ICON = {
   edit: `<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L8 18l-4 1 1-4z"/></svg>`,
   memo: `<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 3h11l3 3v15H5z"/><path d="M16 3v4h4M8 11h8M8 15h8"/></svg>`,
   copy: `<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="8" y="8" width="11" height="12" rx="2"/><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h2"/></svg>`,
+  eye: `<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7-11-7-11-7z"/><circle cx="12" cy="12" r="3"/></svg>`,
   star: `<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m12 3 2.8 5.7 6.2.9-4.5 4.4 1.1 6.2-5.6-2.9-5.6 2.9 1.1-6.2L3 9.6l6.2-.9z"/></svg>`,
   close: `<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg>`,
   search: `<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="6"/><path d="m20 20-4.4-4.4"/></svg>`,
@@ -746,6 +747,7 @@ async function setupListeners() {
   const btnTabNew = document.getElementById("btn-tab-new");
   if (btnTabNew) btnTabNew.addEventListener("click", () => spawnTerminal());
   setupExplorerFileDrop();
+  setupAgentActivity();
 
   const tabCloseModal = document.getElementById("tab-close-modal");
   const tabCloseCancel = document.getElementById("tab-close-cancel");
@@ -3474,9 +3476,11 @@ async function createPane(parentEl, shell, args, cwd) {
   paneEl.addEventListener("mousedown", () => { if (focusedPaneId !== id) setFocusedPane(id); }, true);
   paneEl.addEventListener("click", () => { setFocusedPane(id); showExplorerForSession(id); });
   termWrap.addEventListener("click", () => { setFocusedPane(id); term.focus(); });
-  // A plain mouse drag should select text. dragDropEnabled:false re-enables the
-  // webview's native HTML5 drag, which would otherwise hijack a drag that begins
-  // over terminal text and stop xterm's selection — suppress it inside the pane.
+  // A plain mouse drag should select text. Whenever the webview delivers HTML5
+  // drag events (it does not while tauri.conf's `dragDropEnabled` is on, but
+  // that flag exists for the explorer's OS file drop and has been flipped both
+  // ways), a native drag starting over terminal text would hijack it and stop
+  // xterm's selection — suppress it inside the pane regardless.
   termWrap.addEventListener("dragstart", (e) => e.preventDefault());
   // ...and a drag must still select once the program turns mouse tracking ON.
   // xterm hands every button event to the program in that state and only lets
@@ -4298,6 +4302,7 @@ function markPaneReturnedToShell(id, t) {
   t.ctxLvl = 0;
   setPaneAiMode(t, false);
   clearPaneCtxUi(id, t);
+  clearPaneAgents(id, t);
 }
 
 function clearPaneCtxUi(id, t) {
@@ -5275,36 +5280,33 @@ function isAiLoginUrl(uri) {
 
 // The single gate every terminal link click goes through, whichever path found
 // the link — the WebLinks addon's regex or an OSC 8 hyperlink the program drew
-// itself. Keeping one gate means the two cannot drift apart: a plain click still
-// belongs to the running TUI (menus, buttons), Ctrl/Cmd+Click opens the link, and
-// an auth URL opens regardless because that IS the action the user was asked for.
+// itself. Keeping one gate means the two cannot drift apart.
+//
+// A plain click opens the link, straight into the in-app browser. The one case
+// where a click is NOT ours is a full-screen program that turned mouse tracking
+// on (vim, htop, a TUI menu): there the click is the program's input, so only
+// Ctrl/Cmd+Click opens the link and a bare click is left alone. An auth URL
+// opens regardless of any of this, because opening it IS the action the CLI just
+// asked the user to take.
 function handleTerminalLink(event, uri) {
-  if (event.ctrlKey || event.metaKey || isAiLoginUrl(uri)) openLinkFromTerminal(uri, isAiLoginUrl(uri));
+  if (isAiLoginUrl(uri)) return openLinkFromTerminal(uri, true);
+  const t = terminals.get(focusedPaneId);
+  const tracking = (t && t.term.modes.mouseTrackingMode) || "none";
+  const programOwnsClick = tracking !== "none";
+  if (event.ctrlKey || event.metaKey || !programOwnsClick) openLinkFromTerminal(uri);
   else hintLinkOnce();
 }
 
-// Ctrl+Click routes into the in-app browser tab when the Browser feature is
-// enabled; authentication links force the in-app route even if the optional
-// browser tab was hidden. Non-auth links retain the user's OS-browser fallback.
-function openLinkFromTerminal(uri, forceInApp = false) {
+// Every terminal link opens in Mymux's own browser — one path for all of them.
+// `openInNativeBrowser` turns the browser on if the user had hidden it, switches
+// to the native view, and navigates, so a link never leaves the app for an OS
+// browser. `isLogin` only changes the toast wording; the routing is the same,
+// and the login URL still never reaches the imported-profile launcher that could
+// start Chrome.
+function openLinkFromTerminal(uri, isLogin = false) {
   if (!/^https?:\/\//i.test(uri)) return;
-  // Authentication must stay in Mymux. Never hand the login URL to the
-  // imported-profile/Playwright launcher because that can start Chrome.
-  if (forceInApp) {
-    openInNativeBrowser(uri);
-    toast("로그인 링크를 Mymux 내부 브라우저에서 엽니다.");
-    return;
-  }
-  if (forceInApp || browserEnabled()) {
-    if (browserMode !== "native") setBrowserMode("native");
-    setBrowserView(true);
-    const nav = document.getElementById("nav-url");
-    if (nav) nav.value = uri;
-    nativeNavigate(uri);
-    if (forceInApp) toast("로그인 링크를 Mymux 브라우저에서 엽니다.");
-  } else {
-    invoke("open_external", { path: uri }).catch((e) => toast(String(e), true));
-  }
+  openInNativeBrowser(uri);
+  toast(isLogin ? "로그인 링크를 Mymux 브라우저에서 엽니다." : "Mymux 브라우저에서 링크를 엽니다.");
 }
 
 function browserProfileImported() {
@@ -6329,13 +6331,27 @@ function hideDropIndicator() {
   if (ind) ind.style.display = "none";
 }
 
+// A drag that actually moved is followed by a `click` on whatever it started
+// from. The session list uses that click to focus a session, so it has to be
+// able to tell a click apart from the tail of a drag. Cleared on the next
+// mousedown as well, so a drag that ends off any row cannot swallow a later
+// click.
+let paneDragEndedWithMove = false;
+function consumePaneDragClick() {
+  const wasDrag = paneDragEndedWithMove;
+  paneDragEndedWithMove = false;
+  return wasDrag;
+}
+
 function startPaneDrag(srcId, startEvent) {
   startEvent.preventDefault();
+  paneDragEndedWithMove = false;
   let dragging = false;
   let curTarget = null;
   let curPos = null;
   let curTabIdx = null;
   let curDropTargetId = null;
+  let curReorderId = null;
   let curDropAfter = true;
   const clearTabHighlight = () => {
     document.querySelectorAll("#terminal-tabs .tab.drop-target").forEach((el) => el.classList.remove("drop-target"));
@@ -6358,6 +6374,7 @@ function startPaneDrag(srcId, startEvent) {
       if (srcTab && targetIdx !== srcTab.tabIdx && tabs.has(targetIdx)) {
         curTarget = null;
         curDropTargetId = null;
+        curReorderId = null;
         curTabIdx = targetIdx;
         hideDropIndicator();
         clearTabHighlight();
@@ -6368,21 +6385,33 @@ function startPaneDrag(srcId, startEvent) {
     clearTabHighlight();
     curTabIdx = null;
     curDropTargetId = null;
+    curReorderId = null;
     const el = document.elementFromPoint(e.clientX, e.clientY);
-    // 2) Hovering a session-list row/group of another tab → move there on drop.
-    const sessRow = el && el.closest ? el.closest(".session-item[data-pty-id]") : null;
+    // 2) Hovering a session-list row → move into that tab, or, when the row
+    //    belongs to the dragged pane's own tab, reorder within it.
+    //    An agent row counts as its own session: those rows sit between the
+    //    session rows, and a drop aimed at a session should not fall through
+    //    just because it landed on one of that session's agents.
+    const agentRow = el && el.closest ? el.closest(".session-agent[data-owner-pty]") : null;
+    const sessRow = agentRow
+      ? sessionListEl.querySelector(`.session-item[data-pty-id="${agentRow.dataset.ownerPty}"]`)
+      : (el && el.closest ? el.closest(".session-item[data-pty-id]") : null);
     const sessGroup = el && el.closest ? el.closest(".session-group") : null;
     if (sessRow) {
       const targetPty = Number(sessRow.dataset.ptyId);
       const dstTab = Number.isFinite(targetPty) ? findTabForPane(targetPty) : null;
       const srcTab = findTabForPane(srcId);
-      if (dstTab && srcTab && dstTab.tabIdx !== srcTab.tabIdx && targetPty !== srcId) {
+      if (dstTab && srcTab && targetPty !== srcId) {
         curTarget = null;
         curPos = null;
-        curTabIdx = dstTab.tabIdx;
-        curDropTargetId = targetPty;
         const rect = sessRow.getBoundingClientRect();
         curDropAfter = (e.clientY - rect.top) > rect.height / 2;
+        if (dstTab.tabIdx === srcTab.tabIdx) {
+          curReorderId = targetPty;
+        } else {
+          curTabIdx = dstTab.tabIdx;
+          curDropTargetId = targetPty;
+        }
         sessRow.classList.toggle("drop-below", curDropAfter);
         sessRow.classList.toggle("drop-above", !curDropAfter);
         hideDropIndicator();
@@ -6429,10 +6458,19 @@ function startPaneDrag(srcId, startEvent) {
     clearTabHighlight();
     document.querySelectorAll(".session-item.drop-above,.session-item.drop-below,.session-group.drop-target").forEach((row) => row.classList.remove("drop-above", "drop-below", "drop-target"));
     if (!dragging) return;
+    // Tell the session list's click handler that this was a drag, not a click.
+    paneDragEndedWithMove = true;
     // Dropped on another tab's header / session-list row / group → move there.
     if (curTabIdx != null) {
       const srcTab = findTabForPane(srcId);
       if (srcTab && srcTab.tabIdx !== curTabIdx) movePaneToTab(srcId, curTabIdx, curDropTargetId, curDropAfter);
+      return;
+    }
+    // Dropped on a session row of its own tab → reorder inside that tab. Which
+    // half of the row took the drop decides whether it lands before or after.
+    if (curReorderId != null) {
+      const srcTab = findTabForPane(srcId);
+      if (srcTab) reorderSessionWithin(srcTab, srcId, curReorderId, curDropAfter);
       return;
     }
     if (curTarget != null) movePane(srcId, curTarget, curPos);
@@ -7155,6 +7193,8 @@ function initBrowserPanel() {
   document.getElementById("browser-port").addEventListener("input", () => updateBrowserInfo());
   document.getElementById("btn-browser-profile-scan").addEventListener("click", scanBrowserProfiles);
   document.getElementById("btn-browser-profile-import").addEventListener("click", importBrowserProfile);
+  document.getElementById("btn-browser-data-import").addEventListener("click", importBrowserData);
+  setupBrowserDataModal();
   document.querySelectorAll("#browser-panel .copy-btn").forEach((btn) => {
     btn.addEventListener("click", () => copyBrowserField(btn.dataset.copy));
   });
@@ -7393,6 +7433,8 @@ async function scanBrowserProfiles() {
     }
     select.disabled = false;
     importBtn.disabled = false;
+    const dataBtn = document.getElementById("btn-browser-data-import");
+    if (dataBtn) dataBtn.disabled = false;
     toast(`${browserImportProfiles.length}개 브라우저 프로필을 찾았습니다.`);
   } catch (e) {
     toast(String(e), true);
@@ -7424,6 +7466,197 @@ async function importBrowserProfile() {
   } catch (e) {
     toast(String(e), true);
   }
+}
+
+// ── Import Chrome/Edge bookmarks, history and saved passwords ────────────────
+// Read-only against the user's own profile, and only after an explicit consent
+// dialog. Passwords are the sensitive part: the warning names them outright,
+// and the result view keeps them masked until the user reveals one.
+let browserData = null;         // the last import result
+let browserDataKind = "bookmarks"; // which tab of the result modal is shown
+
+async function importBrowserData() {
+  const select = document.getElementById("browser-import-profile");
+  const selected = browserImportProfiles.find((p) => p.id === select.value);
+  if (!selected) { toast("먼저 Scan 으로 프로필을 고르세요.", true); return; }
+
+  const kinds = [];
+  if (document.getElementById("bd-bookmarks").checked) kinds.push("bookmarks");
+  if (document.getElementById("bd-history").checked) kinds.push("history");
+  const wantPw = document.getElementById("bd-passwords").checked;
+  if (wantPw) kinds.push("passwords");
+  if (kinds.length === 0) { toast("가져올 항목을 하나 이상 선택하세요.", true); return; }
+
+  // Passwords earn their own, blunter consent line.
+  const lines = [
+    `${selected.browser}의 “${selected.name}” 프로필에서 다음을 읽어옵니다:`,
+    `· ${kinds.map((k) => ({ bookmarks: "북마크", history: "방문 기록", passwords: "저장된 비밀번호" }[k])).join(", ")}`,
+    "",
+    "원본 프로필은 수정하지 않고 읽기만 합니다.",
+  ];
+  if (wantPw) {
+    lines.push("", "⚠ 저장된 비밀번호를 복호화해 화면에 표시합니다. 신뢰할 수 있는 환경에서만 진행하세요.");
+  }
+  if (!window.confirm(lines.join("\n"))) return;
+
+  const btn = document.getElementById("btn-browser-data-import");
+  if (btn) { btn.disabled = true; btn.textContent = "불러오는 중…"; }
+  try {
+    browserData = await invoke("browser_import_data", {
+      browser: selected.browser,
+      profile: selected.profile,
+      kinds,
+      consent: true,
+    });
+    showBrowserDataModal(kinds[0]);
+  } catch (e) {
+    toast(String(e), true);
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = "동의하고 불러오기"; }
+  }
+}
+
+function setupBrowserDataModal() {
+  const modal = document.getElementById("browser-data-modal");
+  if (!modal) return;
+  document.getElementById("browser-data-close")?.addEventListener("click", hideBrowserDataModal);
+  document.getElementById("browser-data-ok")?.addEventListener("click", hideBrowserDataModal);
+  modal.addEventListener("click", (e) => { if (e.target && e.target.id === "browser-data-modal") hideBrowserDataModal(); });
+  modal.querySelectorAll(".bd-tab").forEach((tab) => {
+    tab.addEventListener("click", () => showBrowserDataModal(tab.dataset.kind));
+  });
+  document.getElementById("browser-data-search")?.addEventListener("input", renderBrowserDataList);
+}
+
+function showBrowserDataModal(kind) {
+  if (!browserData) return;
+  browserDataKind = kind || browserDataKind;
+  const modal = document.getElementById("browser-data-modal");
+  if (!modal) return;
+
+  for (const k of ["bookmarks", "history", "passwords"]) {
+    const count = (browserData[k] || []).length;
+    const el = document.getElementById(`bd-count-${k}`);
+    if (el) el.textContent = count;
+  }
+  modal.querySelectorAll(".bd-tab").forEach((tab) => {
+    tab.classList.toggle("active", tab.dataset.kind === browserDataKind);
+  });
+  const notes = document.getElementById("browser-data-notes");
+  if (notes) {
+    notes.textContent = (browserData.notes || []).join(" ");
+    notes.style.display = (browserData.notes || []).length ? "" : "none";
+  }
+  const search = document.getElementById("browser-data-search");
+  if (search) search.value = "";
+  renderBrowserDataList();
+  modal.classList.remove("hidden");
+}
+
+function hideBrowserDataModal() {
+  document.getElementById("browser-data-modal")?.classList.add("hidden");
+}
+
+function renderBrowserDataList() {
+  const list = document.getElementById("browser-data-list");
+  if (!list || !browserData) return;
+  list.replaceChildren();
+  const q = (document.getElementById("browser-data-search")?.value || "").trim().toLowerCase();
+  const items = browserData[browserDataKind] || [];
+
+  const match = (hay) => !q || hay.toLowerCase().includes(q);
+  let shown = 0;
+  for (const item of items) {
+    let row;
+    if (browserDataKind === "passwords") {
+      if (!match(`${item.url} ${item.username}`)) continue;
+      row = passwordRow(item);
+    } else {
+      const title = item.title || item.url;
+      if (!match(`${title} ${item.url}`)) continue;
+      row = linkRow(title, item.url, browserDataKind === "history" ? item : null);
+    }
+    list.appendChild(row);
+    if (++shown >= 1000) break; // a modal list past a thousand rows helps no one
+  }
+  if (shown === 0) {
+    const empty = document.createElement("div");
+    empty.className = "browser-data-empty";
+    empty.textContent = q ? "검색 결과가 없습니다." : "항목이 없습니다.";
+    list.appendChild(empty);
+  }
+}
+
+// A bookmark / history row: title over URL, opening in the in-app browser.
+function linkRow(title, url, history) {
+  const row = document.createElement("div");
+  row.className = "browser-data-row link";
+  const main = document.createElement("div");
+  main.className = "bd-main";
+  const t = document.createElement("div");
+  t.className = "bd-title";
+  t.textContent = title;
+  const u = document.createElement("div");
+  u.className = "bd-url";
+  u.textContent = url;
+  main.append(t, u);
+  row.appendChild(main);
+  if (history && history.visitCount != null) {
+    const meta = document.createElement("div");
+    meta.className = "bd-meta";
+    const when = history.lastVisitMs ? new Date(history.lastVisitMs).toLocaleDateString() : "";
+    meta.textContent = [when, `${history.visitCount}회`].filter(Boolean).join(" · ");
+    row.appendChild(meta);
+  }
+  row.title = url + "\n클릭하면 Mymux 브라우저에서 엽니다";
+  row.addEventListener("click", () => { openInNativeBrowser(url); hideBrowserDataModal(); });
+  return row;
+}
+
+// A password row: origin + username, secret masked behind a reveal toggle.
+function passwordRow(item) {
+  const row = document.createElement("div");
+  row.className = "browser-data-row password";
+  const main = document.createElement("div");
+  main.className = "bd-main";
+  const t = document.createElement("div");
+  t.className = "bd-title";
+  t.textContent = item.username || "(사용자명 없음)";
+  const u = document.createElement("div");
+  u.className = "bd-url";
+  u.textContent = item.url;
+  main.append(t, u);
+  row.appendChild(main);
+
+  const secret = document.createElement("div");
+  secret.className = "bd-secret";
+  if (item.blocked) {
+    secret.classList.add("blocked");
+    secret.textContent = "🔒 App-Bound";
+    secret.title = "App-Bound Encryption 이라 브라우저 밖에서는 읽을 수 없습니다.";
+  } else if (item.password == null) {
+    secret.textContent = "—";
+  } else {
+    const dots = document.createElement("span");
+    dots.className = "bd-pw";
+    dots.textContent = "••••••••";
+    const reveal = makeIconButton("bd-reveal", ICON.eye || "👁", "표시");
+    let shown = false;
+    reveal.addEventListener("click", (e) => {
+      e.stopPropagation();
+      shown = !shown;
+      dots.textContent = shown ? item.password : "••••••••";
+    });
+    const copy = makeIconButton("bd-copy", ICON.copy, "복사");
+    copy.addEventListener("click", async (e) => {
+      e.stopPropagation();
+      const ok = await clipboardWrite(item.password);
+      toast(ok ? "비밀번호를 복사했습니다." : "복사하지 못했습니다.", !ok);
+    });
+    secret.append(dots, reveal, copy);
+  }
+  row.appendChild(secret);
+  return row;
 }
 
 async function copyBrowserField(which) {
@@ -8162,32 +8395,10 @@ function addTab(tabIdx, label) {
     startRenameTabInBar(tabIdx, tab);
   });
   tab.title = "Double-click to rename · drop a session here to move it to this tab";
-  // Accept drops from the session list (HTML5 DnD): drop a session row onto
-  // another tab's header to move the pane there.
-  tab.addEventListener("dragover", (e) => {
-    let hasSession = false;
-    try {
-      hasSession = Array.from(e.dataTransfer.types || []).includes("text/plain");
-    } catch { hasSession = true; }
-    if (!hasSession) return;
-    e.preventDefault();
-    e.dataTransfer.dropEffect = "move";
-    tab.classList.add("drop-target");
-  });
-  tab.addEventListener("dragleave", (e) => {
-    if (tab.contains(e.relatedTarget)) return;
-    tab.classList.remove("drop-target");
-  });
-  tab.addEventListener("drop", (e) => {
-    e.preventDefault();
-    e.stopPropagation();
-    tab.classList.remove("drop-target");
-    const pid = Number(e.dataTransfer.getData("text/plain"));
-    if (!pid) return;
-    const srcTab = findTabForPane(pid);
-    if (!srcTab || srcTab.tabIdx === tabIdx) return;
-    movePaneToTab(pid, tabIdx);
-  });
+  // Dropping a session onto this header is handled by startPaneDrag, which
+  // hit-tests the header itself on every mouse move. No HTML5 drop target here:
+  // `dragDropEnabled` is on for the explorer's OS file drop, and with that on
+  // the webview never delivers HTML5 drag events at all (see refreshSessionList).
   const newTabButton = document.getElementById("btn-tab-new");
   if (newTabButton) terminalTabs.insertBefore(tab, newTabButton);
   else terminalTabs.appendChild(tab);
@@ -9315,14 +9526,8 @@ function refreshSessionList() {
     group.textContent = tab.label || `Tab ${tabIdx + 1}`;
     group.title = "Double-click to rename · drop a session here to move it to this tab";
     group.addEventListener("dblclick", () => startRenameTab(tabIdx, group));
-    group.addEventListener("dragover", (e) => { e.preventDefault(); group.classList.add("drop-target"); });
-    group.addEventListener("dragleave", () => group.classList.remove("drop-target"));
-    group.addEventListener("drop", (e) => {
-      e.preventDefault();
-      group.classList.remove("drop-target");
-      const pid = Number(e.dataTransfer.getData("text/plain"));
-      if (pid) movePaneToTab(pid, tabIdx);
-    });
+    // Dropping a session on this header moves it into the tab — handled by
+    // startPaneDrag's hit-testing, not by HTML5 drop events (see below).
     sessionListEl.appendChild(group);
 
     tab.panes.forEach((ptyId, i) => {
@@ -9354,23 +9559,9 @@ function refreshSessionList() {
 
       const actionsEl = document.createElement("span");
       actionsEl.className = "session-actions";
-      actionsEl.draggable = false;
       actionsEl.setAttribute("role", "group");
       actionsEl.setAttribute("aria-label", "세션 작업 버튼");
       actionsEl.append(renameBtn);
-      // A draggable parent can suppress a button click after even a tiny mouse
-      // movement. Suspend row dragging for the full action-button press.
-      actionsEl.addEventListener("pointerdown", (e) => {
-        if (e.button !== 0) return;
-        li.draggable = false;
-        const restoreRowDrag = () => {
-          li.draggable = true;
-          document.removeEventListener("pointerup", restoreRowDrag, true);
-          document.removeEventListener("pointercancel", restoreRowDrag, true);
-        };
-        document.addEventListener("pointerup", restoreRowDrag, true);
-        document.addEventListener("pointercancel", restoreRowDrag, true);
-      });
 
       // SSH panes: star saves this connection as a one-click favorite.
       if (t.type === "ssh" && t.session && t.session.kind === "ssh") {
@@ -9385,49 +9576,29 @@ function refreshSessionList() {
       actionsEl.append(closeBtn);
       li.append(dotEl, nameEl, paneNo, actionsEl);
 
-      // Drag a session: reorder it within its own tab, or drop it onto another
-      // tab's session (or that tab's group header) to move it to that tab.
-      li.draggable = true;
-      li.addEventListener("dragstart", (e) => {
-        if (e.target.closest(".session-actions")) {
-          e.preventDefault();
-          return;
-        }
-        e.dataTransfer.setData("text/plain", String(ptyId));
-        e.dataTransfer.effectAllowed = "move";
-      });
-      li.addEventListener("dragover", (e) => {
-        e.preventDefault();
-        const rect = li.getBoundingClientRect();
-        const after = (e.clientY - rect.top) > rect.height / 2;
-        li.classList.toggle("drop-below", after);
-        li.classList.toggle("drop-above", !after);
-      });
-      li.addEventListener("dragleave", (e) => {
-        if (li.contains(e.relatedTarget)) return;
-        li.classList.remove("drop-above", "drop-below");
-      });
-      li.addEventListener("drop", (e) => {
-        e.preventDefault();
-        li.classList.remove("drop-above", "drop-below");
-        const dragId = Number(e.dataTransfer.getData("text/plain"));
-        if (!dragId || dragId === ptyId) return;
-        const srcTab = findTabForPane(dragId);
-        const dstTab = findTabForPane(ptyId);
-        if (!srcTab || !dstTab) return;
-        // Which half of the row it was dropped on decides whether the pane
-        // goes before or after the one under the cursor — in the list and,
-        // now, in the layout too.
-        const rect = li.getBoundingClientRect();
-        const after = (e.clientY - rect.top) > rect.height / 2;
-        if (srcTab.tabIdx === dstTab.tabIdx) {
-          reorderSessionWithin(dstTab, dragId, ptyId, after);      // same tab
-        } else {
-          movePaneToTab(dragId, dstTab.tabIdx, ptyId, after);      // other tab
-        }
+      // Drag a session: reorder it within its own tab, drop it on another tab's
+      // session row (or that tab's group header, or the tab header at the top)
+      // to move it there, or drop it on a pane edge to re-tile.
+      //
+      // Mouse-driven, NOT HTML5 drag-and-drop. `dragDropEnabled` has to stay on
+      // in tauri.conf.json for the explorer's OS file drop, and with it on the
+      // webview hands every drag to the OS handler and delivers no `dragstart`
+      // /`drop` of its own — which is exactly how the list's HTML5 drag died
+      // when v0.1.43 turned the flag back on. startPaneDrag hit-tests targets
+      // on each mouse move, so it is unaffected either way, and it is the same
+      // engine the pane grip already uses.
+      li.addEventListener("mousedown", (e) => {
+        if (e.button !== 0) return;
+        if (e.target.closest(".session-actions") || e.target.closest("input")) return;
+        startPaneDrag(ptyId, e);
       });
 
-      li.addEventListener("click", () => focusSession(ptyId));
+      li.addEventListener("click", () => {
+        // A completed drag is followed by a click on the row it started from.
+        // Focusing on that click would fight the move that just happened.
+        if (consumePaneDragClick()) return;
+        focusSession(ptyId);
+      });
       nameEl.addEventListener("dblclick", (e) => { e.stopPropagation(); startRenameSession(ptyId, nameEl); });
       renameBtn.addEventListener("click", (e) => { e.stopPropagation(); startRenameSession(ptyId, nameEl); });
       closeBtn.addEventListener("click", (e) => { e.stopPropagation(); closePane(ptyId); });
@@ -9436,9 +9607,10 @@ function refreshSessionList() {
     });
   }
 
-  // Rebuilding dropped the ctx pills — re-attach them for sessions that have one.
+  // Rebuilding dropped the ctx pills and the agent rows — put both back.
   for (const [pid, tt] of terminals) {
     if (tt.ctxPct != null || tt.codexDetected || tt.aiMode) updateCtxUi(pid, tt);
+    if (tt.agents && tt.agents.length) renderAgentRows(pid);
   }
 }
 
@@ -9448,6 +9620,368 @@ function updateSessionActive() {
   sessionListEl.querySelectorAll(".session-item").forEach((el) => {
     el.classList.toggle("active", Number(el.dataset.ptyId) === focusedPaneId);
   });
+}
+
+// ── Subagents under their session ───────────────────────────────────────────
+// When the AI CLI in a pane hands work to a subagent, that agent shows up as a
+// child row under the pane's session in the list: which agent, what it was
+// asked to do, and whether it is still running.
+//
+// The data comes from Claude Code's own session transcript, read by the Rust
+// `claude_agent_activity` command — see crates/mycli-desktop/src/agents.rs for
+// how a transcript is matched to a pane. Scraping the pane was the alternative
+// and is a worse one: a TUI repaint re-wraps and truncates the line an agent
+// launch prints, and it never states plainly that an agent has finished.
+//
+// Codex panes are skipped (it has no subagents), and so are SSH panes: their
+// transcript lives on the remote host, not in this machine's ~/.claude.
+const AGENT_POLL_MS = 2500;
+// Newest agent rows to draw under one session once it is fully expanded. The
+// full list stays in `t.agents`; this only bounds how tall one session can get.
+const AGENT_ROWS_MAX = 24;
+// …and how many are drawn BEFORE the user asks for more. A single session can
+// launch a dozen agents, and a dozen three-line rows buries every other session
+// in the sidebar — so the default is a short preview with the rest one click
+// away. Agents that are still running are always shown on top of this, because
+// a preview that hides live work is worse than a long list.
+const AGENT_ROWS_PREVIEW = 3;
+
+const AGENT_STATUS = {
+  running: { icon: "◐", label: "실행 중" },
+  done: { icon: "✓", label: "완료" },
+  failed: { icon: "✕", label: "실패" },
+  cancelled: { icon: "⊘", label: "취소됨" },
+  // Launched, but the transcript never recorded how it ended and the session
+  // that owned it is gone — what an agent-team teammate normally leaves behind.
+  ended: { icon: "◌", label: "종료됨" },
+};
+
+function agentStatusOf(agent) {
+  return AGENT_STATUS[agent.status] || AGENT_STATUS.running;
+}
+
+function paneRunsClaude(t) {
+  return !!t && !!t.aiMode && !t.codexDetected && t.ctxSource !== "codex" && !isRemotePane(t);
+}
+
+function agentPollTargets() {
+  const targets = [];
+  for (const [id, t] of terminals) {
+    if (!paneRunsClaude(t)) continue;
+    const cwd = t.cwd || (t.session && t.session.cwd) || null;
+    if (!cwd) continue;
+    targets.push({
+      paneId: id,
+      cwd,
+      sinceMs: t.aiSince || null,
+      transcript: t.agentTranscript || null,
+    });
+  }
+  return targets;
+}
+
+// `id:status` per agent — everything a row's shape depends on. Elapsed time is
+// deliberately left out: a running row is retimed in place instead of rebuilt.
+function agentListSignature(agents) {
+  return (agents || []).map((a) => `${a.id}:${a.status}`).join("|");
+}
+
+// The first poll after a session is picked up reads a whole transcript, which
+// can outlast the interval. Never let a second poll start on top of it.
+let agentPollInFlight = false;
+
+async function pollAgentActivity() {
+  if (agentPollInFlight) return;
+  const targets = agentPollTargets();
+  if (targets.length === 0) return;
+  let rows;
+  agentPollInFlight = true;
+  try {
+    rows = await invoke("claude_agent_activity", { panes: targets });
+  } catch (e) {
+    // No transcript for this folder yet, or it could not be read. The session
+    // simply shows no agents; there is nothing for the user to act on.
+    console.debug("claude_agent_activity failed", e);
+    return;
+  } finally {
+    // Must run on the failure path too, or one bad read stops every later poll.
+    agentPollInFlight = false;
+  }
+  for (const row of rows || []) {
+    const t = terminals.get(row.paneId);
+    if (!t) continue;
+    t.agentTranscript = row.transcript || null;
+    const before = agentListSignature(t.agents);
+    t.agents = row.agents || [];
+    if (agentListSignature(t.agents) !== before) renderAgentRows(row.paneId);
+  }
+  tickAgentElapsed();
+}
+
+// A running agent's row shows how long it has been going, so its meta line has
+// to move even on the polls where nothing about the list changed.
+function tickAgentElapsed() {
+  if (!sessionListEl) return;
+  for (const [ptyId, t] of terminals) {
+    if (!t.agents) continue;
+    for (const agent of t.agents) {
+      if (agent.status !== "running") continue;
+      // Tool-use ids are `toolu_` plus base62, so they need no escaping here.
+      const meta = sessionListEl.querySelector(
+        `.session-agent[data-owner-pty="${ptyId}"][data-agent-id="${agent.id}"] .session-agent-meta`,
+      );
+      if (meta) meta.textContent = agentMetaText(agent);
+    }
+  }
+}
+
+function formatAgentDuration(ms) {
+  if (ms == null || !Number.isFinite(ms) || ms < 0) return "";
+  const seconds = Math.round(ms / 1000);
+  if (seconds < 60) return `${seconds}초`;
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes}분 ${seconds % 60}초`;
+  return `${Math.floor(minutes / 60)}시간 ${minutes % 60}분`;
+}
+
+function formatAgentTokens(total) {
+  if (total == null || !Number.isFinite(total)) return "";
+  return total < 1000 ? `${total} 토큰` : `${(total / 1000).toFixed(1)}k 토큰`;
+}
+
+// One line of status under the agent's name: elapsed time while it runs, and
+// what it cost once it is done.
+function agentMetaText(agent) {
+  const parts = [];
+  if (agent.status === "running") {
+    const elapsed = agent.startedMs ? formatAgentDuration(Date.now() - agent.startedMs) : "";
+    parts.push(elapsed ? `실행 중 · ${elapsed}` : "실행 중");
+    if (agent.background) parts.push("백그라운드");
+  } else {
+    parts.push(agentStatusOf(agent).label);
+    const spent = formatAgentDuration(agent.durationMs);
+    if (spent) parts.push(spent);
+    if (agent.toolUses != null) parts.push(`도구 ${agent.toolUses}회`);
+    const tokens = formatAgentTokens(agent.totalTokens);
+    if (tokens) parts.push(tokens);
+  }
+  return parts.join(" · ");
+}
+
+// Count pill on the session row that folds the agent rows away. Lives next to
+// the action buttons and disappears with the last agent.
+function updateAgentToggle(row, ptyId, agents) {
+  let toggle = row.querySelector(".session-agents-toggle");
+  if (agents.length === 0) {
+    if (toggle) toggle.remove();
+    return;
+  }
+  if (!toggle) {
+    toggle = document.createElement("button");
+    toggle.type = "button";
+    toggle.className = "session-agents-toggle";
+    // Pressing the pill must fold the list, not pick the row up for a drag or
+    // move the focus to the session.
+    toggle.addEventListener("mousedown", (e) => e.stopPropagation());
+    toggle.addEventListener("click", (e) => {
+      e.stopPropagation();
+      const t = terminals.get(ptyId);
+      if (!t) return;
+      t.agentsCollapsed = !t.agentsCollapsed;
+      renderAgentRows(ptyId);
+    });
+    const actions = row.querySelector(".session-actions");
+    if (actions) actions.before(toggle);
+    else row.appendChild(toggle);
+  }
+  const t = terminals.get(ptyId);
+  const running = agents.filter((a) => a.status === "running").length;
+  const collapsed = !!(t && t.agentsCollapsed);
+  toggle.textContent = `${collapsed ? "▸" : "▾"} ${running > 0 ? `${running}/${agents.length}` : agents.length}`;
+  toggle.classList.toggle("has-running", running > 0);
+  toggle.setAttribute(
+    "aria-label",
+    running > 0
+      ? `agent ${agents.length}개 중 ${running}개 실행 중 — 목록 접기/펴기`
+      : `agent ${agents.length}개 — 목록 접기/펴기`,
+  );
+  toggle.title = `${toggle.getAttribute("aria-label")}\n${
+    collapsed ? "펴면" : "접으면"
+  } 이 세션의 agent 줄이 ${collapsed ? "다시 보입니다" : "모두 숨습니다"}`;
+}
+
+// Rebuild the agent rows that belong to one session. They are siblings of the
+// session row rather than nested children, because the session list is one flat
+// <ul> and a row has to stay a direct <li> of it for the drag hit-testing.
+// Which of a session's agents to actually draw. Everything still running, plus
+// enough of the newest finished ones to reach the preview size — unless the
+// user asked for the whole list, which is still capped so one busy session
+// cannot fill the sidebar on its own.
+function visibleAgents(agents, expanded) {
+  if (expanded) return agents.slice(-AGENT_ROWS_MAX);
+  const running = agents.filter((a) => a.status === "running");
+  const room = Math.max(0, AGENT_ROWS_PREVIEW - running.length);
+  // `slice(-0)` is `slice(0)`, which is the WHOLE array — so once the running
+  // agents alone fill the preview, taking "the last 0 finished ones" would
+  // quietly show every agent there is. Ask for none explicitly instead.
+  const recent = room === 0 ? [] : agents.filter((a) => a.status !== "running").slice(-room);
+  // Keep the launch order rather than grouping by status: the list reads as a
+  // history, and a row must not jump when an agent finishes.
+  const keep = new Set([...running, ...recent]);
+  return agents.filter((a) => keep.has(a));
+}
+
+function renderAgentRows(ptyId) {
+  if (!sessionListEl) return;
+  sessionListEl
+    .querySelectorAll(`li[data-owner-pty="${ptyId}"]`)
+    .forEach((el) => el.remove());
+  const row = sessionListEl.querySelector(`.session-item[data-pty-id="${ptyId}"]`);
+  if (!row) return;
+  const t = terminals.get(ptyId);
+  const agents = (t && t.agents) || [];
+  updateAgentToggle(row, ptyId, agents);
+  if (agents.length === 0 || (t && t.agentsCollapsed)) return;
+
+  const expanded = !!(t && t.agentsExpanded);
+  const shown = visibleAgents(agents, expanded);
+  let anchor = row;
+  for (const agent of shown) {
+    const li = document.createElement("li");
+    li.className = `session-agent status-${agent.status}`;
+    li.dataset.ownerPty = String(ptyId);
+    li.dataset.agentId = agent.id;
+
+    const dot = document.createElement("span");
+    dot.className = "session-agent-dot";
+    dot.textContent = agentStatusOf(agent).icon;
+
+    const name = document.createElement("span");
+    name.className = "session-agent-name";
+    name.textContent = agent.name;
+
+    const desc = document.createElement("span");
+    desc.className = "session-agent-desc";
+    desc.textContent = agent.description || "(설명 없음)";
+
+    const meta = document.createElement("span");
+    meta.className = "session-agent-meta";
+    meta.textContent = agentMetaText(agent);
+
+    const body = document.createElement("span");
+    body.className = "session-agent-body";
+    body.append(name, desc, meta);
+
+    li.append(dot, body);
+    li.title = `${agent.name} — ${agent.description || "(설명 없음)"}\n클릭하면 프롬프트 전문을 봅니다`;
+    li.addEventListener("click", (e) => {
+      e.stopPropagation();
+      showAgentDetail(ptyId, agent.id);
+    });
+    anchor.after(li);
+    anchor = li;
+  }
+
+  // Tail row: reveal the agents the preview left out, or fold them away again.
+  const hidden = agents.length - shown.length;
+  if (hidden <= 0 && !expanded) return;
+  const more = document.createElement("li");
+  more.className = "session-agent-more";
+  more.dataset.ownerPty = String(ptyId);
+  const capped = expanded && agents.length > AGENT_ROWS_MAX;
+  more.textContent = expanded ? "접기" : `+${hidden}개 더 보기`;
+  more.title = capped
+    ? `가장 최근 ${AGENT_ROWS_MAX}개만 표시합니다 (전체 ${agents.length}개)`
+    : expanded
+      ? "최근 몇 개만 남기고 접습니다"
+      : `숨겨진 agent ${hidden}개를 모두 폅니다`;
+  more.addEventListener("mousedown", (e) => e.stopPropagation());
+  more.addEventListener("click", (e) => {
+    e.stopPropagation();
+    const target = terminals.get(ptyId);
+    if (!target) return;
+    target.agentsExpanded = !target.agentsExpanded;
+    renderAgentRows(ptyId);
+  });
+  anchor.after(more);
+}
+
+// Drop everything we know about a pane's agents — the CLI that produced them is
+// gone, so the list would only be stale history for a session that no longer
+// exists.
+function clearPaneAgents(ptyId, t) {
+  if (!t) return;
+  t.agents = null;
+  t.agentTranscript = null;
+  t.agentsExpanded = false;
+  t.aiSince = 0;
+  const row = sessionListEl && sessionListEl.querySelector(`.session-item[data-pty-id="${ptyId}"]`);
+  if (row) row.querySelector(".session-agents-toggle")?.remove();
+  sessionListEl
+    ?.querySelectorAll(`li[data-owner-pty="${ptyId}"]`)
+    .forEach((el) => el.remove());
+}
+
+// Full detail for one agent: what it was asked, what it cost, and the prompt
+// it was handed — none of which fits on a sidebar row.
+function showAgentDetail(ptyId, agentId) {
+  const t = terminals.get(ptyId);
+  const agent = ((t && t.agents) || []).find((a) => a.id === agentId);
+  const modal = document.getElementById("agent-modal");
+  if (!agent || !modal) return;
+
+  const titleEl = document.getElementById("agent-modal-title");
+  const descEl = document.getElementById("agent-modal-desc");
+  const metaEl = document.getElementById("agent-modal-meta");
+  const promptEl = document.getElementById("agent-modal-prompt");
+  if (titleEl) titleEl.textContent = agent.name;
+  if (descEl) descEl.textContent = agent.description || "(설명 없음)";
+
+  if (metaEl) {
+    metaEl.innerHTML = "";
+    const rows = [
+      ["상태", agentMetaText(agent)],
+      ["모델", agent.model || ""],
+      ["실행 방식", agent.background ? "백그라운드" : "전면"],
+      ["시작", agent.startedMs ? new Date(agent.startedMs).toLocaleString() : ""],
+      ["결과 요약", agent.summary || ""],
+      ["세션", sessionLabelFor(t)],
+    ];
+    for (const [label, value] of rows) {
+      if (!value) continue;
+      const dt = document.createElement("dt");
+      dt.textContent = label;
+      const dd = document.createElement("dd");
+      dd.textContent = value;
+      metaEl.append(dt, dd);
+    }
+  }
+  if (promptEl) promptEl.textContent = agent.prompt || "(프롬프트가 기록되지 않았습니다)";
+
+  const copyBtn = document.getElementById("agent-modal-copy");
+  if (copyBtn) {
+    copyBtn.onclick = async () => {
+      const copied = await clipboardWrite(agent.prompt || "");
+      toast(copied ? "프롬프트를 복사했습니다." : "복사하지 못했습니다.", !copied);
+    };
+  }
+  modal.classList.remove("hidden");
+}
+
+function hideAgentDetail() {
+  document.getElementById("agent-modal")?.classList.add("hidden");
+}
+
+function setupAgentActivity() {
+  document.getElementById("agent-modal-close")?.addEventListener("click", hideAgentDetail);
+  document.getElementById("agent-modal-ok")?.addEventListener("click", hideAgentDetail);
+  // Click outside the box closes it, the same as the app's other modals.
+  document.getElementById("agent-modal")?.addEventListener("click", (e) => {
+    if (e.target && e.target.id === "agent-modal") hideAgentDetail();
+  });
+  // One timer for the whole app: it returns immediately while no pane is
+  // running a Claude CLI, so there is nothing to start and stop.
+  setInterval(pollAgentActivity, AGENT_POLL_MS);
 }
 
 // Click a session → switch to its tab (if needed) and move the cursor to it.
@@ -10084,6 +10618,9 @@ function renderAllPaneCommandShortcuts() {
 function setPaneAiMode(t, active) {
   if (!t || t.aiMode === active) return;
   t.aiMode = active;
+  // When the AI CLI came up is what lets the transcript lookup pick THIS pane's
+  // session out of the several a project folder can hold (see agents.rs).
+  if (active) t.aiSince = Date.now();
   renderPaneCommandShortcuts(t.id);
 }
 

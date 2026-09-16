@@ -1783,7 +1783,7 @@ html[data-theme="light"] #toolbar-actions #btn-update:hover {
 .cmd-item.is-fav { border-left: 2px solid var(--accent); }
 
 /* Generic centered modal (close prompt, ssh password prompt) */
-#close-modal, #sshpw-modal, #ssh-modal, #update-modal, #whatsnew-modal, #sftp-unsupported-modal, #sftp-ai-prompt-modal, #restore-session-modal, #notify-modal, #replay-modal {
+#close-modal, #sshpw-modal, #ssh-modal, #update-modal, #whatsnew-modal, #sftp-unsupported-modal, #sftp-ai-prompt-modal, #restore-session-modal, #notify-modal, #replay-modal, #agent-modal, #browser-data-modal {
   position: fixed;
   inset: 0;
   background: rgba(0, 0, 0, 0.55);
@@ -2703,6 +2703,211 @@ html[data-theme="dark"] .pane-command-shortcut {
 .session-rename:hover { color: var(--accent); }
 .session-close:hover { opacity: 1; color: var(--red); }
 .session-item { cursor: grab; }
+
+/* ── Subagents listed under their session ──
+   Child rows of the session that launched them. They are siblings of the
+   session row in the flat <ul>, so the indent is what makes them read as
+   children. */
+.session-agents-toggle {
+  flex-shrink: 0;
+  padding: 0 5px;
+  height: 16px;
+  line-height: 14px;
+  font-size: 10px;
+  font-family: inherit;
+  color: var(--text-dim);
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.session-agents-toggle:hover { color: var(--text); border-color: var(--accent); }
+.session-agents-toggle.has-running { color: var(--accent); border-color: var(--accent); }
+.session-agent {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  margin: 0 0 2px 16px;
+  padding: 4px 8px 4px 6px;
+  border-left: 1px solid var(--border);
+  border-radius: 0 4px 4px 0;
+  cursor: pointer;
+  font-size: 12px;
+  transition: background 0.1s;
+  user-select: none;
+}
+.session-agent:hover { background: var(--surface-hover); }
+.session-agent-dot {
+  flex-shrink: 0;
+  width: 12px;
+  text-align: center;
+  line-height: 16px;
+  color: var(--text-dim);
+}
+.session-agent.status-running .session-agent-dot {
+  color: var(--accent);
+  animation: agentSpin 1.4s linear infinite;
+}
+.session-agent.status-done .session-agent-dot { color: var(--green); }
+.session-agent.status-failed .session-agent-dot { color: var(--red); }
+/* Ended with no recorded outcome — neither success nor failure to claim. */
+.session-agent.status-ended .session-agent-dot,
+.session-agent.status-cancelled .session-agent-dot { color: var(--text-dim); }
+@keyframes agentSpin { to { transform: rotate(360deg); } }
+.session-agent-body {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+  flex: 1;
+}
+.session-agent-name {
+  font-size: 11px;
+  color: var(--accent);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.session-agent-desc {
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.session-agent-meta {
+  font-size: 10px;
+  color: var(--text-dim);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* Tail row that reveals the agents the preview left out. Shares the child
+   indent so it reads as part of the same group. */
+.session-agent-more {
+  margin: 0 0 4px 16px;
+  padding: 3px 8px 3px 18px;
+  border-left: 1px solid var(--border);
+  border-radius: 0 4px 4px 0;
+  color: var(--text-dim);
+  font-size: 11px;
+  cursor: pointer;
+  user-select: none;
+}
+.session-agent-more:hover { background: var(--surface-hover); color: var(--accent); }
+
+/* Chrome/Edge data import: the selector row and the result modal. */
+.browser-data-import { border-top: 1px dashed var(--border); margin-top: 4px; padding-top: 8px; }
+.browser-data-import .bd-chk {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--text-dim);
+  cursor: pointer;
+}
+.browser-data-box { width: 620px; max-width: 92vw; }
+.browser-data-notes {
+  margin: 0 0 10px !important;
+  padding: 7px 9px;
+  border-radius: var(--radius);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  color: var(--text-dim);
+  font-size: 12px !important;
+}
+.browser-data-tabs { display: flex; gap: 4px; margin-bottom: 8px; }
+.bd-tab {
+  flex: 1;
+  padding: 6px 8px;
+  font-size: 12px;
+  color: var(--text-dim);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  cursor: pointer;
+}
+.bd-tab.active { color: var(--text); border-color: var(--accent); }
+.bd-count {
+  display: inline-block;
+  min-width: 16px;
+  padding: 0 4px;
+  border-radius: 8px;
+  background: var(--surface-hover);
+  font-size: 10px;
+}
+#browser-data-search {
+  width: 100%;
+  box-sizing: border-box;
+  margin-bottom: 8px;
+  padding: 6px 8px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  color: var(--text);
+  font-size: 12px;
+}
+.browser-data-list {
+  max-height: 48vh;
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+.browser-data-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 10px;
+  border-bottom: 1px solid var(--border);
+  font-size: 12px;
+}
+.browser-data-row:last-child { border-bottom: none; }
+.browser-data-row.link { cursor: pointer; }
+.browser-data-row.link:hover { background: var(--surface-hover); }
+.bd-main { flex: 1; min-width: 0; }
+.bd-title { color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.bd-url { color: var(--text-dim); font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.bd-meta { flex-shrink: 0; color: var(--text-dim); font-size: 10px; text-align: right; }
+.bd-secret { display: inline-flex; align-items: center; gap: 4px; flex-shrink: 0; }
+.bd-secret.blocked { color: var(--text-dim); font-size: 11px; }
+.bd-pw { font-family: var(--terminal-font-family, monospace); color: var(--text); }
+.bd-reveal, .bd-copy {
+  width: 22px; height: 22px; min-width: 22px; padding: 0;
+  border: none; background: transparent; color: var(--text-dim);
+  display: inline-flex; align-items: center; justify-content: center;
+  cursor: pointer; border-radius: 4px;
+}
+.bd-reveal:hover, .bd-copy:hover { background: var(--surface-hover); color: var(--text); }
+.bd-reveal .icon, .bd-copy .icon { width: 14px; height: 14px; }
+.browser-data-empty { padding: 20px; text-align: center; color: var(--text-dim); font-size: 12px; }
+
+/* Agent detail modal */
+.agent-box { width: 560px; }
+.agent-desc { margin-bottom: 10px !important; color: var(--text) !important; }
+.agent-meta {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 3px 12px;
+  margin: 0 0 12px;
+  font-size: 12px;
+}
+.agent-meta dt { color: var(--text-dim); }
+.agent-meta dd { margin: 0; color: var(--text); word-break: break-word; }
+.agent-prompt {
+  max-height: 260px;
+  margin: 0 0 16px;
+  padding: 9px 10px;
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg);
+  color: var(--text-dim);
+  font-family: var(--terminal-font-family, monospace);
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
 
 .memo-popover {
   --memo-side-w: 160px;

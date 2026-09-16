@@ -102,7 +102,7 @@ fn manual_percent(window: &serde_json::Value) -> Option<f64> {
 
 /// Claude's config directory, honoring `CLAUDE_CONFIG_DIR` the same way Claude
 /// Code and OMC do (custom profiles).
-fn claude_config_dir() -> Result<PathBuf, String> {
+pub(crate) fn claude_config_dir() -> Result<PathBuf, String> {
     if let Some(dir) = std::env::var_os("CLAUDE_CONFIG_DIR") {
         return Ok(PathBuf::from(dir));
     }

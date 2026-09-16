@@ -27,6 +27,8 @@
     "allow-codex-reset-credits",
     "allow-codex-consume-reset-credit",
     "allow-claude-account-usage",
+    "allow-claude-agent-activity",
+    "allow-browser-import-data",
     "allow-claude-statusline-status",
     "allow-claude-statusline-install",
     "allow-claude-statusline-remove",
