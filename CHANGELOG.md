@@ -8,6 +8,28 @@ For installers, see the [GitHub Releases](https://github.com/ChoiGyber/Mymux/rel
 
 ---
 
+## v0.3.1 — 2026-10-01
+
+### Fixed / 버그 수정
+
+- **macOS·Linux 에서 Dock·런처로 띄운 Mymux 의 zsh 입력줄이 흩어지던 문제를
+  고쳤습니다 / Fixed scattered zsh input lines when Mymux is launched from the
+  Dock or a desktop launcher (macOS/Linux).** Dock·Finder·Linux 런처로 실행한
+  앱에는 `TERM` 환경변수가 없어, zsh 가 커서 이동을 못 하고 키를 칠 때마다 줄
+  처음부터 다시 그렸습니다. 그래서 입력한 명령이 탭 간격으로 흩어져 보이고
+  zsh-autosuggestions 의 회색 힌트가 글자처럼 남았으며, 세션 복원 때 이 잔해가
+  명령으로 다시 실행될 수 있었습니다. 이제 모든 패인이 `TERM=xterm-256color`
+  로 시작합니다(다른 터미널에서 물려받은 값도 교체). Windows 는 바뀌지 않습니다.
+
+  An app started from the Dock, Finder or a Linux launcher has no `TERM`, so zsh
+  lost cursor movement and redrew every keystroke from column 0 — typed commands
+  looked scattered with tab-wide gaps, zsh-autosuggestions' grey hint was left
+  behind as text, and a restored session could re-run that debris. Every pane
+  now starts with `TERM=xterm-256color` (an inherited value is replaced too).
+  Windows is unchanged.
+
+---
+
 ## v0.3.0 — 2026-09-16
 
 ### Added / 새로 추가
