@@ -28,6 +28,19 @@ For installers, see the [GitHub Releases](https://github.com/ChoiGyber/Mymux/rel
   now starts with `TERM=xterm-256color` (an inherited value is replaced too).
   Windows is unchanged.
 
+- **Windows 에서 Claude Code fullscreen 패인의 마우스 휠이 동작합니다 / The mouse
+  wheel now scrolls Claude Code's fullscreen view on Windows (#40).** Claude Code
+  의 fullscreen 렌더러(`tui: fullscreen`, 최근 설치의 기본값)는 Windows 에서
+  휠에 반응하지 않습니다 — Windows Terminal 을 포함한 모든 터미널에서 같은
+  Claude Code 쪽 문제입니다. Mymux 가 Claude Code 패인에서만 휠을 PgUp/PgDn 으로
+  바꿔 보내, 반 화면씩 스크롤됩니다. Codex·macOS·Linux 는 바뀌지 않습니다.
+
+  Claude Code's fullscreen renderer (`tui: fullscreen`, the default for recent
+  installs) ignores the wheel on native Windows in every terminal, Windows
+  Terminal included — an upstream Claude Code issue. In a Claude Code pane Mymux
+  now turns the wheel into PgUp/PgDn, which scrolls the view half a screen at a
+  time. Codex, macOS and Linux are unchanged.
+
 ---
 
 ## v0.3.0 — 2026-09-16
