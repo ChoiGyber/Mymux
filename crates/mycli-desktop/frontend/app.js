@@ -6,6 +6,10 @@ let invoke;
 const IS_MAC =
   /Mac/i.test(navigator.platform || "") ||
   /Mac OS X|Macintosh/i.test(navigator.userAgent || "");
+// Windows (WebView2 over ConPTY) — for workarounds only that path needs.
+const IS_WINDOWS =
+  /Win/i.test(navigator.platform || "") ||
+  /Windows/i.test(navigator.userAgent || "");
 
 // Monochrome inline-SVG icons (use currentColor → theme-aware: white in dark, black in light)
 const ICON = {
@@ -3150,10 +3154,43 @@ async function createPane(parentEl, shell, args, cwd) {
   // buffer we scroll the viewport ourselves and swallow the event. Alt-screen
   // TUIs (vim/htop/less) keep receiving wheel reports as before, and
   // Ctrl+wheel is left alone for future zoom gestures.
+  //
+  // One alt-screen exception, Windows only (#40): Claude Code's fullscreen
+  // renderer (`tui: fullscreen`, the default for newer installs) never reacts
+  // to wheel reports on native Windows — in any terminal, Windows Terminal
+  // included (anthropics/claude-code#85712) — while the very same SGR bytes
+  // scroll it fine on macOS. Codex/OpenCode do get the wheel through ConPTY,
+  // so only a Claude-owned pane is touched: there the wheel becomes PgUp/PgDn,
+  // which Claude's fullscreen view scrolls by half a screen. One key per
+  // notch's worth of delta, so a touchpad's many tiny deltas don't flood it.
+  let claudePageAcc = 0;
+  const WHEEL_NOTCH_PX = 100; // one wheel notch in Chromium/WebView2 pixel mode
+  const claudeFullscreenOnWindows = () => {
+    if (!IS_WINDOWS || term.buffer.active.type === "normal") return false;
+    if ((term.modes.mouseTrackingMode || "none") === "none") return false;
+    const t = terminals.get(id);
+    return !!t && t.ctxSource === "claude" && !t.codexDetected;
+  };
   if (term.attachCustomWheelEventHandler) {
     term.attachCustomWheelEventHandler((e) => {
       try {
         if (e.ctrlKey) return true;
+        if (claudeFullscreenOnWindows()) {
+          const rowPx = (term.options.fontSize || 14) * 1.2;
+          const px = e.deltaMode === 1 ? e.deltaY * rowPx
+            : e.deltaMode === 2 ? e.deltaY * term.rows * rowPx
+            : e.deltaY;
+          if (!px) return false;
+          if (Math.sign(px) !== Math.sign(claudePageAcc)) claudePageAcc = 0;
+          claudePageAcc += px;
+          const pages = Math.trunc(claudePageAcc / WHEEL_NOTCH_PX);
+          if (pages) {
+            claudePageAcc -= pages * WHEEL_NOTCH_PX;
+            const key = pages < 0 ? "\x1b[5~" : "\x1b[6~"; // PgUp : PgDn
+            invoke("pty_write", { id, data: key.repeat(Math.min(3, Math.abs(pages))) });
+          }
+          return false;
+        }
         if (term.buffer.active.type !== "normal") return true;
         if ((term.modes.mouseTrackingMode || "none") === "none") return true; // no conflict — default handling already scrolls
         // deltaMode 1 = lines, 0 = pixels (~one row per ≈ fontSize*1.2 px).
