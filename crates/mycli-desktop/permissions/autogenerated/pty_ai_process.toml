@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-pty-ai-process"
+description = "Enables the pty_ai_process command without any pre-configured scope."
+commands.allow = ["pty_ai_process"]
+
+[[permission]]
+identifier = "deny-pty-ai-process"
+description = "Denies the pty_ai_process command without any pre-configured scope."
+commands.deny = ["pty_ai_process"]

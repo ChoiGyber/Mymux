@@ -3163,11 +3163,34 @@ async function createPane(parentEl, shell, args, cwd) {
   // so only a Claude-owned pane is touched: there the wheel becomes PgUp/PgDn,
   // which Claude's fullscreen view scrolls by half a screen. One key per
   // notch's worth of delta, so a touchpad's many tiny deltas don't flood it.
+  //
+  // Who owns the alt screen is asked of the process tree under the pane's
+  // shell (pty_ai_process) each time the screen is entered. The screen-based
+  // t.ctxSource is only reset by an OSC 133 prompt mark, which CMD and ssh never
+  // send — after Claude quits there, Codex started in the same pane would still
+  // look like Claude and lose its wheel. "ssh" means the program runs on another
+  // machine, where Claude's wheel works and must be left alone. Until the answer
+  // arrives, or when the tree names nothing we know, the screen guess decides.
   let claudePageAcc = 0;
   const WHEEL_NOTCH_PX = 100; // one wheel notch in Chromium/WebView2 pixel mode
+  let altOwner = null;
+  let altOwnerQuery = 0;
+  if (IS_WINDOWS) {
+    try {
+      term.buffer.onBufferChange(() => {
+        altOwner = null;
+        const query = ++altOwnerQuery;
+        if (term.buffer.active.type === "normal") return;
+        invoke("pty_ai_process", { id })
+          .then((who) => { if (query === altOwnerQuery) altOwner = who || null; })
+          .catch(() => {});
+      });
+    } catch {}
+  }
   const claudeFullscreenOnWindows = () => {
     if (!IS_WINDOWS || term.buffer.active.type === "normal") return false;
     if ((term.modes.mouseTrackingMode || "none") === "none") return false;
+    if (altOwner) return altOwner === "claude";
     const t = terminals.get(id);
     return !!t && t.ctxSource === "claude" && !t.codexDetected;
   };

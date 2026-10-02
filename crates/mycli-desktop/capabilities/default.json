@@ -50,6 +50,7 @@
     "allow-pty-write",
     "allow-pty-resize",
     "allow-pty-close",
+    "allow-pty-ai-process",
     "allow-explorer-list-local",
     "allow-explorer-home-dir",
     "allow-explorer-parent-dir",

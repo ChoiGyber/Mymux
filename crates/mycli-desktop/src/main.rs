@@ -215,6 +215,7 @@ fn main() {
             terminal::pty_write,
             terminal::pty_resize,
             terminal::pty_close,
+            terminal::pty_ai_process,
             explorer::explorer_list_local,
             explorer::explorer_home_dir,
             explorer::explorer_parent_dir,

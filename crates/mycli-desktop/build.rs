@@ -46,6 +46,7 @@ const APP_COMMANDS: &[&str] = &[
     "pty_write",
     "pty_resize",
     "pty_close",
+    "pty_ai_process",
     "explorer_list_local",
     "explorer_home_dir",
     "explorer_parent_dir",

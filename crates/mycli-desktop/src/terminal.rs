@@ -9,6 +9,8 @@ pub struct PtySession {
     master: Box<dyn MasterPty + Send>,
     output_buf: Arc<Mutex<Vec<String>>>,
     exited: Arc<Mutex<bool>>,
+    /// The pane's shell — the root `pty_ai_process` walks down from.
+    shell_pid: Option<u32>,
 }
 
 pub struct TerminalManager {
@@ -624,6 +626,7 @@ pub fn pty_spawn(
     cmd.cwd(&work_dir);
 
     let mut child = pair.slave.spawn_command(cmd).map_err(|e| e.to_string())?;
+    let shell_pid = child.process_id();
     drop(pair.slave);
 
     let writer = pair.master.take_writer().map_err(|e| e.to_string())?;
@@ -684,6 +687,7 @@ pub fn pty_spawn(
                 master: pair.master,
                 output_buf,
                 exited,
+                shell_pid,
             },
         );
     }
@@ -751,6 +755,216 @@ pub fn pty_close(
     let mut sessions = state.sessions.lock().unwrap();
     sessions.remove(&id);
     Ok(())
+}
+
+/// Which program owns the pane right now, read off the process tree under its
+/// shell instead of the screen: "claude", "codex", "ssh" (whatever runs, runs
+/// on another machine) or None.
+///
+/// The screen-based guess (the frontend's `ctxSource`) only learns that an AI
+/// CLI has exited when the shell prompt comes back with an OSC 133 mark. CMD and
+/// ssh sessions never send one, so after Claude quits there, Codex started in
+/// the same pane would still count as Claude. The process tree can't go stale
+/// like that. Only the Windows wheel workaround asks (#40), so elsewhere the
+/// table is empty and the answer is always None.
+#[tauri::command]
+pub fn pty_ai_process(
+    state: tauri::State<'_, Arc<TerminalManager>>,
+    id: u32,
+) -> Result<Option<String>, String> {
+    let shell_pid = {
+        let sessions = state.sessions.lock().unwrap();
+        let session = sessions.get(&id).ok_or("Session not found")?;
+        session.shell_pid
+    };
+    Ok(shell_pid.and_then(|pid| outermost_ai(pid, &process_table()).map(str::to_string)))
+}
+
+/// What a process image name says about the program, if it is one we track.
+/// Codex's npm launcher runs a platform binary named `codex-<target-triple>`.
+fn classify_process(exe: &str) -> Option<&'static str> {
+    let file = exe
+        .rsplit(['\\', '/'])
+        .next()
+        .unwrap_or(exe)
+        .to_ascii_lowercase();
+    let stem = file.strip_suffix(".exe").unwrap_or(&file);
+    if stem == "claude" || stem.starts_with("claude-") {
+        Some("claude")
+    } else if stem == "codex" || stem.starts_with("codex-") {
+        Some("codex")
+    } else if matches!(stem, "ssh" | "plink" | "mosh" | "mosh-client") {
+        Some("ssh")
+    } else {
+        None
+    }
+}
+
+/// Breadth-first from the shell: the tracked program closest to the shell is
+/// the one the user launched. Whatever it starts itself — `codex exec` from a
+/// Claude tool call, an `ssh` from a Codex shell command — sits deeper and must
+/// not mask it. `procs` is (pid, parent pid, image name).
+fn outermost_ai(shell_pid: u32, procs: &[(u32, u32, String)]) -> Option<&'static str> {
+    if let Some((_, _, exe)) = procs.iter().find(|(pid, _, _)| *pid == shell_pid) {
+        if let Some(found) = classify_process(exe) {
+            return Some(found);
+        }
+    }
+    let mut seen = std::collections::HashSet::from([shell_pid]);
+    let mut level = vec![shell_pid];
+    // A pid can be reused for a process whose recorded parent is long gone, so
+    // the walk is bounded and never revisits a pid.
+    for _ in 0..8 {
+        let mut next = Vec::new();
+        let mut found = None;
+        for (pid, ppid, exe) in procs {
+            if level.contains(ppid) && seen.insert(*pid) {
+                if found.is_none() {
+                    found = classify_process(exe);
+                }
+                next.push(*pid);
+            }
+        }
+        if found.is_some() || next.is_empty() {
+            return found;
+        }
+        level = next;
+    }
+    None
+}
+
+#[cfg(windows)]
+fn process_table() -> Vec<(u32, u32, String)> {
+    use windows_sys::Win32::Foundation::{CloseHandle, INVALID_HANDLE_VALUE};
+    use windows_sys::Win32::System::Diagnostics::ToolHelp::{
+        CreateToolhelp32Snapshot, Process32FirstW, Process32NextW, PROCESSENTRY32W,
+        TH32CS_SNAPPROCESS,
+    };
+
+    let mut table = Vec::new();
+    // SAFETY: the snapshot handle is checked before use and closed once; the
+    // entry is a plain C struct whose dwSize is set before the first call.
+    unsafe {
+        let snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+        if snapshot == INVALID_HANDLE_VALUE {
+            return table;
+        }
+        let mut entry: PROCESSENTRY32W = std::mem::zeroed();
+        entry.dwSize = std::mem::size_of::<PROCESSENTRY32W>() as u32;
+        let mut more = Process32FirstW(snapshot, &mut entry);
+        while more != 0 {
+            let name = &entry.szExeFile;
+            let len = name.iter().position(|&c| c == 0).unwrap_or(name.len());
+            table.push((
+                entry.th32ProcessID,
+                entry.th32ParentProcessID,
+                String::from_utf16_lossy(&name[..len]),
+            ));
+            more = Process32NextW(snapshot, &mut entry);
+        }
+        CloseHandle(snapshot);
+    }
+    table
+}
+
+#[cfg(not(windows))]
+fn process_table() -> Vec<(u32, u32, String)> {
+    Vec::new()
+}
+
+#[cfg(test)]
+mod ai_process_tests {
+    use super::{classify_process, outermost_ai};
+
+    fn table(rows: &[(u32, u32, &str)]) -> Vec<(u32, u32, String)> {
+        rows.iter()
+            .map(|&(p, pp, n)| (p, pp, n.to_string()))
+            .collect()
+    }
+
+    #[test]
+    fn image_names_map_to_the_programs_we_track() {
+        assert_eq!(classify_process("claude.exe"), Some("claude"));
+        assert_eq!(classify_process("CLAUDE.EXE"), Some("claude"));
+        assert_eq!(
+            classify_process(r"C:\Users\me\.local\bin\claude.exe"),
+            Some("claude")
+        );
+        assert_eq!(classify_process("codex.exe"), Some("codex"));
+        assert_eq!(
+            classify_process("codex-x86_64-pc-windows-msvc.exe"),
+            Some("codex")
+        );
+        assert_eq!(classify_process("ssh.exe"), Some("ssh"));
+        assert_eq!(classify_process("plink.exe"), Some("ssh"));
+        for other in [
+            "cmd.exe",
+            "pwsh.exe",
+            "node.exe",
+            "conhost.exe",
+            "claudette.exe",
+            "codexer.exe",
+        ] {
+            assert_eq!(classify_process(other), None, "{other}");
+        }
+    }
+
+    #[test]
+    fn codex_after_claude_in_the_same_cmd_pane_is_codex() {
+        // Claude has exited; Codex runs through its npm launcher (node → binary).
+        let procs = table(&[
+            (10, 1, "cmd.exe"),
+            (20, 10, "node.exe"),
+            (21, 20, "codex-x86_64-pc-windows-msvc.exe"),
+        ]);
+        assert_eq!(outermost_ai(10, &procs), Some("codex"));
+    }
+
+    #[test]
+    fn claude_is_found_under_the_shell() {
+        let procs = table(&[
+            (10, 1, "pwsh.exe"),
+            (11, 10, "claude.exe"),
+            (99, 1, "codex.exe"),
+        ]);
+        assert_eq!(
+            outermost_ai(10, &procs),
+            Some("claude"),
+            "another pane's Codex must not count"
+        );
+    }
+
+    #[test]
+    fn what_claude_starts_does_not_mask_claude() {
+        let procs = table(&[
+            (10, 1, "cmd.exe"),
+            (11, 10, "claude.exe"),
+            (12, 11, "bash.exe"),
+            (13, 12, "codex.exe"),
+        ]);
+        assert_eq!(outermost_ai(10, &procs), Some("claude"));
+    }
+
+    #[test]
+    fn ssh_means_the_program_runs_elsewhere() {
+        let procs = table(&[(10, 1, "cmd.exe"), (11, 10, "ssh.exe")]);
+        assert_eq!(outermost_ai(10, &procs), Some("ssh"));
+        // An ssh pane spawns ssh itself as the shell.
+        assert_eq!(outermost_ai(30, &table(&[(30, 1, "ssh.exe")])), Some("ssh"));
+    }
+
+    #[test]
+    fn a_plain_shell_or_a_missing_shell_answers_none() {
+        let procs = table(&[(10, 1, "cmd.exe"), (11, 10, "git.exe")]);
+        assert_eq!(outermost_ai(10, &procs), None);
+        assert_eq!(outermost_ai(77, &procs), None);
+    }
+
+    #[test]
+    fn a_parent_loop_from_pid_reuse_terminates() {
+        let procs = table(&[(10, 11, "cmd.exe"), (11, 10, "node.exe")]);
+        assert_eq!(outermost_ai(10, &procs), None);
+    }
 }
 
 #[cfg(test)]

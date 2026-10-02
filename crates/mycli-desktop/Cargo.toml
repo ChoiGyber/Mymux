@@ -47,7 +47,7 @@ rusqlite = { version = "0.32", features = ["bundled"] }
 aes-gcm = "0.10"
 
 [target.'cfg(windows)'.dependencies]
-windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_UI_WindowsAndMessaging", "Win32_Graphics_Gdi", "Win32_Storage_FileSystem", "Win32_Security_Cryptography"] }
+windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_UI_WindowsAndMessaging", "Win32_Graphics_Gdi", "Win32_Storage_FileSystem", "Win32_Security_Cryptography", "Win32_System_Diagnostics_ToolHelp"] }
 
 [build-dependencies]
 tauri-build = { version = "2.6.3", features = [] }

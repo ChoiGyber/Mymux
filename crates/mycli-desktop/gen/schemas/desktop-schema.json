@@ -651,6 +651,12 @@
           "markdownDescription": "Enables the pick_key_file command without any pre-configured scope."
         },
         {
+          "description": "Enables the pty_ai_process command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-pty-ai-process",
+          "markdownDescription": "Enables the pty_ai_process command without any pre-configured scope."
+        },
+        {
           "description": "Enables the pty_close command without any pre-configured scope.",
           "type": "string",
           "const": "allow-pty-close",
@@ -1123,6 +1129,12 @@
           "type": "string",
           "const": "deny-pick-key-file",
           "markdownDescription": "Denies the pick_key_file command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the pty_ai_process command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-pty-ai-process",
+          "markdownDescription": "Denies the pty_ai_process command without any pre-configured scope."
         },
         {
           "description": "Denies the pty_close command without any pre-configured scope.",
