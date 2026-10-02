@@ -1,11 +1,14 @@
 ---
 id: 002
 date: 2026-10-02
-title: Windows 휠 우회의 패인 주인 판정을 프로세스 트리로 — CMD/SSH 에서 Claude 뒤 Codex 오인 수정
+title: Windows 휠 우회의 패인 주인 판정을 프로세스 트리로 — CMD/SSH 에서 Claude 뒤 Codex 오인 수정 · v0.3.2 릴리즈
 type: fix
-tags: [wheel, issue-40, windows, process-tree, codex, claude-code]
-commits: []
-version: null
+tags: [wheel, issue-40, windows, process-tree, codex, claude-code, release]
+commits:
+  - b2c57a0
+  - 02cd120
+  - 6fa6964
+version: 0.3.2
 ---
 
 # Windows 휠 우회 — 패인 주인을 프로세스 트리로 판정
@@ -35,3 +38,10 @@ v0.3.1 의 #40 우회(Windows + Claude fullscreen 패인에서 휠 → PgUp/PgDn
 - UI 문자열 변경 없음(i18n 해당 없음). 설명서 영향 없음.
 - macOS 가드 13/13, 벤더 tao 가드 6/6, `mac-patches/apply.sh --check` 정상.
 - 새 코드 블록만 rustfmt 적용(파일의 기존 미포맷 부분은 손대지 않음).
+
+## 후속 — v0.3.2 릴리즈
+
+- `02cd120` 버전 3곳 0.3.2 + CHANGELOG(한/영) → 태그 `v0.3.2` → CI(Win/Linux, draft) + 로컬 맥 빌드(`CI=true`, 태그와 같은 소스) → 맥 dmg·tar.gz 업로드, `latest.json` 에 darwin 2개 추가(비-맥 항목 무변경 확인) → 노트(한/영) → 공개(Latest).
+- 검증: 설치 파일 5개 200, 공개 `latest.json` = 업로드본, darwin 서명·dmg/tar.gz 해시 = 로컬 빌드.
+- 홈페이지 `6fa6964` v0.3.2 로 갱신(공개 후 푸시).
+- 남은 일: Windows 실기에서 CMD 패인 `claude` 종료 → `codex` 실행 시 휠이 Codex 를 스크롤하는지, Claude fullscreen 휠(PgUp/PgDn) 유지되는지 확인.
