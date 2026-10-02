@@ -8,6 +8,29 @@ For installers, see the [GitHub Releases](https://github.com/ChoiGyber/Mymux/rel
 
 ---
 
+## v0.3.2 — 2026-10-02
+
+### Fixed / 버그 수정
+
+- **Windows 에서 Claude 를 끈 뒤 같은 패인에서 켠 Codex 의 휠이 정상 동작합니다
+  / Codex started after Claude in the same pane keeps its mouse wheel on
+  Windows (#40).** v0.3.1 의 Claude Code 휠 우회(휠 → PgUp/PgDn)는 화면으로
+  패인 주인을 짐작했는데, CMD·SSH 에서는 Claude 가 끝난 걸 알 수 없어 그다음에
+  켠 Codex 까지 Claude 로 보고 휠을 바꿨습니다. 이제 패인 셸 아래에서 실제로
+  실행 중인 프로세스를 보고 판단합니다. 덤으로 SSH 로 원격 서버의 Claude 를 쓸
+  때(원격에선 휠이 정상)는 더 이상 휠을 바꾸지 않고, 셸 별칭으로 띄운 Claude 도
+  인식합니다. macOS·Linux 는 바뀌지 않습니다.
+
+  v0.3.1's Claude Code wheel workaround (wheel → PgUp/PgDn) guessed the pane's
+  owner from the screen, and in CMD or SSH sessions it could not tell that
+  Claude had exited — so Codex started next in the same pane lost its wheel
+  too. The owner is now read from the processes actually running under the
+  pane's shell. As a bonus, Claude on a remote server over SSH (where the wheel
+  already works) is left alone, and Claude launched through a shell alias is
+  recognised. macOS and Linux are unchanged.
+
+---
+
 ## v0.3.1 — 2026-10-01
 
 ### Fixed / 버그 수정
