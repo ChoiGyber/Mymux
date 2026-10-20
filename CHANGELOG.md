@@ -8,6 +8,46 @@ For installers, see the [GitHub Releases](https://github.com/ChoiGyber/Mymux/rel
 
 ---
 
+## v0.3.3 — 2026-10-20
+
+### Fixed / 버그 수정
+
+- **세션 패널의 폭을 조절한 뒤에도 접기가 동작합니다 / The session panel folds
+  again after it has been resized.** 패널 폭을 드래그했거나 이전에 저장된 폭이
+  있으면, 접어도 폭은 그대로이고 목록만 사라져서 아이콘이 넓은 헤더 가운데에
+  남았습니다. 폭을 인라인 스타일로 지정해서 접힘 규칙(34px)보다 먼저 적용되었기
+  때문입니다. 이제 폭을 CSS 변수로 보관하므로 접으면 34px 로 줄어들고, 다시
+  펼치면 조절해 둔 폭으로 돌아옵니다.
+
+  A panel whose width had been dragged or saved kept that width when folded and
+  only hid the list, leaving the icon in the middle of a wide header. The width
+  was an inline style, which outranks the folded rule (34px). It is now kept in a
+  CSS variable: folding shrinks the panel to 34px, and unfolding restores the
+  width you set.
+
+- **Windows 에서 세션을 추가하거나 전환할 때 Codex 입력창에 `[I` 가 쌓이던 문제를
+  고쳤습니다 / Fixed `[I` piling up in the Codex prompt on Windows when adding or
+  switching sessions.** Windows 의 ConPTY 는 패인을 만들 때마다 포커스 리포팅
+  모드(DECSET 1004)를 켭니다. v0.2.2 의 정리는 OSC 133 을 보내는 셸(PowerShell,
+  Git Bash)에서만 동작해서, CMD·ssh·WSL 패인은 이 모드가 계속 켜져 있었습니다.
+  거기에 대체 화면을 쓰는 Codex 는 실행 중에 정리 시점이 없어서, 포커스가 움직일
+  때마다 보내진 `ESC[I` 가 입력창에 `[I` 글자로 남았습니다. 이제 패인이 처음
+  출력을 내는 즉시 이 모드를 끕니다. 정리는 한 번만 실행하므로 이후에 프로그램이
+  요청하는 경우에는 영향이 없습니다. 콘솔 포커스 이벤트를 기다리는 앱은 CMD·ssh·WSL
+  패인에서도 그 이벤트를 받지 못하게 됩니다(PowerShell 패인은 v0.2.2 부터
+  동일합니다).
+
+  ConPTY switches focus reporting (DECSET 1004) on for every new pane. The v0.2.2
+  cleanup only ran for shells that emit OSC 133 (PowerShell, Git Bash), so CMD,
+  ssh and WSL panes kept it on. Codex stays on the alternate screen and never
+  reaches a cleanup point, so each focus change typed a stray `[I` into its
+  prompt. The mode is now cleared as soon as a pane produces its first output.
+  The cleanup runs once, so it never overrides a later request from a program.
+  Apps that wait for console focus events no longer receive them in CMD, ssh and
+  WSL panes either (PowerShell panes have behaved this way since v0.2.2).
+
+---
+
 ## v0.3.2 — 2026-10-02
 
 ### Fixed / 버그 수정
