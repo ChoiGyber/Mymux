@@ -2514,7 +2514,10 @@ html[data-theme="dark"] .pane-command-shortcut {
 /* ── Session panel (right) ── */
 #session-panel {
   position: relative;
-  width: 220px;
+  /* The dragged width lives in a custom property, not an inline `width`: an
+     inline value outranks the `.collapsed` rule below, so a panel the user had
+     widened could never fold back to its 34px rail. */
+  width: var(--session-panel-width, 220px);
   background: var(--surface);
   border-left: 1px solid var(--border);
   display: flex;

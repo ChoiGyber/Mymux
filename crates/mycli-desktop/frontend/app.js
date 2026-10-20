@@ -1012,7 +1012,16 @@ async function setupListeners() {
           const [chunks, exited] = await invoke("pty_read", { id });
           if (chunks.length) {
             const data = chunks.join("");
+            // ConPTY opens every Windows pane with focus reporting switched on
+            // (CSI ?1004h), before the shell or anything the user runs has said a
+            // word. Undo it once that first output is parsed. The prompt hook
+            // cannot be relied on for this: CMD, ssh and WSL never print an OSC
+            // 133 mark, and codex in the alternate screen gives the buffer hook
+            // no chance either, so it kept receiving `[I` on every focus change.
+            const firstOutput = !t.firstOutputSeen;
+            t.firstOutputSeen = true;
             t.term.write(data, () => {
+              if (firstOutput && IS_WINDOWS) clearStaleFocusReporting(t.term);
               const tt = terminals.get(id);
               if (tt) scanCtxUsage(id, tt, data); // Claude/Codex statusline -> ctx/model badge
             }); // one write, not per-chunk
@@ -3903,7 +3912,7 @@ function setupSessionResizer() {
   const resizer = document.getElementById("session-resizer");
   if (!panel || !resizer) return;
   const saved = parseInt(localStorage.getItem("mymux.sessionWidth"), 10);
-  if (saved >= 140 && saved <= 1000) panel.style.width = saved + "px";
+  if (saved >= 140 && saved <= 1000) panel.style.setProperty("--session-panel-width", saved + "px");
   let startX = 0, startW = 0, dragging = false;
   resizer.addEventListener("mousedown", (e) => {
     if (panel.classList.contains("collapsed")) return;
@@ -3920,7 +3929,7 @@ function setupSessionResizer() {
     // Panel is pinned to the right; dragging the handle left widens it.
     let w = startW + (startX - e.clientX);
     w = Math.max(140, Math.min(window.innerWidth - 360, w));
-    panel.style.width = w + "px";
+    panel.style.setProperty("--session-panel-width", w + "px");
   });
   window.addEventListener("mouseup", () => {
     if (!dragging) return;
@@ -3928,7 +3937,7 @@ function setupSessionResizer() {
     panel.style.transition = "";
     document.body.style.cursor = "";
     document.body.style.userSelect = "";
-    const w = parseInt(panel.style.width, 10);
+    const w = parseInt(panel.style.getPropertyValue("--session-panel-width"), 10);
     if (w) localStorage.setItem("mymux.sessionWidth", String(w));
     try { refitAllPanes(true); } catch {} // terminal grid changed with the panel
   });
@@ -4320,6 +4329,9 @@ function parseCodexFooter(text) {
 // DISABLE sequence for 1004 and never the enable, yet it was getting CSI I on
 // every window return. It parses ESC as "cancel" and drops the rest into the
 // input box as text, so the leftover `[I` shows up where the user types.
+//
+// ConPTY switches the mode on at the birth of every Windows pane, so this also
+// runs once on a pane's first output (see pumpTerminals).
 //
 // Turn the mode off through xterm's own parser, so the mode dies with the
 // program that asked for it and every other DEC mode stays untouched.
