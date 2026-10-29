@@ -101,7 +101,7 @@ let cdpMsgId = 0;
 let lastFrameMeta = null;
 let screenInputBound = false;
 let browserMode = "native"; // 'native' (embedded WebView) | 'ai' (CDP screencast)
-let nativeCurrentUrl = "https://www.google.com";
+let nativeCurrentUrl = "";
 let browserPages = [];
 let activeBrowserPageId = null;
 let browserInfoOpen = false;
@@ -440,6 +440,91 @@ function setupVoiceInput() {
   };
   sync();
 
+  // One-click setup: a private Python + faster-whisper + the chosen model, all
+  // installed by the backend, after which this popover wires itself to it. What
+  // the manual guides describe is the same thing done by hand.
+  const autoBtn = $("voice-auto-setup");
+  const autoBar = $("voice-auto-bar");
+  const autoMsg = $("voice-auto-msg");
+  const autoHint = autoMsg.textContent;
+  let managed = null; // { python, models } once the setup has run
+  let setupBusy = false;
+
+  const renderAuto = () => {
+    if (setupBusy) return;
+    autoMsg.classList.remove("voice-auto-ok");
+    if (!managed) {
+      autoBtn.textContent = "⚡ 자동 설치하고 바로 연결";
+      autoMsg.textContent = autoHint;
+    } else if (managed.models.includes(model.value)) {
+      autoBtn.textContent = "🔄 다시 설치 / 업데이트";
+      autoMsg.textContent = `✅ 설치됨 · 받은 모델: ${managed.models.join(", ")}`;
+      autoMsg.classList.add("voice-auto-ok");
+    } else {
+      autoBtn.textContent = `⬇ ${model.value} 모델 받기`;
+      autoMsg.textContent = "faster-whisper 는 설치돼 있지만 이 모델은 아직 받지 않았습니다.";
+    }
+  };
+  const refreshManaged = async () => {
+    try {
+      managed = await invoke("voice_managed_status");
+    } catch {
+      managed = null;
+    }
+    // Local storage may have been cleared while the install is still on disk.
+    if (managed && !read(VOICE_KEYS.runner("python"), "")) {
+      localStorage.setItem(VOICE_KEYS.runner("python"), managed.python);
+    }
+    sync();
+    renderAuto();
+  };
+  refreshManaged();
+
+  autoBtn.addEventListener("click", async () => {
+    if (setupBusy) return;
+    setupBusy = true;
+    autoBtn.disabled = true;
+    autoBar.value = 0;
+    autoBar.classList.remove("hidden");
+    autoMsg.classList.remove("voice-auto-ok");
+    autoMsg.textContent = "준비 중…";
+    status.textContent = "";
+    const events = window.__TAURI__ && window.__TAURI__.event;
+    let unlisten = null;
+    try {
+      if (events) {
+        unlisten = await events.listen("voice-setup-progress", (e) => {
+          const p = e.payload || {};
+          autoBar.max = p.total || 4;
+          autoBar.value = Math.max(0, (p.step || 1) - 1);
+          autoMsg.textContent =
+            `[${p.step}/${p.total}] ${p.message}` + (p.detail ? ` · ${p.detail}` : "");
+        });
+      }
+      const done = await invoke("voice_setup_local", { model: model.value });
+      localStorage.setItem(VOICE_KEYS.runner("python"), done.python);
+      localStorage.setItem(VOICE_KEYS.localMode, "python");
+      localStorage.setItem(VOICE_KEYS.provider, "faster-whisper");
+      const radio = pop.querySelector('input[name="voice-local-mode"][value="python"]');
+      if (radio) radio.checked = true;
+      provider.value = "faster-whisper";
+      autoBar.value = autoBar.max;
+      let version = "";
+      try {
+        version = " · " + (await invoke("voice_check_local", { mode: "python", runnerPath: done.python }));
+      } catch {}
+      status.textContent = `✅ 설치를 마쳤습니다${version}. 이제 눌러서 말하면 바로 인식합니다.`;
+    } catch (e) {
+      status.textContent = "❌ " + String(e);
+    } finally {
+      if (unlisten) unlisten();
+      setupBusy = false;
+      autoBtn.disabled = false;
+      autoBar.classList.add("hidden");
+      await refreshManaged();
+    }
+  });
+
   toggle.onclick = () => pop.classList.toggle("hidden");
   provider.onchange = () => {
     localStorage.setItem(VOICE_KEYS.provider, provider.value);
@@ -452,7 +537,10 @@ function setupVoiceInput() {
       sync();
     });
   }
-  model.onchange = () => localStorage.setItem(VOICE_KEYS.model, model.value);
+  model.onchange = () => {
+    localStorage.setItem(VOICE_KEYS.model, model.value);
+    renderAuto();
+  };
   language.onchange = () => localStorage.setItem(VOICE_KEYS.language, language.value);
   ptt.onchange = () => localStorage.setItem(VOICE_KEYS.pushToTalk, ptt.checked ? "1" : "0");
 
@@ -557,7 +645,12 @@ function setupVoiceInput() {
     }
     const mode = localMode();
     const runnerPath = read(VOICE_KEYS.runner(mode), "");
-    if (!runnerPath) throw Error("실행 파일이 설정돼 있지 않습니다. 🎙 에서 설치 안내를 확인하세요.");
+    if (!runnerPath) throw Error("아직 설치되지 않았습니다. 🎙 에서 [자동 설치하고 바로 연결] 을 눌러 주세요.");
+    // A model that was never downloaded would be fetched mid-dictation and hit
+    // the backend's timeout, so say what to do instead.
+    if (managed && runnerPath === managed.python && !managed.models.includes(model.value)) {
+      throw Error(`${model.value} 모델을 아직 받지 않았습니다. 🎙 에서 [${model.value} 모델 받기] 를 눌러 주세요.`);
+    }
     return await invoke("voice_transcribe_local", {
       audioBase64: await blobToWav16k(blob),
       mode,
@@ -743,9 +836,9 @@ async function setupListeners() {
   document.querySelectorAll(".accent-swatch").forEach((sw) => {
     sw.addEventListener("click", () => setAccent(sw.dataset.accent));
   });
-  btnNewTerminal.addEventListener("click", () => spawnTerminal());
+  btnNewTerminal.addEventListener("click", () => spawnTerminalForCommand());
   const btnTabNew = document.getElementById("btn-tab-new");
-  if (btnTabNew) btnTabNew.addEventListener("click", () => spawnTerminal());
+  if (btnTabNew) btnTabNew.addEventListener("click", () => spawnTerminalForCommand());
   setupExplorerFileDrop();
   setupAgentActivity();
 
@@ -2080,7 +2173,7 @@ function openInNativeBrowser(url) {
   const navUrl = document.getElementById("nav-url");
   if (navUrl) navUrl.value = url;
   setBrowserView(true);
-  setTimeout(() => nativeNavigate(url), 80);
+  nativeNavigate(url);
 }
 
 // Open a local path: folders reveal in the Explorer, files open in the viewer.
@@ -3287,16 +3380,8 @@ async function createPane(parentEl, shell, args, cwd) {
     // inside a mouse-tracking TUI (picking a Claude Code menu option is input
     // too). SGR press reports only; hover/move/wheel reports must not re-arm.
     const ti = terminals.get(id);
-    // Drop the focus report that a SYNTHETIC focus event just produced. The focus
-    // keeper re-applies xterm's focus state with a hand-made FocusEvent (see
-    // startFocusKeeper) and xterm answers every focus event with CSI I while mode
-    // 1004 is on — but the OS window focus never actually changed, so there is
-    // nothing to report, and the genuine event that follows already carries one.
-    // That duplicate is why the leftover showed up as `[I[I` and not a single `[I`.
-    if (data === "\x1b[I" && ti && performance.now() < (ti.suppressFocusReportUntil || 0)) {
-      ti.suppressFocusReportUntil = 0;
-      return;
-    }
+    if (shouldDropTerminalFocusReport(ti, data)) return;
+    if (!IS_MAC && imeDuplicateCommit(ti, data)) return;
     if (/\x1b\[<[0-2];\d+;\d+M/.test(data)) armNotifyCycle(id);
     // Remember the command being submitted so a restored session can offer to
     // re-run it (e.g. relaunch `claude`/`codex`). Two capture paths:
@@ -3457,6 +3542,21 @@ async function createPane(parentEl, shell, args, cwd) {
       noteImeActivity();
     }, true);
 
+    // Event trace + keystroke counter for the duplicate-commit guard
+    // (imeDuplicateCommit). Every real key press fires a keydown, so the counter
+    // is what tells a repeated character from one emitted twice.
+    if (!IS_MAC) {
+      const ta = term.textarea;
+      for (const type of ["keydown", "keyup", "compositionstart", "compositionupdate", "compositionend", "beforeinput", "input", "focus", "blur"]) {
+        ta.addEventListener(type, (e) => {
+          const ti = terminals.get(id);
+          if (!ti) return;
+          if (type === "keydown") ti.imeKeySeq = (ti.imeKeySeq || 0) + 1;
+          imeTrace(ti, type, e.inputType ? [e.inputType, e.data] : (e.data ?? (e.keyCode !== undefined ? e.keyCode : undefined)));
+        }, true);
+      }
+    }
+
     // ── macOS WKWebView Korean/CJK IME fix ────────────────────────────────────
     // macOS-only. On WebKit (WKWebView) the very FIRST character of a typing run
     // arrives as a committed `input` event of type `insertText` (isComposing
@@ -3509,6 +3609,7 @@ async function createPane(parentEl, shell, args, cwd) {
       ta.addEventListener("blur", commit);
     }
   }
+  installCompositionAnchor(term);
   paneEl.addEventListener("mousedown", () => { if (focusedPaneId !== id) setFocusedPane(id); }, true);
   paneEl.addEventListener("click", () => { setFocusedPane(id); showExplorerForSession(id); });
   termWrap.addEventListener("click", () => { setFocusedPane(id); term.focus(); });
@@ -3687,6 +3788,147 @@ async function createPane(parentEl, shell, args, cwd) {
   return id;
 }
 
+// A TUI may park its cursor elsewhere while repainting. xterm normally moves
+// its live IME overlay (and native candidate textarea) on every such repaint.
+// Keep an unfinished composition at the input cell where it started, and keep
+// the preview inside the pane even when it starts at the final column/row.
+function compositionPreviewPosition(anchor, cell, bounds, preview) {
+  return {
+    left: Math.max(0, Math.min(anchor.col * cell.width, bounds.width - Math.min(preview.width, bounds.width))),
+    top: Math.max(0, Math.min(anchor.row * cell.height, bounds.height - Math.min(preview.height, bounds.height))),
+  };
+}
+
+function installCompositionAnchor(term) {
+  const textarea = term.textarea;
+  const screen = term.element?.querySelector(".xterm-screen");
+  const view = term.element?.querySelector(".composition-view");
+  if (!textarea || !screen || !view) return;
+  let anchor = null;
+  const position = () => {
+    if (!anchor || !view.classList.contains("active")) return;
+    const cell = { width: screen.clientWidth / term.cols, height: screen.clientHeight / term.rows };
+    if (!(cell.width > 0 && cell.height > 0)) return;
+    const bounds = { width: Math.min(screen.clientWidth, term.element.clientWidth), height: Math.min(screen.clientHeight, term.element.clientHeight) };
+    const point = compositionPreviewPosition(anchor, cell, bounds, { width: view.offsetWidth, height: Math.max(view.offsetHeight, cell.height) });
+    for (const el of [view, textarea]) {
+      el.style.left = `${point.left}px`;
+      el.style.top = `${point.top}px`;
+    }
+    view.style.maxWidth = `${bounds.width}px`;
+    view.style.overflow = "hidden";
+  };
+  textarea.addEventListener("compositionstart", () => {
+    anchor = { col: Math.min(term.buffer.active.cursorX, term.cols - 1), row: term.buffer.active.cursorY };
+  });
+  const positionAfterXterm = () => {
+    position();
+    // Both compositionupdate and onRender queue xterm's own geometry update.
+    setTimeout(position, 0);
+  };
+  textarea.addEventListener("compositionupdate", positionAfterXterm);
+  const clear = () => { anchor = null; };
+  textarea.addEventListener("compositionend", clear);
+  textarea.addEventListener("blur", clear);
+  term.onRender(positionAfterXterm);
+}
+
+// ── Duplicate Hangul commits (Windows) ───────────────────────────────────────
+// xterm.js can send one IME-committed character twice ("한" → "한한"). It listens
+// for a commit in two independent places: the textarea `input` event (insertText)
+// and a setTimeout(0) armed on every keydown 229 that diffs the textarea's text.
+// When the key is already released and the commit lands before that timer fires
+// (Windows' IME reorders events like that when the UI thread is busy), both see
+// the same new character and each emits it. Reproduced against the real WebView2
+// with keydown → keyup → input(insertText) delivered back to back.
+//
+// The guard sits where the two paths meet, in term.onData: a single non-ASCII
+// character equal to the previous one, with no keydown in between, within a
+// moment, and not from the `input` event twice. Each real keystroke fires its own
+// keydown, so a deliberately repeated character ("가가", "ㅋㅋ") always has one
+// between its two emissions and is never touched. Two emissions both from `input`
+// are left alone as well: an IME that lags can legitimately deliver two commits
+// of the same character back to back.
+//
+// When it drops something it writes the surrounding event trace to a log, so a
+// duplicate that comes from some other path is diagnosable instead of a guess.
+const IME_DUP_WINDOW_MS = 80;
+const IME_TRACE_LEN = 60;
+const imeIncidents = [];
+let imeLastToast = 0;
+
+function imeTrace(ti, tag, detail) {
+  if (!ti) return;
+  const buf = ti.imeTraceBuf || (ti.imeTraceBuf = []);
+  buf.push(`${Math.round(performance.now())} ${tag}${detail === undefined ? "" : " " + JSON.stringify(detail)}`);
+  if (buf.length > IME_TRACE_LEN) buf.shift();
+}
+
+// True when `data` is the duplicate half of one committed character.
+function imeDuplicateCommit(ti, data) {
+  if (!ti) return false;
+  const via = (window.event && window.event.type) || "async";
+  imeTrace(ti, "emit:" + via, data.length > 8 ? data.length + " chars" : data);
+  if (!/[^\x00-\x7F]/.test(data)) return false;
+  const now = performance.now();
+  const seq = ti.imeKeySeq || 0;
+  const fresh = (e) => !!e && e.seq === seq && now - e.t < IME_DUP_WINDOW_MS;
+  let dup = false;
+  if (via === "input") {
+    // What the `input` path has sent since the last keydown. The timer path
+    // diffs the whole textarea, so when several commits pile up before it fires
+    // it re-sends all of them as one string — compare against the running total,
+    // not just the last character.
+    const buf = fresh(ti.imeInputBuf) ? ti.imeInputBuf : (ti.imeInputBuf = { text: "", seq, t: now });
+    buf.text += data;
+    buf.t = now;
+  } else if (fresh(ti.imeInputBuf) && ti.imeInputBuf.text === data) {
+    dup = true;
+  }
+  const prev = ti.imeLastEmit;
+  if (!dup && fresh(prev) && prev.data === data && [...data].length === 1 &&
+      !(via === "input" && prev.via === "input")) dup = true;
+  if (!dup) ti.imeLastEmit = { data, via, seq, t: now };
+  else recordImeIncident(ti, data, `${(prev && prev.via) || "input"}+${via}`);
+  return dup;
+}
+
+function recordImeIncident(ti, data, paths) {
+  imeTrace(ti, "DROPPED duplicate", data);
+  imeIncidents.push(
+    `[${new Date().toISOString()}] dropped duplicate "${data}" (${paths})\n` +
+    (ti.imeTraceBuf || []).map((l) => "  " + l).join("\n")
+  );
+  if (imeIncidents.length > 20) imeIncidents.shift();
+  // The popup is a heads-up that the correction ran, not something to act on, so
+  // it is rate-limited rather than shown for every character.
+  if (performance.now() - imeLastToast > 60000) {
+    imeLastToast = performance.now();
+    toast("한글 중복 입력을 걸러냈습니다.");
+  }
+  invoke("explorer_home_dir")
+    .then((home) => invoke("write_text_file", {
+      path: `${home}/.mycli/logs/ime-incidents.log`,
+      content: imeIncidents.join("\n\n") + "\n",
+    }))
+    .catch(() => {});
+}
+
+// Codex can inherit DECSET 1004 from an earlier CLI, and some versions consume
+// its focus reports as editor input. Check the current owner on every report,
+// including genuine Alt-Tab blur/focus; suppressing only synthetic focus-in
+// leaves both of those paths open. Never strip printable brackets or mixed data.
+function shouldDropTerminalFocusReport(t, data) {
+  if (data !== "\x1b[I" && data !== "\x1b[O") return false;
+  return !!t && (t.restoringTerminalFocus === true || t.codexDetected === true || t.ctxSource === "codex");
+}
+
+function restoreTerminalFocusState(t, textarea) {
+  t.restoringTerminalFocus = true;
+  try { textarea.dispatchEvent(new FocusEvent("focus")); }
+  finally { t.restoringTerminalFocus = false; }
+}
+
 function setFocusedPane(ptyId) {
   focusedPaneId = ptyId;
   activeTermId = ptyId;
@@ -3798,12 +4040,9 @@ function startFocusKeeper() {
       // 1004 report exactly the same, with zero OS-level focus churn to disturb
       // the IME. (Fixes the "AI CLI 한글 첫 글자 깨짐 after window return" report.)
       //
-      // "exactly the same" includes the DECSET-1004 focus report, and that one we
-      // do NOT want: nothing about the OS focus changed here, and the real focus
-      // event this is standing in for emits its own. term.onData drops the report
-      // while this window is open (#38).
-      t.suppressFocusReportUntil = performance.now() + 120;
-      try { ta.dispatchEvent(new FocusEvent("focus")); } catch {}
+      // The report is synchronous with dispatchEvent. Scope suppression to that
+      // dispatch so it cannot accidentally consume a later real focus event.
+      try { restoreTerminalFocusState(t, ta); } catch {}
     } else {
       try { t.term.focus(); } catch {}
       try { if (ta && document.activeElement !== ta) ta.focus({ preventScroll: true }); } catch {}
@@ -5724,6 +5963,15 @@ async function spawnTerminal(shell, cwd) {
   }
 }
 
+// Start with a fresh shell and expose saved commands so the user can choose
+// which preconfigured AI CLI (or other command) to run in that shell.
+async function spawnTerminalForCommand() {
+  if (browserTabActive) setBrowserView(false);
+  if (viewerActive) setViewerView(false);
+  setCommandsVisible(true);
+  await spawnTerminal();
+}
+
 // Reparenting a live pane (split/close/drag-retile/move-to-tab) detaches its
 // .xterm-viewport, and the browser resets that element's scrollTop to 0. xterm
 // hears the stray scroll event and believes the user scrolled up, so every
@@ -7207,13 +7455,49 @@ function toggleBrowserEnabled() {
   applyBrowserEnabled();
 }
 
+const BROWSER_LABELS = {
+  en: { tab: "Browser", address: "Search or enter a web address", go: "Go", home: "Home", title: "Browse inside Mymux", hint: "Enter a website or search above. Your terminal sessions stay open.", loading: "Opening browser…", error: "Could not open the browser. Try again.", retry: "Try again", invalid: "Use an HTTP or HTTPS address" },
+  ko: { tab: "브라우저", address: "검색어 또는 웹 주소 입력", go: "이동", home: "홈", title: "Mymux 안에서 웹 탐색", hint: "웹 주소나 검색어를 입력하세요. 터미널 세션은 그대로 유지됩니다.", loading: "브라우저를 여는 중…", error: "브라우저를 열지 못했습니다. 다시 시도해 주세요.", retry: "다시 시도", invalid: "HTTP 또는 HTTPS 주소를 입력하세요" },
+  ja: { tab: "ブラウザー", address: "検索またはウェブアドレスを入力", go: "移動", home: "ホーム", title: "Mymux 内でウェブを閲覧", hint: "ウェブアドレスまたは検索語を入力してください。ターミナルセッションは開いたままです。", loading: "ブラウザーを開いています…", error: "ブラウザーを開けませんでした。もう一度お試しください。", retry: "再試行", invalid: "HTTP または HTTPS のアドレスを入力してください" },
+  zh: { tab: "浏览器", address: "搜索或输入网址", go: "前往", home: "主页", title: "在 Mymux 中浏览网页", hint: "请输入网址或搜索词。终端会话将保持打开。", loading: "正在打开浏览器…", error: "无法打开浏览器，请重试。", retry: "重试", invalid: "请输入 HTTP 或 HTTPS 地址" },
+};
+function browserText(key) {
+  const language = (navigator.language || "en").split("-")[0];
+  return (BROWSER_LABELS[language] || BROWSER_LABELS.en)[key];
+}
+
+function resolveBrowserInput(input) {
+  const text = String(input || "").trim();
+  if (!text) return null;
+  let candidate;
+  if (/^https?:\/\//i.test(text)) candidate = text;
+  else if (/^(localhost|\[[0-9a-f:]+\]|(?:\d{1,3}\.){3}\d{1,3})(?=[:/\?#]|$)/i.test(text)) candidate = "http://" + text;
+  else if (/^[^\s/:]+\.[^\s/:]+(?=[:/\?#]|$)/.test(text)) candidate = "https://" + text;
+  else if (/^[a-z][a-z0-9+.-]*:/i.test(text)) throw Error(browserText("invalid"));
+  else return "https://www.google.com/search?q=" + encodeURIComponent(text);
+  const parsed = new URL(candidate);
+  if (!parsed.hostname || !["http:", "https:"].includes(parsed.protocol)) throw Error(browserText("invalid"));
+  return parsed.href;
+}
+
 function initBrowserPanel() {
+  document.querySelectorAll("[data-browser-text]").forEach(node => { node.textContent = browserText(node.dataset.browserText); });
+  for (const id of ["nav-url", "browser-start-input"]) {
+    const input = document.getElementById(id);
+    input.placeholder = browserText("address");
+    input.setAttribute("aria-label", browserText("address"));
+  }
+  document.getElementById("nav-home").title = browserText("home");
+  document.getElementById("nav-home").setAttribute("aria-label", browserText("home"));
   // Persistent Browser tab pinned at the left of the tab strip.
   const tab = document.createElement("div");
   tab.className = "browser-tab";
   tab.id = "browser-tab";
-  tab.innerHTML = `${ICON.globe}<span>Browser</span><span class="tab-close" title="Close">&times;</span>`;
-  tab.title = "Playwright/CDP browser";
+  tab.innerHTML = `${ICON.globe}<span>${browserText("tab")}</span><span class="tab-close" title="Close">&times;</span>`;
+  tab.title = browserText("tab");
+  tab.tabIndex = 0;
+  tab.setAttribute("role", "button");
+  tab.addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setBrowserView(true); } });
   tab.addEventListener("click", (e) => {
     if (e.target.classList.contains("tab-close")) { setBrowserView(false); return; }
     setBrowserView(true);
@@ -7242,12 +7526,18 @@ function initBrowserPanel() {
   // Native address bar
   const navUrl = document.getElementById("nav-url");
   document.getElementById("nav-go").addEventListener("click", () => nativeNavigate(navUrl.value));
-  navUrl.addEventListener("keydown", (e) => {
-    if (e.key === "Enter") nativeNavigate(navUrl.value);
+  navUrl.addEventListener("focus", () => navUrl.select());
+  document.getElementById("nav-home").addEventListener("click", showBrowserHome);
+  document.getElementById("browser-start-form").addEventListener("submit", e => {
+    e.preventDefault(); nativeNavigate(document.getElementById("browser-start-input").value);
   });
-  document.getElementById("nav-back").addEventListener("click", () => invoke("browser_pane_back").catch(() => {}));
-  document.getElementById("nav-forward").addEventListener("click", () => invoke("browser_pane_forward").catch(() => {}));
-  document.getElementById("nav-reload").addEventListener("click", () => invoke("browser_pane_reload").catch(() => {}));
+  document.getElementById("browser-retry").addEventListener("click", () => nativeNavigate(nativeCurrentUrl));
+  navUrl.addEventListener("keydown", (e) => {
+    if (e.key === "Enter" && !e.isComposing && e.keyCode !== 229) nativeNavigate(navUrl.value);
+  });
+  document.getElementById("nav-back").addEventListener("click", () => browserMode === "native" ? invoke("browser_pane_back").catch(() => {}) : cdpSend("Runtime.evaluate", {expression:"history.back()"}));
+  document.getElementById("nav-forward").addEventListener("click", () => browserMode === "native" ? invoke("browser_pane_forward").catch(() => {}) : cdpSend("Runtime.evaluate", {expression:"history.forward()"}));
+  document.getElementById("nav-reload").addEventListener("click", () => browserMode === "native" ? invoke("browser_pane_reload").catch(() => {}) : cdpSend("Page.reload"));
 
   // Keep the native overlay aligned with its viewport box on any layout change.
   const vp = document.getElementById("browser-viewport");
@@ -7261,7 +7551,9 @@ function initBrowserPanel() {
     try {
       const u = await invoke("browser_pane_url");
       if (u) {
+        if (!nativeCurrentUrl) return;
         nativeCurrentUrl = u;
+        nativePaneLoadedUrl = u;
         navUrl.value = u;
       }
     } catch {}
@@ -7269,6 +7561,14 @@ function initBrowserPanel() {
 
   setBrowserMode("native");
   updateBrowserInfo();
+  invoke("browser_control_info").then(info => {
+    const node = document.getElementById("browser-local-control");
+    if (node && info.endpoint) {
+      node.hidden = false;
+      node.querySelector("code").textContent = 'node "$env:MYMUX_BROWSER_CONTROL" snapshot';
+      node.querySelector(".browser-local-endpoint").textContent = info.endpoint;
+    }
+  }).catch(() => {});
   setInterval(() => {
     if (browserTabActive && browserMode === "ai") refreshBrowserPages();
   }, 1500);
@@ -7320,6 +7620,8 @@ function updateBrowserInfo(endpointOverride) {
 
 function toggleBrowserInfo() {
   browserInfoOpen = !browserInfoOpen;
+  document.getElementById("browser-panel").classList.toggle("browser-settings-open", browserInfoOpen);
+  document.getElementById("btn-browser-info").setAttribute("aria-expanded", String(browserInfoOpen));
   const conn = document.getElementById("browser-conn");
   if (conn) conn.classList.toggle("browser-info-open", browserInfoOpen);
 }
@@ -7405,7 +7707,7 @@ function applyBrowserStatus(st) {
     if (st.port) document.getElementById("browser-port").value = st.port;
     updateBrowserInfo(st.endpoint);
     refreshBrowserPages();
-    if (browserTabActive) attachScreencast();
+    if (browserTabActive && browserMode === "ai") attachScreencast();
   } else {
     statusEl.textContent = "○ Stopped";
     statusEl.classList.remove("running");
@@ -7712,12 +8014,20 @@ function sleep(ms) {
   return new Promise((r) => setTimeout(r, ms));
 }
 
+let screencastAttachGeneration = 0;
+let screencastAttachPending = false;
+let cdpFrameState = null;
+
 async function attachScreencast() {
+  if (!browserTabActive || browserMode !== "ai" || screencastAttachPending) return;
   if (cdpWs) return; // already attached
+  screencastAttachPending = true;
+  const generation = screencastAttachGeneration;
+  try {
   const port = browserPort();
   // The debugging port + page target take a moment after launch; retry briefly.
   let target = browserPages.find((p) => p.targetId === activeBrowserPageId) || null;
-  for (let i = 0; i < 24 && !target && browserTabActive; i++) {
+  for (let i = 0; i < 24 && !target && browserTabActive && browserMode === "ai" && generation === screencastAttachGeneration; i++) {
     try {
       const pages = await invoke("browser_page_targets", { port });
       browserPages = Array.isArray(pages) ? pages : [];
@@ -7730,11 +8040,13 @@ async function attachScreencast() {
       await sleep(250);
     }
   }
-  if (!target || !browserTabActive) return;
+  if (!target || !browserTabActive || browserMode !== "ai" || generation !== screencastAttachGeneration) return;
   openCdp(target.wsUrl);
+  } finally { if (generation === screencastAttachGeneration) screencastAttachPending = false; }
 }
 
 function openCdp(wsUrl) {
+  if (cdpWs || !browserTabActive || browserMode !== "ai") return;
   let ws;
   try {
     ws = new WebSocket(wsUrl);
@@ -7743,21 +8055,22 @@ function openCdp(wsUrl) {
     return;
   }
   cdpWs = ws;
+  cdpFrameState = { ws, busy: false, pending: null };
   ws.onopen = () => {
+    if (cdpWs !== ws || !browserTabActive || browserMode !== "ai") { ws.close(); return; }
     cdpSend("Page.enable");
     cdpSend("Page.startScreencast", {
       format: "jpeg",
       quality: 70,
-      maxWidth: 1600,
-      maxHeight: 1000,
+      maxWidth: Math.max(320, Math.min(1600, Math.round(document.getElementById("browser-viewport").clientWidth))),
+      maxHeight: Math.max(200, Math.min(1000, Math.round(document.getElementById("browser-viewport").clientHeight))),
       everyNthFrame: 1,
     });
     bindScreenInput();
   };
-  ws.onmessage = (ev) => handleCdpMessage(ev.data);
+  ws.onmessage = (ev) => { if (cdpWs === ws) handleCdpMessage(ev.data); };
   ws.onclose = () => {
-    if (cdpWs === ws) cdpWs = null;
-    setScreenActive(false);
+    if (cdpWs === ws) { cdpWs = null; cdpFrameState = null; setScreenActive(false); }
   };
   ws.onerror = () => {
     /* onclose follows */
@@ -7777,16 +8090,46 @@ function handleCdpMessage(data) {
   } catch {
     return;
   }
-  if (msg.method === "Page.screencastFrame") {
-    const p = msg.params;
-    lastFrameMeta = p.metadata;
-    document.getElementById("browser-screen").src = "data:image/jpeg;base64," + p.data;
+  if (msg.method === "Page.screencastFrame" && cdpFrameState) {
+    const state = cdpFrameState;
+    // Keep just the newest queued JPEG while a prior image is decoding.
+    if (state.pending) acknowledgeFrame(state, state.pending.sessionId);
+    state.pending = msg.params;
+    paintCdpFrame(state);
+  }
+}
+
+function acknowledgeFrame(state, sessionId) {
+  if (state.ws.readyState === WebSocket.OPEN) {
+    state.ws.send(JSON.stringify({ id: ++cdpMsgId, method: "Page.screencastFrameAck", params: { sessionId } }));
+  }
+}
+
+async function paintCdpFrame(state) {
+  if (state.busy || !state.pending) return;
+  const frame = state.pending;
+  state.pending = null;
+  state.busy = true;
+  try {
+    const decoded = new Image();
+    decoded.src = "data:image/jpeg;base64," + frame.data;
+    await decoded.decode();
+    if (cdpFrameState !== state || !browserTabActive || browserMode !== "ai") return;
+    document.getElementById("browser-screen").src = decoded.src;
+    lastFrameMeta = frame.metadata;
     setScreenActive(true);
-    cdpSend("Page.screencastFrameAck", { sessionId: p.sessionId });
+  } catch { /* A bad frame must not stall the stream. */ }
+  finally {
+    acknowledgeFrame(state, frame.sessionId);
+    state.busy = false;
+    if (cdpFrameState === state) paintCdpFrame(state);
   }
 }
 
 function detachScreencast() {
+  screencastAttachGeneration += 1;
+  screencastAttachPending = false;
+  cdpFrameState = null;
   if (cdpWs) {
     try { cdpSend("Page.stopScreencast"); } catch {}
     try { cdpWs.close(); } catch {}
@@ -7876,7 +8219,7 @@ function setBrowserMode(mode) {
   browserMode = mode;
   document.getElementById("mode-native").classList.toggle("active", mode === "native");
   document.getElementById("mode-ai").classList.toggle("active", mode === "ai");
-  document.getElementById("browser-nav").style.display = mode === "native" ? "" : "none";
+  document.getElementById("browser-nav").style.display = "";
   document.getElementById("browser-ai-controls").style.display = mode === "ai" ? "" : "none";
   document.getElementById("browser-conn").style.display = mode === "ai" ? "" : "none";
   const pageTabs = document.getElementById("browser-page-tabs");
@@ -7896,30 +8239,60 @@ function setBrowserMode(mode) {
   }
 }
 
+let nativePaneOpenPromise = null;
+let nativePaneLoadedUrl = null;
+let nativeNavigationSequence = 0;
+
+function showBrowserStart(state = "home", detail = "") {
+  const placeholder = document.getElementById("browser-placeholder");
+  placeholder.dataset.state = state;
+  document.getElementById("browser-start-message").textContent = browserText(state === "loading" ? "loading" : state === "error" ? "error" : "hint");
+  document.getElementById("browser-start-error").textContent = detail;
+  document.getElementById("browser-retry").hidden = state !== "error";
+}
+
+function showBrowserHome() {
+  nativeNavigationSequence += 1;
+  nativeCurrentUrl = "";
+  document.getElementById("nav-url").value = "";
+  if (browserMode !== "native") setBrowserMode("native");
+  invoke("browser_pane_hide").catch(() => {});
+  showBrowserStart();
+  document.getElementById("browser-start-input").focus();
+}
+
 async function openNativePane() {
-  // A native child WebView always floats above the HTML session sidebar.
-  // Do not let another browser-state callback cover an open memo popover.
-  if (memoNativePaneHidden) return;
-  const vp = document.getElementById("browser-viewport");
-  const r = vp.getBoundingClientRect();
-  try {
-    if (!nativePaneCreated) {
-      await invoke("browser_pane_open", {
-        url: nativeCurrentUrl,
-        x: r.x,
-        y: r.y,
-        width: r.width,
-        height: r.height,
-      });
-      nativePaneCreated = true;
-    } else {
-      // Re-entry: just show + realign, preserving the page that was open.
-      await invoke("browser_pane_show");
-      await invoke("browser_pane_set_bounds", { x: r.x, y: r.y, width: r.width, height: r.height });
+  if (memoNativePaneHidden || !browserTabActive || browserMode !== "native") return false;
+  if (!nativeCurrentUrl) { showBrowserStart(); return false; }
+  if (nativePaneOpenPromise) return nativePaneOpenPromise;
+  const requestedUrl = nativeCurrentUrl;
+  nativePaneOpenPromise = (async () => {
+    const vp = document.getElementById("browser-viewport");
+    const r = vp.getBoundingClientRect();
+    if (r.width < 1 || r.height < 1) return false;
+    try {
+      if (!nativePaneCreated) {
+        showBrowserStart("loading");
+        await invoke("browser_pane_open", { url: requestedUrl, x: r.x, y: r.y, width: r.width, height: r.height });
+        nativePaneCreated = true;
+        nativePaneLoadedUrl = requestedUrl;
+      } else {
+        await invoke("browser_pane_set_bounds", { x: r.x, y: r.y, width: r.width, height: r.height });
+        await invoke("browser_pane_show");
+      }
+      // Switching tabs or choosing Home while creation runs must keep it hidden.
+      if (!browserTabActive || browserMode !== "native" || !nativeCurrentUrl || memoNativePaneHidden) {
+        await invoke("browser_pane_hide");
+        return false;
+      }
+      return true;
+    } catch (e) {
+      showBrowserStart("error", String(e));
+      return false;
     }
-  } catch (e) {
-    toast(String(e), true);
-  }
+  })();
+  try { return await nativePaneOpenPromise; }
+  finally { nativePaneOpenPromise = null; }
 }
 
 function scheduleSync() {
@@ -7943,11 +8316,29 @@ async function syncPaneBounds() {
   } catch {}
 }
 
-function nativeNavigate(input) {
-  const url = (input || "").trim();
+async function nativeNavigate(input) {
+  let url;
+  try { url = resolveBrowserInput(input); }
+  catch (e) { toast(String(e.message || e), true); return; }
   if (!url) return;
+  document.getElementById("nav-url").value = url;
+  if (browserMode === "ai") {
+    if (cdpWs?.readyState === WebSocket.OPEN) cdpSend("Page.navigate", { url });
+    else { document.getElementById("browser-url").value = url; launchBrowser(); }
+    return;
+  }
+  const sequence = ++nativeNavigationSequence;
   nativeCurrentUrl = url;
-  invoke("browser_pane_navigate", { url }).catch((e) => toast(String(e), true));
+  if (!(await openNativePane()) || sequence !== nativeNavigationSequence) return;
+  try {
+    if (nativePaneLoadedUrl !== url) {
+      await invoke("browser_pane_navigate", { url });
+      nativePaneLoadedUrl = url;
+    }
+  } catch (e) {
+    await invoke("browser_pane_hide").catch(() => {});
+    showBrowserStart("error", String(e));
+  }
 }
 
 // ── Session persistence + close prompt ──

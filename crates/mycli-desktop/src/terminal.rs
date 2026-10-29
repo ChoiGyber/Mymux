@@ -536,12 +536,32 @@ fn sanitize_account_pin(cmd: &mut CommandBuilder) {
     }
 }
 
+/// Tell a Unix pane's programs which terminal they are drawing on.
+///
+/// portable-pty starts the child with our own environment, and an app opened
+/// from the Dock or Finder (or a Linux desktop launcher) has no `TERM` in it at
+/// all. zsh then knows no cursor movement: every keystroke is redrawn from
+/// column 0 with spaces painted over the prompt, and zsh-autosuggestions' grey
+/// hint is left behind as ordinary text. A typed command looks scattered with
+/// tab-wide gaps, and the command capture reads that debris back off the
+/// screen, so a restored session re-runs it. A `TERM` inherited from another
+/// terminal describes that terminal, not this one — every pane is xterm.js.
+///
+/// Windows panes run through ConPTY and are left as they are.
+#[cfg(not(windows))]
+fn declare_terminal_type(cmd: &mut CommandBuilder) {
+    cmd.env("TERM", "xterm-256color");
+}
+
 /// The command a new pane is spawned with. Every pane goes through here —
 /// default shell, PowerShell, Git Bash, CMD, SSH, a custom executable — so the
-/// account-pin sanitation above cannot be missed by a shell-specific builder.
+/// account-pin sanitation above, and on Unix the terminal type, cannot be
+/// missed by a shell-specific builder.
 fn pane_command(shell: Option<&str>, args: Option<&Vec<String>>) -> CommandBuilder {
     let mut cmd = build_command(shell, args);
     sanitize_account_pin(&mut cmd);
+    #[cfg(not(windows))]
+    declare_terminal_type(&mut cmd);
     cmd
 }
 
@@ -900,6 +920,46 @@ mod account_pin_tests {
             !body.contains("build_command("),
             "pty_spawn must not call build_command directly — that skips sanitize_account_pin",
         );
+    }
+}
+
+/// A Mymux started from the Dock or Finder has no `TERM` to hand down, and one
+/// started from another terminal hands down THAT terminal's type. Either way the
+/// pane is drawn by xterm.js, so every Unix pane must say so.
+#[cfg(all(test, not(windows)))]
+mod terminal_type_tests {
+    use super::*;
+
+    #[test]
+    fn every_unix_pane_declares_the_xterm_it_draws_on() {
+        for shell in [None, Some("zsh"), Some("bash"), Some("cmd"), Some("some-custom-shell")] {
+            let cmd = pane_command(shell, None);
+            assert_eq!(
+                cmd.get_env("TERM").and_then(|v| v.to_str()),
+                Some("xterm-256color"),
+                "{}",
+                shell.unwrap_or("<default>"),
+            );
+        }
+    }
+
+    #[test]
+    fn an_inherited_terminal_type_is_replaced() {
+        for inherited in [None, Some("dumb"), Some("screen")] {
+            let mut cmd = CommandBuilder::new("test-shell");
+            match inherited {
+                Some(term) => cmd.env("TERM", term),
+                None => cmd.env_remove("TERM"),
+            }
+
+            declare_terminal_type(&mut cmd);
+
+            assert_eq!(
+                cmd.get_env("TERM").and_then(|v| v.to_str()),
+                Some("xterm-256color"),
+                "{inherited:?}",
+            );
+        }
     }
 }
 

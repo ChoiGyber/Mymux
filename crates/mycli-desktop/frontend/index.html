@@ -68,53 +68,6 @@
     <button id="voice-save-key" type="button">키 암호화 저장</button>
 
     <div id="voice-local" class="hidden">
-      <div class="voice-modes" role="radiogroup" aria-label="로컬 실행 방식">
-        <label><input type="radio" name="voice-local-mode" value="standalone" checked> 단독 실행 파일</label>
-        <label><input type="radio" name="voice-local-mode" value="python"> Python</label>
-      </div>
-
-      <!-- Exactly what to install, with the links, because the previous build
-           demanded an executable it never shipped and never named. -->
-      <details id="voice-guide-standalone" class="voice-guide">
-        <summary>설치 안내 · Python 불필요</summary>
-        <ol>
-          <li>
-            <button type="button" class="voice-link" data-url="https://github.com/Purfview/whisper-standalone-win/releases/tag/Faster-Whisper-XXL">다운로드 페이지 열기 ↗</button>
-            <span class="voice-hint">Faster-Whisper-XXL 의 최신 <code>*_windows.7z</code> (약 1.4GB)</span>
-          </li>
-          <li>
-            압축을 풉니다. Windows 11 탐색기는 <code>.7z</code> 를 기본 지원합니다.
-            <button type="button" class="voice-link" data-url="https://www.7-zip.org/">그 이하 버전은 7-Zip ↗</button>
-          </li>
-          <li>푼 폴더의 <code>faster-whisper-xxl.exe</code> 를 아래에서 고릅니다. 모델은 첫 실행 때 자동으로 받습니다.</li>
-        </ol>
-      </details>
-
-      <details id="voice-guide-python" class="voice-guide">
-        <summary>설치 안내 · Python</summary>
-        <ol>
-          <li>
-            <button type="button" class="voice-link" data-url="https://www.python.org/downloads/windows/">python.org 열기 ↗</button>
-            <span class="voice-hint">Python 3.9 이상</span>
-          </li>
-          <li>
-            <code>pip install faster-whisper</code>
-            <button type="button" class="voice-copy" data-copy="pip install faster-whisper">복사</button>
-            <button type="button" id="voice-pip-run">현재 패인에 입력</button>
-          </li>
-          <li>
-            GPU 를 쓸 때만 · cuBLAS + cuDNN 9 for CUDA 12
-            <button type="button" class="voice-link" data-url="https://github.com/SYSTRAN/faster-whisper#gpu">안내 ↗</button>
-          </li>
-          <li><code>python.exe</code> 를 아래에서 고릅니다. 래퍼 스크립트는 Mymux 에 동봉돼 있어 직접 만들 필요가 없습니다.</li>
-        </ol>
-      </details>
-
-      <div class="voice-runner-row">
-        <input id="voice-runner" readonly placeholder="실행 파일을 선택하세요">
-        <button id="voice-browse" type="button">찾아보기…</button>
-      </div>
-
       <div class="voice-two">
         <label>모델
           <select id="voice-model">
@@ -135,7 +88,66 @@
           </select>
         </label>
       </div>
-      <button id="voice-check" type="button">설치 확인</button>
+
+      <!-- One button does what the guides below describe by hand: a private
+           Python, faster-whisper and the chosen model, then wires itself up. -->
+      <div id="voice-auto" class="voice-auto">
+        <button id="voice-auto-setup" type="button" class="voice-primary">⚡ 자동 설치하고 바로 연결</button>
+        <progress id="voice-auto-bar" class="hidden" max="4" value="0"></progress>
+        <div id="voice-auto-msg" class="voice-hint">Python · faster-whisper · 위에서 고른 모델을 이 앱 전용 폴더에 설치합니다. 관리자 권한은 필요 없고, 수백 MB 를 내려받습니다.</div>
+      </div>
+
+      <details id="voice-manual" class="voice-guide">
+        <summary>직접 설치하거나 다른 실행 파일 쓰기</summary>
+        <div class="voice-modes" role="radiogroup" aria-label="로컬 실행 방식">
+          <label><input type="radio" name="voice-local-mode" value="standalone" checked> 단독 실행 파일</label>
+          <label><input type="radio" name="voice-local-mode" value="python"> Python</label>
+        </div>
+
+        <!-- Exactly what to install, with the links, because the previous build
+             demanded an executable it never shipped and never named. -->
+        <details id="voice-guide-standalone" class="voice-guide">
+          <summary>설치 안내 · Python 불필요</summary>
+          <ol>
+            <li>
+              <button type="button" class="voice-link" data-url="https://github.com/Purfview/whisper-standalone-win/releases/tag/Faster-Whisper-XXL">다운로드 페이지 열기 ↗</button>
+              <span class="voice-hint">Faster-Whisper-XXL 의 최신 <code>*_windows.7z</code> (약 1.4GB)</span>
+            </li>
+            <li>
+              압축을 풉니다. Windows 11 탐색기는 <code>.7z</code> 를 기본 지원합니다.
+              <button type="button" class="voice-link" data-url="https://www.7-zip.org/">그 이하 버전은 7-Zip ↗</button>
+            </li>
+            <li>푼 폴더의 <code>faster-whisper-xxl.exe</code> 를 아래에서 고릅니다. 모델은 첫 실행 때 자동으로 받습니다.</li>
+          </ol>
+        </details>
+
+        <details id="voice-guide-python" class="voice-guide">
+          <summary>설치 안내 · Python</summary>
+          <ol>
+            <li>
+              <button type="button" class="voice-link" data-url="https://www.python.org/downloads/windows/">python.org 열기 ↗</button>
+              <span class="voice-hint">Python 3.9 이상</span>
+            </li>
+            <li>
+              <code>pip install faster-whisper</code>
+              <button type="button" class="voice-copy" data-copy="pip install faster-whisper">복사</button>
+              <button type="button" id="voice-pip-run">현재 패인에 입력</button>
+            </li>
+            <li>
+              GPU 를 쓸 때만 · cuBLAS + cuDNN 9 for CUDA 12
+              <button type="button" class="voice-link" data-url="https://github.com/SYSTRAN/faster-whisper#gpu">안내 ↗</button>
+            </li>
+            <li><code>python.exe</code> 를 아래에서 고릅니다. 래퍼 스크립트는 Mymux 에 동봉돼 있어 직접 만들 필요가 없습니다.</li>
+          </ol>
+        </details>
+
+        <div class="voice-runner-row">
+          <input id="voice-runner" readonly placeholder="실행 파일을 선택하세요">
+          <button id="voice-browse" type="button">찾아보기…</button>
+        </div>
+
+        <button id="voice-check" type="button">설치 확인</button>
+      </details>
     </div>
 
     <label class="voice-chk"><input type="checkbox" id="voice-ptt" checked> Ctrl+Space 눌러서 말하기</label>
@@ -241,15 +253,15 @@
           <div id="browser-status" class="browser-status stopped">○ Stopped</div>
         </div>
 
-        <button id="btn-browser-info" class="secondary browser-info-btn" type="button">Info</button>
-
         <!-- Native mode: address bar (drives the embedded child WebView) -->
         <div class="browser-nav" id="browser-nav">
           <button id="nav-back" class="secondary" title="Back">&#9664;</button>
           <button id="nav-forward" class="secondary" title="Forward">&#9654;</button>
           <button id="nav-reload" class="secondary" title="Reload">&#8635;</button>
+          <button id="nav-home" class="secondary" type="button">&#8962;</button>
           <input type="text" id="nav-url" placeholder="Enter an address — e.g. github.com" spellcheck="false" />
-          <button id="nav-go">Go</button>
+          <button id="nav-go" data-browser-text="go"></button>
+          <button id="btn-browser-info" class="secondary browser-info-btn" type="button" title="Browser settings" aria-expanded="false">&#9881;</button>
         </div>
 
         <!-- AI mode: CDP / Playwright controls -->
@@ -261,26 +273,29 @@
           <button id="btn-browser-refresh" class="secondary" title="Refresh status">&#8635;</button>
         </div>
 
-        <div class="browser-import" id="browser-import">
-          <label for="browser-import-profile">Use existing login</label>
-          <select id="browser-import-profile" disabled>
-            <option value="">Click Scan to find Chrome/Edge profiles</option>
-          </select>
-          <button id="btn-browser-profile-scan" class="secondary">Scan</button>
-          <button id="btn-browser-profile-import" class="secondary" disabled>Import with consent</button>
-          <span class="muted">Copies the selected profile into Mymux; the source is not changed.</span>
-        </div>
+        <details id="browser-import-details" class="browser-import-details">
+          <summary>프로필 가져오기 / Import <span class="muted">Chrome · Edge</span></summary>
+          <div class="browser-import" id="browser-import">
+            <label for="browser-import-profile">Use existing login</label>
+            <select id="browser-import-profile" disabled>
+              <option value="">Click Scan to find Chrome/Edge profiles</option>
+            </select>
+            <button id="btn-browser-profile-scan" class="secondary">Scan</button>
+            <button id="btn-browser-profile-import" class="secondary" disabled>Import with consent</button>
+            <span class="muted">Copies the selected profile into Mymux; the source is not changed.</span>
+          </div>
 
-        <!-- Read (not copy) the selected profile's bookmarks / history / passwords
-             into Mymux. Read-only against the user's own data, gated on consent. -->
-        <div class="browser-import browser-data-import" id="browser-data-import">
-          <label>크롬·엣지에서 가져오기</label>
-          <label class="bd-chk"><input type="checkbox" id="bd-bookmarks" checked /> 북마크</label>
-          <label class="bd-chk"><input type="checkbox" id="bd-history" checked /> 방문 기록</label>
-          <label class="bd-chk"><input type="checkbox" id="bd-passwords" /> 저장된 비밀번호</label>
-          <button id="btn-browser-data-import" class="secondary" disabled>동의하고 불러오기</button>
-          <span class="muted">위 프로필에서 읽기만 합니다. 원본은 바뀌지 않습니다.</span>
-        </div>
+          <!-- Read (not copy) the selected profile's bookmarks / history / passwords
+               into Mymux. Read-only against the user's own data, gated on consent. -->
+          <div class="browser-import browser-data-import" id="browser-data-import">
+            <label>크롬·엣지에서 가져오기</label>
+            <label class="bd-chk"><input type="checkbox" id="bd-bookmarks" checked /> 북마크</label>
+            <label class="bd-chk"><input type="checkbox" id="bd-history" checked /> 방문 기록</label>
+            <label class="bd-chk"><input type="checkbox" id="bd-passwords" /> 저장된 비밀번호</label>
+            <button id="btn-browser-data-import" class="secondary" disabled>동의하고 불러오기</button>
+            <span class="muted">위 프로필에서 읽기만 합니다. 원본은 바뀌지 않습니다.</span>
+          </div>
+        </details>
 
         <div id="browser-page-tabs" class="browser-page-tabs" style="display:none">
           <button id="btn-browser-new-page" class="browser-page-new" type="button" title="New browser page">+</button>
@@ -289,13 +304,25 @@
         <!-- Live screencast surface (Phase A) -->
         <div id="browser-viewport">
           <img id="browser-screen" alt="" draggable="false" />
-          <div id="browser-placeholder">
-            <p><b>Native</b>: Enter an address and the built-in browser appears here.</p>
-            <p class="browser-profile-note">AI login links from Claude Code/Codex open here. Use “Scan” above if you want to explicitly copy an existing Chrome/Edge login profile into the Mymux AI browser.</p>
-            <p class="muted">Switch to <b>AI Control</b> mode to see the screen driven by AI (Playwright MCP).</p>
+          <div id="browser-placeholder" data-state="home">
+            <div class="browser-start-mark" aria-hidden="true">&#9678;</div>
+            <h2 data-browser-text="title"></h2>
+            <p id="browser-start-message" data-browser-text="hint" role="status" aria-live="polite"></p>
+            <form id="browser-start-form" class="browser-start-form">
+              <input id="browser-start-input" type="text" spellcheck="false" autocomplete="off" />
+              <button type="submit" data-browser-text="go"></button>
+            </form>
+            <p id="browser-start-error"></p>
+            <button id="browser-retry" type="button" data-browser-text="retry" hidden></button>
           </div>
         </div>
 
+        <div id="browser-local-control" class="browser-local-control" hidden>
+          <b>Local session control (Node 22+)</b>
+          <code></code>
+          <span>Actions: targets ? snapshot ? navigate URL ? click SELECTOR ? fill SELECTOR TEXT ? evaluate JAVASCRIPT</span>
+          <span class="browser-local-endpoint"></span>
+        </div>
         <details class="browser-conn" id="browser-conn" style="display:none">
           <summary>AI connection settings (Playwright MCP)</summary>
           <div class="browser-info">

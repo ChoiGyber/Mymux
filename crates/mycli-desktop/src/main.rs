@@ -149,6 +149,8 @@ fn main() {
         return;
     }
 
+    browser::configure_native_control();
+
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_clipboard_manager::init())
@@ -233,6 +235,7 @@ fn main() {
             explorer::sftp_disconnect,
             explorer::ssh_resolve_command,
             browser::browser_launch,
+            browser::browser_control_info,
             browser::browser_profiles,
             browser::browser_import_profile,
             browser::browser_status,
@@ -259,6 +262,8 @@ fn main() {
             voice::voice_transcribe_local,
             voice::voice_check_local,
             voice::voice_pick_runner,
+            voice::voice_setup_local,
+            voice::voice_managed_status,
         ])
         .setup(|_app| {
             // Save the window geometry the moment the main window is

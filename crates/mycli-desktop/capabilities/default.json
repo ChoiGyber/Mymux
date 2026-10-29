@@ -68,6 +68,7 @@
     "allow-sftp-disconnect",
     "allow-ssh-resolve-command",
     "allow-browser-launch",
+    "allow-browser-control-info",
     "allow-browser-profiles",
     "allow-browser-import-profile",
     "allow-browser-status",
@@ -94,6 +95,8 @@
     "allow-voice-deepgram-token",
     "allow-voice-transcribe-local",
     "allow-voice-check-local",
-    "allow-voice-pick-runner"
+    "allow-voice-pick-runner",
+    "allow-voice-setup-local",
+    "allow-voice-managed-status"
   ]
 }
