@@ -39,6 +39,13 @@ jobs:
       - name: Cache cargo build
         uses: Swatinem/rust-cache@v2
 
+      # The checked-in config names a developer certificate available only
+      # on the maintainer's Mac. CI has no Apple certificate, so use Tauri's
+      # ad-hoc identity for this downloadable, non-notarized build.
+      - name: Configure ad-hoc macOS signing
+        run: |
+          node -e "const fs = require('node:fs'); const path = 'crates/mycli-desktop/tauri.conf.json'; const config = JSON.parse(fs.readFileSync(path, 'utf8')); config.bundle.macOS.signingIdentity = '-'; fs.writeFileSync(path, JSON.stringify(config, null, 2) + '\n');"
+
       - name: Build universal dmg
         working-directory: crates/mycli-desktop
         env:

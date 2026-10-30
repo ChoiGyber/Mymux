@@ -60,6 +60,10 @@ The Mac build is produced on a Mac and added to the **same** GitHub Release that
 the Windows/Linux workflow created. It must be signed with the **same** updater
 key, or Mac users' auto-update will reject it.
 
+The GitHub Actions Mac workflow uses an ad-hoc signature because the maintainer's
+Apple developer certificate is not available to CI. The DMG is not notarized;
+macOS may require users to allow the app in Privacy & Security on first launch.
+
 ### 3.1 Prerequisites (first time only)
 
 ```bash
