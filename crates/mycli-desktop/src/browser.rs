@@ -582,23 +582,28 @@ pub async fn browser_pane_open(
 ) -> Result<(), String> {
     let target = parse_url(&url)?;
     let win = window.clone();
+    let (tx, rx) = tokio::sync::oneshot::channel();
     window
         .app_handle()
         .run_on_main_thread(move || {
-            if let Some(wv) = win.get_webview(PANE_LABEL) {
-                let _ = wv.set_bounds(pane_rect(x, y, width, height));
-                let _ = wv.navigate(target);
-                let _ = wv.show();
-                let _ = wv.set_focus();
-            } else if let Err(e) = win.add_child(
-                WebviewBuilder::new(PANE_LABEL, WebviewUrl::External(target)),
-                LogicalPosition::new(x, y),
-                LogicalSize::new(width.max(1.0), height.max(1.0)),
-            ) {
-                eprintln!("browser_pane add_child failed: {e}");
-            }
+            let result = (|| -> Result<(), String> {
+                if let Some(wv) = win.get_webview(PANE_LABEL) {
+                    wv.set_bounds(pane_rect(x, y, width, height)).map_err(|e| e.to_string())?;
+                    wv.navigate(target).map_err(|e| e.to_string())?;
+                    wv.show().map_err(|e| e.to_string())?;
+                } else {
+                    win.add_child(
+                        WebviewBuilder::new(PANE_LABEL, WebviewUrl::External(target)),
+                        LogicalPosition::new(x, y),
+                        LogicalSize::new(width.max(1.0), height.max(1.0)),
+                    ).map_err(|e| e.to_string())?;
+                }
+                Ok(())
+            })();
+            let _ = tx.send(result);
         })
-        .map_err(|e| e.to_string())
+        .map_err(|e| e.to_string())?;
+    rx.await.map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
@@ -617,9 +622,15 @@ pub async fn browser_pane_set_bounds(
 #[tauri::command]
 pub async fn browser_pane_navigate(app: tauri::AppHandle, url: String) -> Result<(), String> {
     let target = parse_url(&url)?;
-    with_pane(&app, move |wv| {
-        let _ = wv.navigate(target);
-    })
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    let a = app.clone();
+    app.run_on_main_thread(move || {
+        let result = a.get_webview(PANE_LABEL)
+            .ok_or_else(|| "Browser pane is not open".to_string())
+            .and_then(|wv| wv.navigate(target).map_err(|e| e.to_string()));
+        let _ = tx.send(result);
+    }).map_err(|e| e.to_string())?;
+    rx.await.map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
@@ -680,4 +691,49 @@ pub async fn browser_pane_url(app: tauri::AppHandle) -> Result<Option<String>, S
     .map_err(|e| e.to_string())?;
     rx.recv_timeout(std::time::Duration::from_secs(2))
         .map_err(|e| e.to_string())
+}
+
+/// Configure the WebView2 CDP listener before Tauri creates any threads or views.
+/// Local child shells inherit the endpoint and a helper which excludes app views.
+/// https://learn.microsoft.com/microsoft-edge/webview2/how-to/debug-visual-studio-code
+pub fn configure_native_control() {
+    #[cfg(windows)]
+    {
+        if std::env::var_os("MYMUX_DISABLE_BROWSER_CDP").is_some() {
+            return;
+        }
+        let Ok(listener) = std::net::TcpListener::bind("127.0.0.1:0") else { return };
+        let Ok(addr) = listener.local_addr() else { return };
+        let Some(base) = dirs::data_local_dir() else { return };
+        let directory = base.join("mycli");
+        if std::fs::create_dir_all(&directory).is_err() { return; }
+        let helper = directory.join("mymux-browser.mjs");
+        if std::fs::write(&helper, include_str!("../../../scripts/mymux-browser.mjs")).is_err() { return; }
+        let inherited = std::env::var("WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS").unwrap_or_default();
+        // Replace a prior debug port instead of letting Chromium pick the first one.
+        let arguments = inherited.split_whitespace()
+            .filter(|part| !part.starts_with("--remote-debugging-port") && !part.starts_with("--remote-debugging-address"))
+            .collect::<Vec<_>>().join(" ");
+        // SAFETY: called once from main before the Tauri runtime or worker threads.
+        unsafe {
+            std::env::set_var("WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS", format!("{arguments} --remote-debugging-address=127.0.0.1 --remote-debugging-port={}", addr.port()));
+            std::env::set_var("MYMUX_BROWSER_ENDPOINT", format!("http://127.0.0.1:{}", addr.port()));
+            std::env::set_var("MYMUX_BROWSER_CONTROL", helper);
+        }
+        drop(listener);
+    }
+}
+
+#[derive(Serialize)]
+pub struct BrowserControlInfo {
+    endpoint: Option<String>,
+    helper: Option<String>,
+}
+
+#[tauri::command]
+pub fn browser_control_info() -> BrowserControlInfo {
+    BrowserControlInfo {
+        endpoint: std::env::var("MYMUX_BROWSER_ENDPOINT").ok(),
+        helper: std::env::var("MYMUX_BROWSER_CONTROL").ok(),
+    }
 }

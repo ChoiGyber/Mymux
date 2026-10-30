@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-voice-managed-status"
+description = "Enables the voice_managed_status command without any pre-configured scope."
+commands.allow = ["voice_managed_status"]
+
+[[permission]]
+identifier = "deny-voice-managed-status"
+description = "Denies the voice_managed_status command without any pre-configured scope."
+commands.deny = ["voice_managed_status"]

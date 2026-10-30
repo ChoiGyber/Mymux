@@ -65,6 +65,7 @@ const APP_COMMANDS: &[&str] = &[
     "sftp_disconnect",
     "ssh_resolve_command",
     "browser_launch",
+    "browser_control_info",
     "browser_profiles",
     "browser_import_profile",
     "browser_status",
@@ -91,6 +92,8 @@ const APP_COMMANDS: &[&str] = &[
     "voice_transcribe_local",
     "voice_check_local",
     "voice_pick_runner",
+    "voice_setup_local",
+    "voice_managed_status",
 ];
 
 /// Copy the sideloaded ConPTY host (`conpty.dll` + `OpenConsole.exe`) next to

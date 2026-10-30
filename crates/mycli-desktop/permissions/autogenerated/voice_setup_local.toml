@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-voice-setup-local"
+description = "Enables the voice_setup_local command without any pre-configured scope."
+commands.allow = ["voice_setup_local"]
+
+[[permission]]
+identifier = "deny-voice-setup-local"
+description = "Denies the voice_setup_local command without any pre-configured scope."
+commands.deny = ["voice_setup_local"]

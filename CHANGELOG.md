@@ -8,6 +8,31 @@ For installers, see the [GitHub Releases](https://github.com/ChoiGyber/Mymux/rel
 
 ---
 
+## v0.3.4 — 2026-10-30
+
+### Added / 추가
+
+- **내장 브라우저를 터미널 탭에서 열고 CLI로 제어합니다 / Open and control the
+  built-in browser from terminal sessions.** Added browser navigation and tabs,
+  plus a local browser-control helper for CLI workflows. The helper targets the
+  selected browser page and keeps the browser debugging connection on loopback.
+
+- **새 터미널에서 저장된 명령을 고를 수 있습니다 / Choose a saved command for a
+  new terminal.** The Commands panel is shown when a new terminal is created so
+  configured AI CLI commands are easy to select.
+
+### Fixed / 수정
+
+- **한글 조합 위치와 Codex 포커스 전환 입력을 보정했습니다 / Improved Korean
+  IME composition positioning and Codex focus-switch input handling.** Added
+  targeted regression checks for composition geometry and terminal focus
+  reporting. These checks do not replace native Windows IME acceptance.
+
+- **음성 입력 관리 상태와 로컬 설정 흐름을 보완했습니다 / Improved voice-input
+  setup and managed status reporting.**
+
+---
+
 ## v0.3.3 — 2026-10-20
 
 ### Fixed / 버그 수정

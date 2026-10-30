@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-browser-control-info"
+description = "Enables the browser_control_info command without any pre-configured scope."
+commands.allow = ["browser_control_info"]
+
+[[permission]]
+identifier = "deny-browser-control-info"
+description = "Denies the browser_control_info command without any pre-configured scope."
+commands.deny = ["browser_control_info"]
