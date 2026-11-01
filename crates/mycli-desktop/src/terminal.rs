@@ -304,31 +304,13 @@ elif [[ -r "$HOME/.zshrc" ]]; then
   source "$HOME/.zshrc"
 fi
 
-setopt prompt_subst
-__mymux_prompt() {
-  local p="${PWD/#$HOME/~}" cols=${COLUMNS:-80} out= part i
-  if (( cols < 12 )); then
-    __mymux_p=""
-    return
-  fi
-  if (( ${#p} + 4 > cols )); then
-    local -a parts
-    parts=("${(@s:/:)p}")
-    for (( i = 1; i < $#parts; i++ )); do
-      [[ -n "${parts[i]}" ]] && out+="${parts[i][1]}/"
-    done
-    out+="${parts[-1]}"
-    p="$out"
-    if (( ${#p} + 4 > cols )); then
-      local keep=$(( cols - 8 ))
-      (( keep < 1 )) && keep=1
-      p="...${p: -keep}"
-    fi
-  fi
-  __mymux_p="$p"
-}
-precmd_functions=(${precmd_functions:#__mymux_prompt} __mymux_prompt)
-PROMPT=$'%{\e]133;A\e\\%}%F{cyan}${__mymux_p}%f $ %{\e]133;B\e\\%}'
+# Let zsh measure/truncate the expanded path in display cells on EVERY redraw.
+# ${#PWD} counts characters, so CJK paths can still wrap; a precmd-only budget
+# also stays stale when the pane shrinks while ZLE is editing the first line.
+# %~ inserts the path literally: a directory named "%{foo" must not become a
+# zero-width prompt escape and corrupt ZLE's cursor accounting.
+setopt prompt_percent
+PROMPT=$'%{\e]133;A\e\\%}%F{cyan}%-8(l.%-4<...<%~%<<.)%f $ %{\e]133;B\e\\%}'
 "#;
     // ZDOTDIR also redirects zsh's login startup files, so proxy the user's
     // .zshenv and .zprofile as well as .zshrc before applying our prompt.

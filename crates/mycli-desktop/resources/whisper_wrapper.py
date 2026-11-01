@@ -1,4 +1,4 @@
-"""Transcribe one audio file with faster-whisper and print the text.
+"""Transcribe one audio file with faster-whisper.
 
 Bundled with Mymux and invoked as:
 
@@ -10,10 +10,13 @@ It exists so the Python route needs nothing from the user beyond
 voice path could not be set up without writing this file yourself.
 
 Output is the transcript on stdout and nothing else; anything on stderr is
-shown to the user as the failure reason.
+shown to the user as the failure reason. The frozen standalone runner accepts
+Mymux's --task transcribe --output_format txt --output_dir <directory> flags
+and also writes <audio-stem>.txt as UTF-8 in that directory.
 """
 
 import argparse
+from pathlib import Path
 import sys
 
 
@@ -45,11 +48,19 @@ def load_audio(path: str):
 
 
 def main() -> int:
+    # Rust reads the captured streams as UTF-8, including for user-selected
+    # Windows executables outside Mymux's managed Python environment.
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8")
     parser = argparse.ArgumentParser(add_help=True)
     parser.add_argument("audio", nargs="?", help="path to the audio file")
     parser.add_argument("--model", default="small")
     # "auto" lets whisper detect; anything else is passed through as-is.
     parser.add_argument("--language", default="ko")
+    parser.add_argument("--task", choices=["transcribe"], default="transcribe")
+    parser.add_argument("--output_format", choices=["txt"])
+    parser.add_argument("--output_dir", help="directory for the UTF-8 transcript")
     # Only download and load the model, so the first dictation is not the one
     # that waits minutes for it. Used by Mymux's one-click setup.
     parser.add_argument("--prefetch", action="store_true")
@@ -75,7 +86,7 @@ def main() -> int:
         model = WhisperModel(args.model, device=device, compute_type="auto")
         if args.prefetch:
             return "ok"
-        segments, _info = model.transcribe(audio, language=language)
+        segments, _info = model.transcribe(audio, language=language, task=args.task)
         # Segments are decoded lazily, so a broken CUDA runtime only fails here.
         return " ".join(segment.text.strip() for segment in segments).strip()
 
@@ -89,6 +100,10 @@ def main() -> int:
         if not any(k in str(error).lower() for k in ("cublas", "cudnn", "cuda")):
             raise
         text = run("cpu")
+    if not args.prefetch and (args.output_dir is not None or args.output_format is not None):
+        output_dir = Path(args.output_dir or ".")
+        output_dir.mkdir(parents=True, exist_ok=True)
+        (output_dir / f"{Path(args.audio).stem}.txt").write_text(text, encoding="utf-8")
     sys.stdout.write(text)
     return 0
 

@@ -2762,8 +2762,19 @@ html[data-theme="dark"] .pane-command-shortcut {
 
 /* ── Subagents listed under their session ──
    Child rows of the session that launched them. They are siblings of the
-   session row in the flat <ul>, so the indent is what makes them read as
-   children. */
+   session row in the flat <ul>; pseudo-elements join them into a tree without
+   changing the direct-child structure used by session drag hit-testing. */
+.session-item.session-has-agents { position: relative; }
+.session-item.session-has-agents::after {
+  content: "";
+  position: absolute;
+  left: 16px;
+  top: calc(50% + 8px);
+  bottom: -3px;
+  border-left: 1px solid var(--text-dim);
+  opacity: 0.55;
+  pointer-events: none;
+}
 .session-agents-toggle {
   flex-shrink: 0;
   padding: 0 5px;
@@ -2781,17 +2792,44 @@ html[data-theme="dark"] .pane-command-shortcut {
 .session-agents-toggle:hover { color: var(--text); border-color: var(--accent); }
 .session-agents-toggle.has-running { color: var(--accent); border-color: var(--accent); }
 .session-agent {
+  position: relative;
+  --agent-branch-y: 12px;
   display: flex;
   align-items: flex-start;
   gap: 6px;
-  margin: 0 0 2px 16px;
-  padding: 4px 8px 4px 6px;
-  border-left: 1px solid var(--border);
+  margin: 0 0 2px 17px;
+  padding: 4px 8px 4px 14px;
   border-radius: 0 4px 4px 0;
   cursor: pointer;
   font-size: 12px;
   transition: background 0.1s;
   user-select: none;
+}
+.session-agent::before,
+.session-agent-more::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: -2px;
+  bottom: -2px;
+  border-left: 1px solid var(--text-dim);
+  opacity: 0.55;
+  pointer-events: none;
+}
+.session-agent::after,
+.session-agent-more::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: var(--agent-branch-y);
+  width: 14px;
+  border-top: 1px solid var(--text-dim);
+  opacity: 0.55;
+  pointer-events: none;
+}
+.session-agent-last::before {
+  bottom: auto;
+  height: calc(var(--agent-branch-y) + 2px);
 }
 .session-agent:hover { background: var(--surface-hover); }
 .session-agent-dot {
@@ -2841,12 +2879,14 @@ html[data-theme="dark"] .pane-command-shortcut {
 /* Tail row that reveals the agents the preview left out. Shares the child
    indent so it reads as part of the same group. */
 .session-agent-more {
-  margin: 0 0 4px 16px;
-  padding: 3px 8px 3px 18px;
-  border-left: 1px solid var(--border);
+  position: relative;
+  --agent-branch-y: 11px;
+  margin: 0 0 4px 17px;
+  padding: 3px 8px 3px 20px;
   border-radius: 0 4px 4px 0;
   color: var(--text-dim);
   font-size: 11px;
+  line-height: 16px;
   cursor: pointer;
   user-select: none;
 }

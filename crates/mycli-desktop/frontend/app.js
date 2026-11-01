@@ -3096,7 +3096,15 @@ function submittedCommandLine(ti) {
 // state cannot express that, so this lives here.
 let pendingDragReclaim = null;
 
+// pty_spawn defaults a local shell to home. Keep the same directory in the
+// pane model, or transcript polling skips a new default session entirely.
+async function initialPaneCwd(shell, cwd) {
+  if (cwd || shell === "ssh") return cwd || null;
+  return invoke("explorer_home_dir");
+}
+
 async function createPane(parentEl, shell, args, cwd) {
+  const effectiveCwd = await initialPaneCwd(shell, cwd);
   const paneEl = document.createElement("div");
   paneEl.className = "pane-leaf";
   const termWrap = document.createElement("div");
@@ -3175,7 +3183,7 @@ async function createPane(parentEl, shell, args, cwd) {
   const id = await invoke("pty_spawn", {
     shell: shell || null,
     args: args || null,
-    cwd: cwd || null,
+    cwd: effectiveCwd,
     cols,
     rows,
   });
@@ -3189,7 +3197,7 @@ async function createPane(parentEl, shell, args, cwd) {
   // lastInputAt baseline = pane birth, so the long-task check (10+ min since
   // last input) has a sane anchor even in a pane the user never typed in
   // (e.g. a restored session auto-replaying its command).
-  terminals.set(id, { id, term, fitAddon, search: searchAddon, paneEl, commandShortcutsEl, type: shell === "ssh" ? "ssh" : "local", shell: shell || null, label: sessionLabel, cwd: cwd || null, unseen: false, marks: [], inputMark: null, lastInputAt: performance.now() });
+  terminals.set(id, { id, term, fitAddon, search: searchAddon, paneEl, commandShortcutsEl, type: shell === "ssh" ? "ssh" : "local", shell: shell || null, label: sessionLabel, cwd: effectiveCwd, unseen: false, marks: [], inputMark: null, lastInputAt: performance.now() });
   renderPaneCommandShortcuts(id);
 
   // A brand-new pane's final size isn't settled at spawn (flex sizing, font
@@ -5951,9 +5959,9 @@ function closeShortcutsHelp() {
 // backend. Unset preference defaults to PowerShell ("powershell" → pwsh, or
 // built-in powershell.exe when pwsh is absent); "bash" → undefined → Git Bash.
 function getDefaultShellId() {
-  // macOS: always use the system login shell (zsh); the Windows shell prefs
-  // (PowerShell/CMD/Git Bash) don't exist here. undefined → Rust new_default_prog.
-  if (IS_MAC) return undefined;
+  // POSIX: use the user's system login shell; Windows shell preferences do not
+  // apply on macOS or Linux. undefined → Rust new_default_prog.
+  if (!IS_WINDOWS) return undefined;
   let pref = "powershell";
   try { pref = localStorage.getItem("mymux.defaultShell") || "powershell"; } catch {}
   if (pref === "powershell") return "powershell";
@@ -5984,10 +5992,10 @@ async function spawnTerminal(shell, cwd) {
       rootEl: rootContainer,
       panes: [ptyId],
       label,
-      session: { kind: "local", shell: shell || null, cwd: cwd || null },
+      session: { kind: "local", shell: shell || null, cwd: terminals.get(ptyId)?.cwd || cwd || null },
     });
     const ti0 = terminals.get(ptyId);
-    if (ti0) ti0.session = { kind: "local", shell: shell || null, cwd: cwd || null };
+    if (ti0) ti0.session = { kind: "local", shell: shell || null, cwd: ti0.cwd || cwd || null };
     addTab(tabIdx, label);
     switchToTab(tabIdx);
     refreshSessionList();
@@ -6193,7 +6201,7 @@ async function splitPane(direction, cwd) {
     // ended up on screen. Re-derive so the list matches the layout.
     syncTabPaneOrder(currentTab);
     const nti = terminals.get(newPtyId);
-    if (nti) nti.session = { kind: "local", shell: splitShell || null, cwd: cwd || null };
+    if (nti) nti.session = { kind: "local", shell: splitShell || null, cwd: nti.cwd || cwd || null };
     refreshSessionList();
 
     // Refit all panes in this tab, then re-assert the bottom pin — the spawn
@@ -8465,7 +8473,7 @@ async function buildPaneNode(parentEl, node) {
         t.session = {
           kind: "local",
           shell: s.shell || null,
-          cwd: s.cwd || null,
+          cwd: t.cwd || s.cwd || null,
           lastCmd: s.lastCmd || null,
           memos: normalizeMemos(s),
           activeMemoId: s.activeMemoId || null,
@@ -9042,8 +9050,9 @@ function sendToTerminal(command) {
 // Detect a pane's shell family so the "cd here, then run" line uses syntax
 // that shell actually supports (PowerShell 5.1 has no `&&`).
 function paneShellKind(t) {
-  if (!t) return "powershell";
+  if (!t) return IS_WINDOWS ? "powershell" : "posix";
   if (isRemotePane(t)) return "posix";
+  if (!IS_WINDOWS && !t.shell) return "posix";
   const s = (t.shell || (localStorage.getItem("mymux.defaultShell") || "powershell")).toLowerCase();
   if (s.includes("pwsh") || s.includes("powershell")) return "powershell";
   if (s.includes("cmd")) return "cmd";
@@ -10304,10 +10313,13 @@ function renderAgentRows(ptyId) {
   const t = terminals.get(ptyId);
   const agents = (t && t.agents) || [];
   updateAgentToggle(row, ptyId, agents);
+  row.classList.toggle("session-has-agents", agents.length > 0 && !(t && t.agentsCollapsed));
   if (agents.length === 0 || (t && t.agentsCollapsed)) return;
 
   const expanded = !!(t && t.agentsExpanded);
   const shown = visibleAgents(agents, expanded);
+  const hidden = agents.length - shown.length;
+  const hasTail = hidden > 0 || expanded;
   let anchor = row;
   for (const agent of shown) {
     const li = document.createElement("li");
@@ -10344,12 +10356,12 @@ function renderAgentRows(ptyId) {
     anchor.after(li);
     anchor = li;
   }
+  if (!hasTail && anchor !== row) anchor.classList.add("session-agent-last");
 
   // Tail row: reveal the agents the preview left out, or fold them away again.
-  const hidden = agents.length - shown.length;
-  if (hidden <= 0 && !expanded) return;
+  if (!hasTail) return;
   const more = document.createElement("li");
-  more.className = "session-agent-more";
+  more.className = "session-agent-more session-agent-last";
   more.dataset.ownerPty = String(ptyId);
   const capped = expanded && agents.length > AGENT_ROWS_MAX;
   more.textContent = expanded ? "접기" : `+${hidden}개 더 보기`;
@@ -10379,7 +10391,10 @@ function clearPaneAgents(ptyId, t) {
   t.agentsExpanded = false;
   t.aiSince = 0;
   const row = sessionListEl && sessionListEl.querySelector(`.session-item[data-pty-id="${ptyId}"]`);
-  if (row) row.querySelector(".session-agents-toggle")?.remove();
+  if (row) {
+    row.classList.remove("session-has-agents");
+    row.querySelector(".session-agents-toggle")?.remove();
+  }
   sessionListEl
     ?.querySelectorAll(`li[data-owner-pty="${ptyId}"]`)
     .forEach((el) => el.remove());
@@ -11622,6 +11637,32 @@ function syncLocalExplorerOnCd(input, ptyId) {
   if (!tInfo) return;
   const baseCwd = tInfo.cwd || currentExplorerPath;
 
+  // POSIX paths must keep '/' and resolve against this pane, not whichever
+  // folder the shared Explorer happens to show. The resulting cwd also selects
+  // Claude's transcript directory for the agent rows.
+  if (!IS_WINDOWS) {
+    const match = String(input || "").trim().match(/^(?:cd|pushd)(?:\s+--)?(?:\s+(.+))?$/);
+    if (!match) return;
+    const sequence = tInfo.localCdSequence = (tInfo.localCdSequence || 0) + 1;
+    setTimeout(async () => {
+      try {
+        const raw = match[1] || "";
+        const home = !raw || /^(?:~|\$HOME)(?:\/|$)/.test(raw.replace(/^["']|["']$/g, ""))
+          ? await invoke("explorer_home_dir") : null;
+        const targetPath = posixCdTarget(raw, baseCwd, home);
+        if (!targetPath) return;
+        await invoke("explorer_list_local", { path: targetPath });
+        const live = terminals.get(ptyId);
+        if (live !== tInfo || live.localCdSequence !== sequence || isRemotePane(live)) return;
+        explorerGo(targetPath, null);
+        setPaneCwd(ptyId, targetPath);
+      } catch {
+        // Invalid paths leave the last known directory in place.
+      }
+    }, 300);
+    return;
+  }
+
   let targetPath = null;
 
   // Detect: cd path, cd /d path, pushd path
@@ -11676,6 +11717,34 @@ function syncLocalExplorerOnCd(input, ptyId) {
       // Path doesn't exist or error, don't update
     }
   }, 300);
+}
+
+// Lexical POSIX normalization keeps `cd ./src/../project/` on the same
+// transcript slug as the shell's cwd. No shell expressions are evaluated here.
+function posixCdTarget(rawPath, baseCwd, home) {
+  let path = String(rawPath || "").trim();
+  let quote = "";
+  if ((path.startsWith('"') && path.endsWith('"')) || (path.startsWith("'") && path.endsWith("'"))) {
+    quote = path[0];
+    path = path.slice(1, -1);
+    if (!path) return null;
+  }
+  if (path === "-") return null;
+  if (!path || (!quote && path === "~") || (quote !== "'" && path === "$HOME")) path = home || "";
+  else if (!quote && path.startsWith("~/")) path = home ? `${home}/${path.slice(2)}` : "";
+  else if (quote !== "'" && path.startsWith("$HOME/")) path = home ? `${home}/${path.slice(6)}` : "";
+  if (!path) return null;
+  if (!path.startsWith("/")) {
+    if (!baseCwd || !baseCwd.startsWith("/")) return null;
+    path = `${baseCwd}/${path}`;
+  }
+  const parts = [];
+  for (const part of path.split("/")) {
+    if (!part || part === ".") continue;
+    if (part === "..") parts.pop();
+    else parts.push(part);
+  }
+  return "/" + parts.join("/");
 }
 
 // ── Auto-update: reveal the "Update" button when a newer release exists ──
