@@ -1,4 +1,4 @@
-// Control the visible Mymux native browser from a local terminal (Node 22+).
+// Control Mymux's managed CDP browser from Claude Code, Codex, or a local terminal (Node 22+).
 // node "$env:MYMUX_BROWSER_CONTROL" snapshot
 // node "$env:MYMUX_BROWSER_CONTROL" navigate https://example.com
 // node "$env:MYMUX_BROWSER_CONTROL" fill '#search' 'hello'
@@ -8,8 +8,9 @@ export function isBrowserTarget(target) {
   if (target.type !== 'page') return false;
   try {
     const url = new URL(target.url);
-    return ['http:', 'https:'].includes(url.protocol) &&
-      !['tauri.localhost', 'localhost.tauri'].includes(url.hostname);
+    if (target.url === 'about:blank') return true;
+    if (!['http:', 'https:'].includes(url.protocol)) return false;
+    return !['tauri.localhost', 'localhost.tauri'].includes(url.hostname);
   } catch { return false; }
 }
 
@@ -25,17 +26,34 @@ export function actionExpression(action, args) {
 }
 
 export async function run(argv = process.argv.slice(2)) {
-  const endpoint = process.env.MYMUX_BROWSER_ENDPOINT;
-  if (!endpoint) throw Error('Run this helper inside a local Mymux terminal after restarting the updated app.');
+  const endpointFlag = argv.indexOf('--endpoint');
+  const endpoint = endpointFlag < 0 ? (process.env.MYMUX_BROWSER_ENDPOINT || 'http://127.0.0.1:9222') : argv.splice(endpointFlag, 2)[1];
+  if (!endpoint) throw Error('Browser endpoint is required. Use --endpoint http://127.0.0.1:9222.');
   const base = new URL(endpoint);
   if (base.hostname !== '127.0.0.1' || base.protocol !== 'http:') throw Error('Expected local Mymux endpoint');
-  const response = await fetch(new URL('/json/list', base), { signal: AbortSignal.timeout(5000) });
-  if (!response.ok) throw Error(`CDP target discovery failed (${response.status})`);
-  const targets = (await response.json()).filter(isBrowserTarget);
   const action = argv.shift() || 'snapshot';
   const targetFlag = argv.indexOf('--target');
   const targetId = targetFlag < 0 ? null : argv.splice(targetFlag, 2)[1];
+  if (action === 'new') {
+    const url = argv[0] || 'about:blank';
+    if (url !== 'about:blank' && !['http:', 'https:'].includes(new URL(url).protocol)) throw Error('Only HTTP/HTTPS pages are allowed');
+    const created = await fetch(new URL(`/json/new?url=${encodeURIComponent(url)}`, base), { method: 'PUT', signal: AbortSignal.timeout(5000) });
+    if (!created.ok) throw Error(`Could not create browser tab (${created.status})`);
+    const page = await created.json();
+    return { id: page.id, title: page.title, url: page.url };
+  }
+  const response = await fetch(new URL('/json/list', base), { signal: AbortSignal.timeout(5000) });
+  if (!response.ok) throw Error(`CDP target discovery failed (${response.status})`);
+  const targets = (await response.json()).filter(isBrowserTarget);
   if (action === 'targets') return targets.map(({id,title,url})=>({id,title,url}));
+  if (action === 'close') {
+    if (!targetId) throw Error('Choose a tab with --target ID.');
+    if (!targets.some(t => t.id === targetId)) throw Error('Browser tab not found. Run targets to list available tabs.');
+    if (targets.length <= 1) throw Error('Keep at least one browser tab open.');
+    const closed = await fetch(new URL(`/json/close/${encodeURIComponent(targetId)}`, base), { signal: AbortSignal.timeout(5000) });
+    if (!closed.ok) throw Error(`Could not close browser tab (${closed.status})`);
+    return { closed: targetId };
+  }
   const matches = targets.filter(t => !targetId || t.id === targetId);
   if (matches.length !== 1) throw Error(matches.length ? 'Several browser pages are open; run targets, then use --target ID.' : 'Open a website in the Mymux browser first.');
   if (typeof WebSocket !== 'function') throw Error('Node 22 or newer is required.');

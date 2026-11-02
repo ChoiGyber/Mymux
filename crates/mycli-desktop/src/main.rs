@@ -8,6 +8,7 @@ mod explorer;
 mod session;
 mod statusline;
 mod terminal;
+mod pty_server;
 mod tools;
 mod update;
 mod voice;
@@ -142,6 +143,10 @@ fn clamp_new_window_to_work_area<R: tauri::Runtime>(win: &tauri::WebviewWindow<R
 }
 
 fn main() {
+    if pty_server::is_server_invocation() {
+        pty_server::run_server();
+        return;
+    }
     // Claude Code runs its statusline command on every render. Answer that and
     // exit before Tauri starts, so no window is ever created for it.
     if std::env::args().any(|a| a == statusline::STATUSLINE_ARG) {
@@ -218,6 +223,8 @@ fn main() {
             terminal::pty_resize,
             terminal::pty_close,
             terminal::pty_ai_process,
+            terminal::terminal_background_handoff,
+            terminal::terminal_shutdown,
             explorer::explorer_list_local,
             explorer::explorer_home_dir,
             explorer::explorer_parent_dir,

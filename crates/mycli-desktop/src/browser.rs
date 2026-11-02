@@ -693,34 +693,37 @@ pub async fn browser_pane_url(app: tauri::AppHandle) -> Result<Option<String>, S
         .map_err(|e| e.to_string())
 }
 
-/// Configure the WebView2 CDP listener before Tauri creates any threads or views.
-/// Local child shells inherit the endpoint and a helper which excludes app views.
-/// https://learn.microsoft.com/microsoft-edge/webview2/how-to/debug-visual-studio-code
+/// Install the local CLI helper and set its default endpoint before Tauri
+/// creates PTYs, so Claude Code/Codex shells inherit the browser-control command.
+/// The default points at Mymux's managed CDP browser (default port 9222).
 pub fn configure_native_control() {
+    if std::env::var_os("MYMUX_DISABLE_BROWSER_CDP").is_some() {
+        return;
+    }
+    let Some(base) = dirs::data_local_dir().or_else(dirs::home_dir) else { return };
+    let directory = base.join("mycli");
+    if std::fs::create_dir_all(&directory).is_err() { return; }
+    let helper = directory.join("mymux-browser.mjs");
+    if std::fs::write(&helper, include_str!("../../../scripts/mymux-browser.mjs")).is_err() { return; }
+
     #[cfg(windows)]
     {
-        if std::env::var_os("MYMUX_DISABLE_BROWSER_CDP").is_some() {
-            return;
-        }
         let Ok(listener) = std::net::TcpListener::bind("127.0.0.1:0") else { return };
         let Ok(addr) = listener.local_addr() else { return };
-        let Some(base) = dirs::data_local_dir() else { return };
-        let directory = base.join("mycli");
-        if std::fs::create_dir_all(&directory).is_err() { return; }
-        let helper = directory.join("mymux-browser.mjs");
-        if std::fs::write(&helper, include_str!("../../../scripts/mymux-browser.mjs")).is_err() { return; }
         let inherited = std::env::var("WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS").unwrap_or_default();
-        // Replace a prior debug port instead of letting Chromium pick the first one.
         let arguments = inherited.split_whitespace()
             .filter(|part| !part.starts_with("--remote-debugging-port") && !part.starts_with("--remote-debugging-address"))
             .collect::<Vec<_>>().join(" ");
         // SAFETY: called once from main before the Tauri runtime or worker threads.
         unsafe {
             std::env::set_var("WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS", format!("{arguments} --remote-debugging-address=127.0.0.1 --remote-debugging-port={}", addr.port()));
-            std::env::set_var("MYMUX_BROWSER_ENDPOINT", format!("http://127.0.0.1:{}", addr.port()));
-            std::env::set_var("MYMUX_BROWSER_CONTROL", helper);
         }
         drop(listener);
+    }
+    // SAFETY: this function is called once before Tauri starts or PTYs are spawned.
+    unsafe {
+        std::env::set_var("MYMUX_BROWSER_ENDPOINT", "http://127.0.0.1:9222");
+        std::env::set_var("MYMUX_BROWSER_CONTROL", helper);
     }
 }
 

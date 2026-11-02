@@ -14,8 +14,10 @@ pub struct PtySession {
 }
 
 pub struct TerminalManager {
-    sessions: Mutex<HashMap<u32, PtySession>>,
-    next_id: Mutex<u32>,
+    pub(crate) sessions: Mutex<HashMap<u32, PtySession>>,
+    pub(crate) next_id: Mutex<u32>,
+    pub(crate) session_keys: Mutex<HashMap<String, u32>>,
+    pub(crate) background_keys: Mutex<std::collections::HashSet<String>>,
 }
 
 impl TerminalManager {
@@ -23,6 +25,8 @@ impl TerminalManager {
         Self {
             sessions: Mutex::new(HashMap::new()),
             next_id: Mutex::new(1),
+            session_keys: Mutex::new(HashMap::new()),
+            background_keys: Mutex::new(std::collections::HashSet::new()),
         }
     }
 }
@@ -580,6 +584,29 @@ pub fn pty_spawn(
     cwd: Option<String>,
     cols: u16,
     rows: u16,
+    session_key: Option<String>,
+) -> Result<u32, String> {
+    let _ = state;
+    let key = session_key.unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+    let response = crate::pty_server::request("spawn", serde_json::json!({
+        "sessionKey": key,
+        "shell": shell,
+        "args": args,
+        "cwd": cwd,
+        "cols": cols,
+        "rows": rows,
+    }))?;
+    response.get("id").and_then(serde_json::Value::as_u64)
+        .map(|id| id as u32).ok_or_else(|| "PTY server did not return a session id".into())
+}
+
+pub(crate) fn spawn_local(
+    manager: &TerminalManager,
+    shell: Option<String>,
+    args: Option<Vec<String>>,
+    cwd: Option<String>,
+    cols: u16,
+    rows: u16,
 ) -> Result<u32, String> {
     let pty_system = native_pty_system();
 
@@ -615,7 +642,7 @@ pub fn pty_spawn(
     let mut reader = pair.master.try_clone_reader().map_err(|e| e.to_string())?;
 
     let id = {
-        let mut next = state.next_id.lock().unwrap();
+        let mut next = manager.next_id.lock().unwrap();
         let id = *next;
         *next += 1;
         id
@@ -661,7 +688,7 @@ pub fn pty_spawn(
     });
 
     {
-        let mut sessions = state.sessions.lock().unwrap();
+        let mut sessions = manager.sessions.lock().unwrap();
         sessions.insert(
             id,
             PtySession {
@@ -680,10 +707,17 @@ pub fn pty_spawn(
 /// Read buffered output from the PTY. Returns all pending data.
 #[tauri::command]
 pub fn pty_read(
-    state: tauri::State<'_, Arc<TerminalManager>>,
+    _state: tauri::State<'_, Arc<TerminalManager>>,
     id: u32,
 ) -> Result<(Vec<String>, bool), String> {
-    let sessions = state.sessions.lock().unwrap();
+    let response = crate::pty_server::request("read", serde_json::json!({ "id": id }))?;
+    let data = serde_json::from_value(response.get("data").cloned().unwrap_or_default()).map_err(|e| e.to_string())?;
+    let exited = response.get("exited").and_then(serde_json::Value::as_bool).unwrap_or(false);
+    Ok((data, exited))
+}
+
+pub(crate) fn read_local(manager: &TerminalManager, id: u32) -> Result<(Vec<String>, bool), String> {
+    let sessions = manager.sessions.lock().unwrap();
     let session = sessions.get(&id).ok_or("Session not found")?;
 
     let mut buf = session.output_buf.lock().unwrap();
@@ -695,11 +729,16 @@ pub fn pty_read(
 
 #[tauri::command]
 pub fn pty_write(
-    state: tauri::State<'_, Arc<TerminalManager>>,
+    _state: tauri::State<'_, Arc<TerminalManager>>,
     id: u32,
     data: String,
 ) -> Result<(), String> {
-    let mut sessions = state.sessions.lock().unwrap();
+    crate::pty_server::request("write", serde_json::json!({ "id": id, "data": data }))?;
+    Ok(())
+}
+
+pub(crate) fn write_local(manager: &TerminalManager, id: u32, data: String) -> Result<(), String> {
+    let mut sessions = manager.sessions.lock().unwrap();
     let session = sessions.get_mut(&id).ok_or("Session not found")?;
     session
         .writer
@@ -711,12 +750,17 @@ pub fn pty_write(
 
 #[tauri::command]
 pub fn pty_resize(
-    state: tauri::State<'_, Arc<TerminalManager>>,
+    _state: tauri::State<'_, Arc<TerminalManager>>,
     id: u32,
     cols: u16,
     rows: u16,
 ) -> Result<(), String> {
-    let sessions = state.sessions.lock().unwrap();
+    crate::pty_server::request("resize", serde_json::json!({ "id": id, "cols": cols, "rows": rows }))?;
+    Ok(())
+}
+
+pub(crate) fn resize_local(manager: &TerminalManager, id: u32, cols: u16, rows: u16) -> Result<(), String> {
+    let sessions = manager.sessions.lock().unwrap();
     let session = sessions.get(&id).ok_or("Session not found")?;
     session
         .master
@@ -731,11 +775,29 @@ pub fn pty_resize(
 
 #[tauri::command]
 pub fn pty_close(
-    state: tauri::State<'_, Arc<TerminalManager>>,
+    _state: tauri::State<'_, Arc<TerminalManager>>,
     id: u32,
 ) -> Result<(), String> {
-    let mut sessions = state.sessions.lock().unwrap();
+    crate::pty_server::request("close", serde_json::json!({ "id": id }))?;
+    Ok(())
+}
+
+pub(crate) fn close_local(manager: &TerminalManager, id: u32) -> Result<(), String> {
+    let mut sessions = manager.sessions.lock().unwrap();
     sessions.remove(&id);
+    manager.session_keys.lock().unwrap().retain(|_, value| *value != id);
+    Ok(())
+}
+
+#[tauri::command]
+pub fn terminal_background_handoff(session_keys: Vec<String>) -> Result<Vec<String>, String> {
+    let response = crate::pty_server::request("handoff", serde_json::json!({ "sessionKeys": session_keys }))?;
+    serde_json::from_value(response.get("kept").cloned().unwrap_or_default()).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn terminal_shutdown() -> Result<(), String> {
+    crate::pty_server::request("shutdown", serde_json::json!({}))?;
     Ok(())
 }
 
@@ -751,11 +813,16 @@ pub fn pty_close(
 /// table is empty and the answer is always None.
 #[tauri::command]
 pub fn pty_ai_process(
-    state: tauri::State<'_, Arc<TerminalManager>>,
+    _state: tauri::State<'_, Arc<TerminalManager>>,
     id: u32,
 ) -> Result<Option<String>, String> {
+    let response = crate::pty_server::request("aiProcess", serde_json::json!({ "id": id }))?;
+    Ok(response.get("process").and_then(serde_json::Value::as_str).map(str::to_owned))
+}
+
+pub(crate) fn ai_process_local(manager: &TerminalManager, id: u32) -> Result<Option<String>, String> {
     let shell_pid = {
-        let sessions = state.sessions.lock().unwrap();
+        let sessions = manager.sessions.lock().unwrap();
         let session = sessions.get(&id).ok_or("Session not found")?;
         session.shell_pid
     };
@@ -1101,8 +1168,8 @@ mod account_pin_tests {
     fn panes_are_spawned_through_the_sanitizing_builder() {
         let source = include_str!("terminal.rs");
         let spawn_site = source
-            .split_once("pub fn pty_spawn(")
-            .expect("pty_spawn must exist")
+            .split_once("pub(crate) fn spawn_local(")
+            .expect("spawn_local must exist")
             .1;
         let body = spawn_site
             .split_once("spawn_command(")

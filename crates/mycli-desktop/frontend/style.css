@@ -2571,6 +2571,7 @@ html[data-theme="dark"] .pane-command-shortcut {
 }
 #session-panel.collapsed #session-list,
 #session-panel.collapsed #ssh-fav-list,
+#session-panel.collapsed #attention-queue,
 #session-panel.collapsed #session-footer,
 #session-panel.collapsed #session-header span { display: none; }
 #session-panel.collapsed #session-header {
@@ -2618,6 +2619,59 @@ html[data-theme="dark"] .pane-command-shortcut {
   min-height: 0; /* allow the list to scroll instead of overflowing the panel */
   padding: 4px;
 }
+#attention-queue {
+  flex: 0 0 auto;
+  max-height: 34%;
+  overflow: auto;
+  padding: 7px 6px 5px;
+  border-bottom: 1px solid var(--border);
+}
+.attention-heading {
+  padding: 1px 4px 6px;
+  color: var(--text-dim);
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: .45px;
+}
+.attention-counts { display: flex; gap: 4px; }
+.attention-counts button {
+  display: flex;
+  flex: 1 1 0;
+  align-items: center;
+  justify-content: space-between;
+  min-width: 0;
+  padding: 5px 6px;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: var(--bg);
+  color: var(--text-dim);
+  font-size: 10px;
+  cursor: default;
+}
+.attention-counts button[data-attention-status="working"] b { color: var(--accent); }
+.attention-counts button[data-attention-status="done"] b { color: var(--green, #68b984); }
+.attention-counts button[data-attention-status="blocked"] { border-style: dashed; }
+#attention-items { list-style: none; padding: 4px 0 0; }
+.attention-item {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 2px 6px;
+  width: 100%;
+  padding: 5px 6px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+}
+.attention-item:hover { background: var(--hover, rgba(127,127,127,.12)); }
+.attention-state { font-size: 9px; font-weight: 700; color: var(--accent); }
+.attention-item.is-done .attention-state { color: var(--text-dim); }
+.attention-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; }
+.attention-item small { grid-column: 2; overflow: hidden; color: var(--text-dim); text-overflow: ellipsis; white-space: nowrap; }
+.attention-empty { padding: 4px 6px; color: var(--text-dim); font-size: 10px; }
 #session-footer {
   flex-shrink: 0;
   padding: 6px;

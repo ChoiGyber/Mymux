@@ -318,9 +318,10 @@
         </div>
 
         <div id="browser-local-control" class="browser-local-control" hidden>
-          <b>Local session control (Node 22+)</b>
+          <b>CLI control · Claude Code / Codex · Node 22+</b>
           <code></code>
-          <span>Actions: targets ? snapshot ? navigate URL ? click SELECTOR ? fill SELECTOR TEXT ? evaluate JAVASCRIPT</span>
+          <span>Tabs: targets · new [URL] · close --target ID. Actions: snapshot · navigate URL · click SELECTOR · fill SELECTOR TEXT · evaluate JAVASCRIPT</span>
+          <span>In AI Browser mode, each page has a tab in this menu. With multiple pages, choose its ID using --target ID. The browser runs separately from your terminal work.</span>
           <span class="browser-local-endpoint"></span>
         </div>
         <details class="browser-conn" id="browser-conn" style="display:none">
@@ -399,6 +400,15 @@
       </div>
       <!-- SSH favorites: one click reconnects (key → direct, password → prompt) -->
       <ul id="ssh-fav-list"></ul>
+      <section id="attention-queue" aria-label="AI agent attention queue">
+        <div class="attention-heading">Agent activity</div>
+        <div class="attention-counts">
+          <button type="button" data-attention-status="working"><span>Working</span><b>0</b></button>
+          <button type="button" data-attention-status="blocked" title="This agent state is not available from the current transcript source"><span>Blocked</span><b>—</b></button>
+          <button type="button" data-attention-status="done"><span>Done</span><b>0</b></button>
+        </div>
+        <ul id="attention-items" aria-live="polite"></ul>
+      </section>
       <ul id="session-list">
         <li class="session-empty">No active sessions.</li>
       </ul>
@@ -469,12 +479,13 @@
   <div id="close-modal" class="hidden">
     <div class="modal-box">
       <h2>Quit</h2>
-      <p>Remember the open sessions and restore them next time?</p>
+      <p>Choose what to do with the open terminal sessions.</p>
       <label class="chk-row"><input type="checkbox" id="close-remember-pref" /> Remember this choice and don't ask again</label>
       <div class="modal-actions">
         <button id="close-cancel" class="secondary">Cancel</button>
         <button id="close-forget" class="secondary">Quit without saving</button>
         <button id="close-save">Save &amp; quit</button>
+        <button id="close-background">Keep running in background</button>
       </div>
     </div>
   </div>

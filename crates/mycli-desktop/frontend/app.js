@@ -3103,8 +3103,9 @@ async function initialPaneCwd(shell, cwd) {
   return invoke("explorer_home_dir");
 }
 
-async function createPane(parentEl, shell, args, cwd) {
+async function createPane(parentEl, shell, args, cwd, sessionKey = null) {
   const effectiveCwd = await initialPaneCwd(shell, cwd);
+  const stableSessionKey = sessionKey || crypto.randomUUID();
   const paneEl = document.createElement("div");
   paneEl.className = "pane-leaf";
   const termWrap = document.createElement("div");
@@ -3186,6 +3187,7 @@ async function createPane(parentEl, shell, args, cwd) {
     cwd: effectiveCwd,
     cols,
     rows,
+    sessionKey: stableSessionKey,
   });
 
   // Opened in a specific folder → name the session after that folder (shown on
@@ -3197,7 +3199,7 @@ async function createPane(parentEl, shell, args, cwd) {
   // lastInputAt baseline = pane birth, so the long-task check (10+ min since
   // last input) has a sane anchor even in a pane the user never typed in
   // (e.g. a restored session auto-replaying its command).
-  terminals.set(id, { id, term, fitAddon, search: searchAddon, paneEl, commandShortcutsEl, type: shell === "ssh" ? "ssh" : "local", shell: shell || null, label: sessionLabel, cwd: effectiveCwd, unseen: false, marks: [], inputMark: null, lastInputAt: performance.now() });
+  terminals.set(id, { id, term, fitAddon, search: searchAddon, paneEl, commandShortcutsEl, type: shell === "ssh" ? "ssh" : "local", shell: shell || null, label: sessionLabel, cwd: effectiveCwd, sessionKey: stableSessionKey, unseen: false, marks: [], inputMark: null, lastInputAt: performance.now() });
   renderPaneCommandShortcuts(id);
 
   // A brand-new pane's final size isn't settled at spawn (flex sizing, font
@@ -5969,7 +5971,7 @@ function getDefaultShellId() {
   return undefined;
 }
 
-async function spawnTerminal(shell, cwd) {
+async function spawnTerminal(shell, cwd, sessionKey = null) {
   terminalWelcome.style.display = "none";
 
   const tabIdx = tabCounter++;
@@ -5986,7 +5988,7 @@ async function spawnTerminal(shell, cwd) {
 
   try {
     const launch = shell !== undefined ? shell : getDefaultShellId();
-    const ptyId = await createPane(rootContainer, launch, null, cwd);
+    const ptyId = await createPane(rootContainer, launch, null, cwd, sessionKey);
     tabs.set(tabIdx, {
       el: tabEl,
       rootEl: rootContainer,
@@ -7448,8 +7450,9 @@ async function doSshConnect(opts) {
       lastCmd: opts.lastCmd || null, // carried through restore so re-run works over SSH
       memos: normalizeMemos(opts),   // scratch memos ride restore too
       activeMemoId: opts.activeMemoId || null,
+      sessionKey: opts.sessionKey || null,
     };
-    const ptyId = await createPane(rootContainer, "ssh", sshArgs);
+    const ptyId = await createPane(rootContainer, "ssh", sshArgs, undefined, opts.sessionKey || null);
     terminals.get(ptyId).sshTarget = target;
     terminals.get(ptyId).session = sessionMeta;
     markMemoIndicator(ptyId);
@@ -7607,10 +7610,10 @@ function initBrowserPanel() {
   updateBrowserInfo();
   invoke("browser_control_info").then(info => {
     const node = document.getElementById("browser-local-control");
-    if (node && info.endpoint) {
+    if (node && info.helper) {
       node.hidden = false;
-      node.querySelector("code").textContent = 'node "$env:MYMUX_BROWSER_CONTROL" snapshot';
-      node.querySelector(".browser-local-endpoint").textContent = info.endpoint;
+      updateBrowserControlCommand();
+      node.querySelector(".browser-local-endpoint").textContent = `CLI helper: ${info.helper} · default endpoint: ${info.endpoint || "http://127.0.0.1:9222"}`;
     }
   }).catch(() => {});
   setInterval(() => {
@@ -7653,13 +7656,21 @@ function browserPort() {
   return Number.isInteger(v) && v >= 1024 && v <= 65535 ? v : 9222;
 }
 
+function updateBrowserControlCommand() {
+  const code = document.querySelector("#browser-local-control code");
+  if (!code) return;
+  const helper = IS_WINDOWS ? '"$env:MYMUX_BROWSER_CONTROL"' : '"$MYMUX_BROWSER_CONTROL"';
+  code.textContent = `node ${helper} targets --endpoint http://127.0.0.1:${browserPort()}`;
+}
+
 function updateBrowserInfo(endpointOverride) {
   const ep = endpointOverride || `http://localhost:${browserPort()}`;
+  updateBrowserControlCommand();
   document.getElementById("browser-endpoint").textContent = ep;
   document.getElementById("browser-mcp-cli").textContent =
-    `npx @playwright/mcp@latest --cdp-endpoint ${ep}`;
+    `npx -y @playwright/mcp@latest --cdp-endpoint ${ep}`;
   document.getElementById("browser-mcp-add").textContent =
-    `claude mcp add playwright -- npx @playwright/mcp@latest --cdp-endpoint ${ep}`;
+    `claude mcp add playwright -- npx -y @playwright/mcp@latest --cdp-endpoint ${ep}`;
 }
 
 function toggleBrowserInfo() {
@@ -7680,8 +7691,9 @@ function renderBrowserPages() {
     tab.type = "button";
     tab.className = "browser-page-tab" + (page.targetId === activeBrowserPageId ? " active" : "");
     tab.dataset.targetId = page.targetId;
-    tab.title = page.url || "about:blank";
-    const label = page.url && page.url !== "about:blank" ? page.url.replace(/^https?:\/\//, "").split(/[/?#]/)[0] : "New page";
+    const label = page.title?.trim() || (page.url && page.url !== "about:blank" ? page.url.replace(/^https?:\/\//, "").split(/[/?#]/)[0] : "New page");
+    tab.title = `${label} · ${page.targetId} · ${page.url || "about:blank"}`;
+    tab.setAttribute("aria-label", `Select ${label}`);
     tab.innerHTML = `<span class="browser-page-label"></span><span class="browser-page-close" title="Close">×</span>`;
     tab.querySelector(".browser-page-label").textContent = label || "New page";
     tab.addEventListener("click", (e) => {
@@ -7744,15 +7756,18 @@ async function closeBrowserPage(targetId) {
 
 function applyBrowserStatus(st) {
   const statusEl = document.getElementById("browser-status");
+  const portInput = document.getElementById("browser-port");
   if (st && st.running) {
     statusEl.textContent = `● Running · ${st.browser} · ${st.endpoint}`;
     statusEl.classList.remove("stopped");
     statusEl.classList.add("running");
-    if (st.port) document.getElementById("browser-port").value = st.port;
+    if (st.port) portInput.value = st.port;
+    portInput.disabled = true;
     updateBrowserInfo(st.endpoint);
     refreshBrowserPages();
     if (browserTabActive && browserMode === "ai") attachScreencast();
   } else {
+    portInput.disabled = false;
     statusEl.textContent = "○ Stopped";
     statusEl.classList.remove("running");
     statusEl.classList.add("stopped");
@@ -8392,7 +8407,7 @@ function serializePane(el) {
   if (el.classList && el.classList.contains("pane-leaf")) {
     const id = Number(el.dataset.ptyId);
     const t = terminals.get(id);
-    return { leaf: t && t.session ? t.session : { kind: "local", shell: null, cwd: null } };
+    return { leaf: { ...(t && t.session ? t.session : { kind: "local", shell: null, cwd: null }), sessionKey: t?.sessionKey || null } };
   }
   const dir = el.classList && el.classList.contains("vertical") ? "vertical" : "horizontal";
   const children = [...el.children]
@@ -8419,7 +8434,7 @@ function collectSession() {
       const memos = live.length ? live : normalizeMemos(tab.session);
       const activeMemoId =
         (t0 && t0.session && t0.session.activeMemoId) || tab.session.activeMemoId || null;
-      const entry = { ...tab.session, lastCmd, memos, activeMemoId, label: tab.label };
+      const entry = { ...tab.session, lastCmd, memos, activeMemoId, label: tab.label, sessionKey: t0?.sessionKey || tab.session.sessionKey || null };
       delete entry.memo; // migrated into `memos`; do not keep writing the old shape
       arr.push(entry);
     }
@@ -8442,7 +8457,7 @@ async function buildPaneNode(parentEl, node) {
       }
       sshArgs.push(s.target);
       if (tmuxCommand) sshArgs.push(tmuxCommand);
-      const id = await createPane(parentEl, "ssh", sshArgs);
+      const id = await createPane(parentEl, "ssh", sshArgs, undefined, s.sessionKey);
       const t = terminals.get(id);
       if (t) {
         t.sshTarget = s.target;
@@ -8467,7 +8482,7 @@ async function buildPaneNode(parentEl, node) {
         );
       }
     } else {
-      const id = await createPane(parentEl, s.shell || getDefaultShellId(), null, s.cwd || undefined);
+      const id = await createPane(parentEl, s.shell || getDefaultShellId(), null, s.cwd || undefined, s.sessionKey);
       const t = terminals.get(id);
       if (t) {
         t.session = {
@@ -8534,8 +8549,11 @@ async function restoreTabFromTree(tabData) {
 async function saveSessionNow() {
   try {
     await invoke("session_save", { data: collectSession() });
+    return true;
   } catch (e) {
     console.error("session_save failed", e);
+    toast(`Could not save sessions: ${e}`, true);
+    return false;
   }
 }
 
@@ -8569,12 +8587,13 @@ async function restoreSession() {
             lastCmd: s.lastCmd || null,
             memos: normalizeMemos(s),
             activeMemoId: s.activeMemoId || null,
+            sessionKey: s.sessionKey || null,
           });
         } else {
           pwSessions.push(s); // password auth → prompt below
         }
       } else {
-        const pid = await spawnTerminal(s.shell || undefined, s.cwd || undefined);
+        const pid = await spawnTerminal(s.shell || undefined, s.cwd || undefined, s.sessionKey || null);
         const t = pid != null ? terminals.get(pid) : null;
         if (t && t.session && s.lastCmd) t.session.lastCmd = s.lastCmd;
         const restoredMemos = normalizeMemos(s);
@@ -8727,6 +8746,7 @@ function promptSshPasswordRestore(s) {
         lastCmd: s.lastCmd || null,
         memos: normalizeMemos(s),
         activeMemoId: s.activeMemoId || null,
+        sessionKey: s.sessionKey || null,
       });
       resolve();
     }
@@ -8770,12 +8790,28 @@ async function setupCloseHandler() {
     });
     document.getElementById("close-save").addEventListener("click", async () => {
       if (document.getElementById("close-remember-pref").checked) setClosePref("always");
-      await saveSessionNow();
+      if (!await saveSessionNow()) return;
+      try { await invoke("terminal_shutdown", {}); }
+      catch (e) { toast(`Could not stop terminal sessions: ${e}`, true); return; }
       await destroyWindow();
     });
     document.getElementById("close-forget").addEventListener("click", async () => {
       if (document.getElementById("close-remember-pref").checked) setClosePref("never");
-      await invoke("session_clear").catch(() => {});
+      try {
+        await invoke("session_clear");
+        await invoke("terminal_shutdown", {});
+      } catch (e) { toast(`Could not close terminal sessions: ${e}`, true); return; }
+      await destroyWindow();
+    });
+    document.getElementById("close-background").addEventListener("click", async () => {
+      if (!await saveSessionNow()) return;
+      const sessionKeys = [...terminals.values()].map(t => t.sessionKey).filter(Boolean);
+      try {
+        const kept = await invoke("terminal_background_handoff", { sessionKeys });
+        if (sessionKeys.length && (!Array.isArray(kept) || kept.length !== sessionKeys.length)) {
+          throw Error("The background server did not confirm every terminal session.");
+        }
+      } catch (e) { toast(`Could not keep sessions running: ${e}`, true); return; }
       await destroyWindow();
     });
   } catch (e) {
@@ -8799,12 +8835,17 @@ async function handleCloseRequest() {
   await invoke("browser_pane_hide").catch(() => {});
   const pref = closePref();
   if (pref === "always") {
-    await saveSessionNow();
+    if (!await saveSessionNow()) return;
+    try { await invoke("terminal_shutdown", {}); }
+    catch (e) { toast(`Could not stop terminal sessions: ${e}`, true); return; }
     await destroyWindow();
     return;
   }
   if (pref === "never") {
-    await invoke("session_clear").catch(() => {});
+    try {
+      await invoke("session_clear");
+      await invoke("terminal_shutdown", {});
+    } catch (e) { toast(`Could not close terminal sessions: ${e}`, true); return; }
     await destroyWindow();
     return;
   }
@@ -8899,7 +8940,11 @@ async function promptRestorePreviousSession() {
       resolve(restore);
     };
     const onYes = () => finish(true);
-    const onNo = () => finish(false);
+    const onNo = async () => {
+      try { await invoke("terminal_shutdown", {}); }
+      catch (e) { toast(`Could not stop previous terminal sessions: ${e}`, true); }
+      finish(false);
+    };
     const onBackdrop = (e) => { if (e.target === modal) onNo(); };
     const onKey = (e) => { if (e.key === "Escape") onNo(); };
     yes.addEventListener("click", onYes);
@@ -9986,6 +10031,7 @@ function refreshSessionList() {
 
   if (terminals.size === 0) {
     sessionListEl.innerHTML = `<li class="session-empty">No active sessions.</li>`;
+    refreshAttentionQueue();
     return;
   }
 
@@ -10084,6 +10130,7 @@ function refreshSessionList() {
     if (tt.ctxPct != null || tt.codexDetected || tt.aiMode) updateCtxUi(pid, tt);
     if (tt.agents && tt.agents.length) renderAgentRows(pid);
   }
+  refreshAttentionQueue();
 }
 
 // Lightweight: just move the active highlight without rebuilding.
@@ -10158,6 +10205,76 @@ function agentListSignature(agents) {
   return (agents || []).map((a) => `${a.id}:${a.status}`).join("|");
 }
 
+// Attention Queue is truthful to the transcript source: it reports spawned
+// Claude agents and their recorded completion. Claude does not expose a
+// reliable pending-approval/input state in these records, so Blocked stays
+// explicitly unavailable instead of guessing from terminal text.
+function attentionQueueRows() {
+  const rows = [];
+  for (const [paneId, t] of terminals) {
+    for (const agent of t.agents || []) {
+      rows.push({ paneId, session: sessionLabelFor(t), agent });
+    }
+  }
+  return rows;
+}
+
+function attentionQueueCounts(rows) {
+  return {
+    working: rows.filter((r) => r.agent.status === "running").length,
+    // null means the source has no trustworthy blocked/prompt-wait signal.
+    blocked: null,
+    done: rows.filter((r) => r.agent.status === "done").length,
+  };
+}
+
+function refreshAttentionQueue() {
+  const host = document.getElementById("attention-items");
+  const rows = attentionQueueRows();
+  const counts = attentionQueueCounts(rows);
+  for (const [status, count] of Object.entries(counts)) {
+    const button = document.querySelector(`[data-attention-status="${status}"]`);
+    const value = button && button.querySelector("b");
+    if (value) value.textContent = count == null ? "—" : String(count);
+  }
+  if (!host) return;
+  host.replaceChildren();
+  const visibleRows = [
+    ...rows.filter((r) => r.agent.status === "running"),
+    ...rows.filter((r) => r.agent.status === "done"),
+  ];
+  for (const row of visibleRows.slice(0, 8)) {
+    const item = document.createElement("li");
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = `attention-item ${row.agent.status === "running" ? "is-working" : "is-done"}`;
+    button.title = `${row.session} · ${row.agent.description || row.agent.name} — 클릭하여 세션으로 이동`;
+    const state = document.createElement("span");
+    state.className = "attention-state";
+    state.textContent = row.agent.status === "running" ? "Working" : "Done";
+    const label = document.createElement("span");
+    label.className = "attention-label";
+    label.textContent = row.agent.description || row.agent.name || row.session;
+    const session = document.createElement("small");
+    session.textContent = row.session;
+    button.append(state, label, session);
+    button.addEventListener("click", () => focusSession(row.paneId));
+    item.appendChild(button);
+    host.appendChild(item);
+  }
+  if (!rows.length) {
+    const empty = document.createElement("li");
+    empty.className = "attention-empty";
+    empty.textContent = "Tracked Claude agents will appear here";
+    host.appendChild(empty);
+  } else if (rows.length > 8) {
+    const more = document.createElement("li");
+    more.className = "attention-empty";
+    more.textContent = `+${rows.length - 8} more in Sessions`;
+    host.appendChild(more);
+  }
+}
+
 // The first poll after a session is picked up reads a whole transcript, which
 // can outlast the interval. Never let a second poll start on top of it.
 let agentPollInFlight = false;
@@ -10187,6 +10304,7 @@ async function pollAgentActivity() {
     t.agents = row.agents || [];
     if (agentListSignature(t.agents) !== before) renderAgentRows(row.paneId);
   }
+  refreshAttentionQueue();
   tickAgentElapsed();
 }
 
@@ -10398,6 +10516,7 @@ function clearPaneAgents(ptyId, t) {
   sessionListEl
     ?.querySelectorAll(`li[data-owner-pty="${ptyId}"]`)
     .forEach((el) => el.remove());
+  refreshAttentionQueue();
 }
 
 // Full detail for one agent: what it was asked, what it cost, and the prompt
