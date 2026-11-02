@@ -1,18 +1,26 @@
 name: macOS Build
 
-# Manually build the macOS app (universal dmg) and attach it to an existing
-# GitHub Release. Deliberately does NOT touch latest.json — the auto-updater
-# manifest is Windows-only and is hand-published from the Windows release flow.
+# Build the macOS app (universal dmg) and attach it to an existing GitHub
+# Release, then add the darwin entries to that release's latest.json so
+# installed Mac apps auto-update. release.yml calls this after the
+# Windows/Linux job has written latest.json; it can also be run by hand to
+# (re)build the Mac assets of an existing release:
 #
-#   gh workflow run macos-build.yml -f tag=v0.1.21
+#   gh workflow run macos-build.yml -f tag=v0.3.4
 
 on:
+  workflow_call:
+    inputs:
+      tag:
+        description: "Existing release tag to build and attach the dmg to"
+        required: true
+        type: string
   workflow_dispatch:
     inputs:
       tag:
         description: "Existing release tag to build and attach the dmg to"
         required: true
-        default: "v0.1.21"
+        default: "v0.3.4"
 
 permissions:
   contents: write
@@ -25,6 +33,15 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: ${{ inputs.tag }}
+
+      # The manifest helper comes from the workflow's own commit: an older tag
+      # being rebuilt by hand predates scripts/add-macos-updater.mjs.
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          path: .ci-tools
+          sparse-checkout: scripts/add-macos-updater.mjs
+          sparse-checkout-cone-mode: false
 
       # Fail fast (before the expensive universal build) if any of the
       # macOS/WKWebView source guards regressed — docs/macos-webkit-gotchas.md.
@@ -49,14 +66,33 @@ jobs:
       - name: Build universal dmg
         working-directory: crates/mycli-desktop
         env:
-          # createUpdaterArtifacts is on, so the build wants the signing key
-          # even though we only ship the dmg here.
+          # createUpdaterArtifacts is on: the same minisign key as the
+          # Windows/Linux job signs Mymux.app.tar.gz for the auto-updater.
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ""
         run: npx --yes @tauri-apps/cli@^2 build --target universal-apple-darwin
 
-      - name: Attach dmg to the release
+      - name: Attach dmg and updater archive to the release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: gh release upload "${{ inputs.tag }}" ../../target/universal-apple-darwin/release/bundle/dmg/*.dmg --clobber
+          TAG: ${{ inputs.tag }}
+        run: |
+          gh release upload "$TAG" \
+            ../../target/universal-apple-darwin/release/bundle/dmg/*.dmg \
+            ../../target/universal-apple-darwin/release/bundle/macos/Mymux.app.tar.gz \
+            --clobber
         working-directory: crates/mycli-desktop
+
+      # Without darwin entries in latest.json an installed Mac app never sees a
+      # newer version — the reason Macs stayed on 0.1.55 through 0.3.4.
+      - name: Add macOS to the updater manifest
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ inputs.tag }}
+        run: |
+          gh release download "$TAG" -p latest.json -D "$RUNNER_TEMP" --clobber
+          node .ci-tools/scripts/add-macos-updater.mjs "$RUNNER_TEMP/latest.json" \
+            target/universal-apple-darwin/release/bundle/macos/Mymux.app.tar.gz.sig \
+            "https://github.com/$GITHUB_REPOSITORY/releases/download/$TAG/Mymux.app.tar.gz" \
+            "$TAG"
+          gh release upload "$TAG" "$RUNNER_TEMP/latest.json" --clobber

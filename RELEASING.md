@@ -4,9 +4,10 @@ Mymux ships as a desktop app with **auto-update**: an installed app checks
 GitHub Releases on startup and reveals an **⬆ 업데이트** button when a newer,
 correctly-signed version exists.
 
-- **Windows / Linux** installers are built automatically by GitHub Actions
-  (`.github/workflows/release.yml`) when you push a version tag.
-- **macOS** is built and uploaded manually from a Mac (see below).
+- **Windows / Linux / macOS** are built automatically by GitHub Actions
+  (`.github/workflows/release.yml`) when you push a version tag. The macOS job
+  (`macos-build.yml`) runs after Windows/Linux and adds the darwin entries to
+  `latest.json` — without them installed Mac apps never see a new version.
 
 ## 0. Keep versions in sync
 
@@ -54,7 +55,24 @@ The workflow builds `.msi` / `.exe` (Windows) and `.deb` / `.AppImage` (Linux),
 signs the updater artifacts, generates `latest.json`, and publishes a **draft**
 GitHub Release. Review it, then click **Publish**.
 
-## 3. Release macOS (manual, on a Mac)
+## 3. Release macOS
+
+**Normally nothing to do** — the `macos` job of `release.yml` builds the
+universal dmg, uploads `Mymux_X.Y.Z_universal.dmg` and `Mymux.app.tar.gz`, and
+adds `darwin-aarch64` / `darwin-x86_64` to `latest.json`. Check that the draft
+release has both mac assets and that `latest.json` lists darwin before
+publishing.
+
+To (re)build the Mac assets of an existing release without a new tag:
+
+```bash
+gh workflow run macos-build.yml -f tag=vX.Y.Z
+```
+
+The steps below are the **manual fallback** (e.g. a Developer-ID signed build
+from the maintainer's Mac). If you upload by hand, run
+`node scripts/add-macos-updater.mjs latest.json Mymux.app.tar.gz.sig <url> vX.Y.Z`
+instead of editing `latest.json` manually.
 
 The Mac build is produced on a Mac and added to the **same** GitHub Release that
 the Windows/Linux workflow created. It must be signed with the **same** updater

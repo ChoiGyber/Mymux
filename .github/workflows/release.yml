@@ -27,9 +27,8 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # macOS is built and uploaded manually from a Mac (see RELEASING.md),
-          # so it is intentionally omitted here. Keep the version in
-          # tauri.conf.json in sync so the manual Mac build matches this release.
+          # macOS is built by the `macos` job below once this matrix has
+          # written latest.json, so it is not part of the matrix.
           - platform: ubuntu-latest
             args: "--bundles deb,appimage"
           # Windows: build only the NSIS installer (.exe). The MSI (WiX) target
@@ -97,3 +96,15 @@ jobs:
           releaseDraft: true
           prerelease: false
           args: ${{ matrix.args }}
+
+  # The Mac dmg + updater archive, and the darwin entries in latest.json. Runs
+  # after the matrix so it patches the latest.json tauri-action just wrote; a
+  # Mac release that was left as a manual step was skipped (v0.3.3 had no dmg)
+  # and installed Mac apps never got an update.
+  macos:
+    needs: release
+    if: startsWith(github.ref, 'refs/tags/')
+    uses: ./.github/workflows/macos-build.yml
+    with:
+      tag: ${{ github.ref_name }}
+    secrets: inherit
