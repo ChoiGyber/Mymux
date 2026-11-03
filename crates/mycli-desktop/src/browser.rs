@@ -527,11 +527,10 @@ fn cdp_http_request(port: u16, method: &str, path: &str) -> Result<String, Strin
 // A real child WebView overlaying the Browser tab's viewport, for human
 // browsing (no external Chrome). The AI/CDP screencast path stays separate.
 //
-// CRITICAL: every webview operation (add_child / set_bounds / hide / show /
-// navigate / ...) is dispatched via `run_on_main_thread`. Calling these from an
-// async command thread does a *blocking* cross-thread dispatch to the WebView2
-// UI thread, which deadlocks the whole app on Windows. Running them ON the main
-// thread loop makes the calls direct and non-blocking.
+// Tauri's Webview dispatcher marshals child-view operations to the platform UI
+// thread. `Window::add_child` does this itself and waits for creation to finish,
+// so call it from this async command worker; wrapping it in another
+// `run_on_main_thread` needlessly nests the dispatch on the UI thread.
 
 const PANE_LABEL: &str = "browser-pane";
 
@@ -581,29 +580,20 @@ pub async fn browser_pane_open(
     height: f64,
 ) -> Result<(), String> {
     let target = parse_url(&url)?;
-    let win = window.clone();
-    let (tx, rx) = tokio::sync::oneshot::channel();
-    window
-        .app_handle()
-        .run_on_main_thread(move || {
-            let result = (|| -> Result<(), String> {
-                if let Some(wv) = win.get_webview(PANE_LABEL) {
-                    wv.set_bounds(pane_rect(x, y, width, height)).map_err(|e| e.to_string())?;
-                    wv.navigate(target).map_err(|e| e.to_string())?;
-                    wv.show().map_err(|e| e.to_string())?;
-                } else {
-                    win.add_child(
-                        WebviewBuilder::new(PANE_LABEL, WebviewUrl::External(target)),
-                        LogicalPosition::new(x, y),
-                        LogicalSize::new(width.max(1.0), height.max(1.0)),
-                    ).map_err(|e| e.to_string())?;
-                }
-                Ok(())
-            })();
-            let _ = tx.send(result);
-        })
-        .map_err(|e| e.to_string())?;
-    rx.await.map_err(|e| e.to_string())?
+    if let Some(wv) = window.get_webview(PANE_LABEL) {
+        wv.set_bounds(pane_rect(x, y, width, height)).map_err(|e| e.to_string())?;
+        wv.navigate(target).map_err(|e| e.to_string())?;
+        wv.show().map_err(|e| e.to_string())?;
+    } else {
+        window
+            .add_child(
+                WebviewBuilder::new(PANE_LABEL, WebviewUrl::External(target)),
+                LogicalPosition::new(x, y),
+                LogicalSize::new(width.max(1.0), height.max(1.0)),
+            )
+            .map_err(|e| e.to_string())?;
+    }
+    Ok(())
 }
 
 #[tauri::command]
@@ -622,15 +612,10 @@ pub async fn browser_pane_set_bounds(
 #[tauri::command]
 pub async fn browser_pane_navigate(app: tauri::AppHandle, url: String) -> Result<(), String> {
     let target = parse_url(&url)?;
-    let (tx, rx) = tokio::sync::oneshot::channel();
-    let a = app.clone();
-    app.run_on_main_thread(move || {
-        let result = a.get_webview(PANE_LABEL)
-            .ok_or_else(|| "Browser pane is not open".to_string())
-            .and_then(|wv| wv.navigate(target).map_err(|e| e.to_string()));
-        let _ = tx.send(result);
-    }).map_err(|e| e.to_string())?;
-    rx.await.map_err(|e| e.to_string())?
+    let webview = app
+        .get_webview(PANE_LABEL)
+        .ok_or_else(|| "Browser pane is not open".to_string())?;
+    webview.navigate(target).map_err(|e| e.to_string())
 }
 
 #[tauri::command]

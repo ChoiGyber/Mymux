@@ -7664,7 +7664,9 @@ function initBrowserPanel() {
   // Native address bar
   const navUrl = document.getElementById("nav-url");
   document.getElementById("nav-go").addEventListener("click", () => nativeNavigate(navUrl.value));
-  navUrl.addEventListener("focus", () => navUrl.select());
+  navUrl.addEventListener("focus", () => { navUrl.select(); stopNativeUrlPoll(); });
+  navUrl.addEventListener("input", () => { nativeAddressDirty = navUrl.value !== nativeCurrentUrl; });
+  navUrl.addEventListener("blur", () => { if (!nativeAddressDirty) scheduleNativeUrlPoll(0); });
   document.getElementById("nav-home").addEventListener("click", showBrowserHome);
   document.getElementById("browser-start-form").addEventListener("submit", e => {
     e.preventDefault(); nativeNavigate(document.getElementById("browser-start-input").value);
@@ -7682,20 +7684,10 @@ function initBrowserPanel() {
   if (window.ResizeObserver) new ResizeObserver(() => scheduleSync()).observe(vp);
   window.addEventListener("resize", scheduleSync);
 
-  // Reflect link-click navigation back into the address bar (when not editing).
-  setInterval(async () => {
-    if (!browserTabActive || browserMode !== "native") return;
-    if (document.activeElement === navUrl) return;
-    try {
-      const u = await invoke("browser_pane_url");
-      if (u) {
-        if (!nativeCurrentUrl) return;
-        nativeCurrentUrl = u;
-        nativePaneLoadedUrl = u;
-        navUrl.value = u;
-      }
-    } catch {}
-  }, 1500);
+  // Reflect link-click navigation without overlapping IPC calls. The old
+  // async setInterval could queue another main-thread URL lookup every 1.5s
+  // while WebView2 was busy navigating, making the window appear unresponsive.
+  scheduleNativeUrlPoll();
 
   setBrowserMode("native");
   updateBrowserInfo();
@@ -7725,10 +7717,14 @@ function setBrowserView(on) {
     terminalTabs.querySelectorAll(".tab").forEach((t) => t.classList.remove("active"));
     if (browserMode === "native") {
       openNativePane();
+      scheduleNativeUrlPoll();
     } else {
       refreshBrowserStatus(); // attaches the screencast if a browser is running
     }
   } else {
+    stopNativeUrlPoll();
+    nativeNavigationSequence += 1;
+    nativeNavigationPending = false;
     panel.classList.add("hidden");
     terminalContainer.style.display = "";
     if (tab) tab.classList.remove("active");
@@ -8427,7 +8423,11 @@ function setBrowserMode(mode) {
     detachScreencast();
     setScreenActive(false);
     if (browserTabActive) openNativePane();
+    scheduleNativeUrlPoll();
   } else {
+    stopNativeUrlPoll();
+    nativeNavigationSequence += 1;
+    nativeNavigationPending = false;
     // Native → AI: hide the native overlay, (re)attach screencast if running.
     invoke("browser_pane_hide").catch(() => {});
     if (browserTabActive) refreshBrowserStatus();
@@ -8437,7 +8437,47 @@ function setBrowserMode(mode) {
 let nativePaneOpenPromise = null;
 let nativePaneLoadedUrl = null;
 let nativeNavigationSequence = 0;
+let nativeNavigationPending = false;
+let nativeAddressDirty = false;
 let nativeNavigationStatusTimer = null;
+let nativeUrlPollTimer = null;
+let nativeUrlPollInFlight = false;
+
+function stopNativeUrlPoll() {
+  if (nativeUrlPollTimer) clearTimeout(nativeUrlPollTimer);
+  nativeUrlPollTimer = null;
+}
+
+function scheduleNativeUrlPoll(delay = 1500) {
+  if (nativeUrlPollTimer || nativeUrlPollInFlight || nativeNavigationPending || nativeAddressDirty || !nativeCurrentUrl ||
+      !browserTabActive || browserMode !== "native" || !nativePaneCreated) return;
+  nativeUrlPollTimer = setTimeout(async () => {
+    nativeUrlPollTimer = null;
+    const address = document.getElementById("nav-url");
+    if (!browserTabActive || browserMode !== "native" || !nativePaneCreated || !nativeCurrentUrl || nativeNavigationPending || nativeAddressDirty) {
+      scheduleNativeUrlPoll();
+      return;
+    }
+    if (document.activeElement === address) return;
+    nativeUrlPollInFlight = true;
+    const navigationSequence = nativeNavigationSequence;
+    try {
+      const url = await invoke("browser_pane_url");
+      // Never replace a URL the user started editing while the IPC was pending.
+      if (url && nativeCurrentUrl && !nativeAddressDirty && browserTabActive && browserMode === "native" &&
+          navigationSequence === nativeNavigationSequence && document.activeElement !== address) {
+        nativeCurrentUrl = url;
+        nativePaneLoadedUrl = url;
+        address.value = url;
+        nativeAddressDirty = false;
+      }
+    } catch {}
+    finally {
+      nativeUrlPollInFlight = false;
+      scheduleNativeUrlPoll();
+    }
+  }, delay);
+}
 
 function setBrowserNavigationStatus(state, text) {
   const status = document.getElementById("browser-nav-status");
@@ -8466,6 +8506,9 @@ function showBrowserStart(state = "home", detail = "") {
 
 function showBrowserHome() {
   nativeNavigationSequence += 1;
+  nativeNavigationPending = false;
+  nativeAddressDirty = false;
+  stopNativeUrlPoll();
   nativeCurrentUrl = "";
   document.getElementById("nav-url").value = "";
   if (browserMode !== "native") setBrowserMode("native");
@@ -8505,7 +8548,10 @@ async function openNativePane() {
     }
   })();
   try { return await nativePaneOpenPromise; }
-  finally { nativePaneOpenPromise = null; }
+  finally {
+    nativePaneOpenPromise = null;
+    scheduleNativeUrlPoll();
+  }
 }
 
 function scheduleSync() {
@@ -8535,6 +8581,7 @@ async function nativeNavigate(input) {
   catch (e) { toast(String(e.message || e), true); return; }
   if (!url) return;
   document.getElementById("nav-url").value = url;
+  nativeAddressDirty = false;
   if (browserMode === "ai") {
     if (cdpWs?.readyState === WebSocket.OPEN) {
       setBrowserNavigationStatus("pending", browserText("navSending"));
@@ -8545,6 +8592,7 @@ async function nativeNavigate(input) {
     return;
   }
   const sequence = ++nativeNavigationSequence;
+  nativeNavigationPending = true;
   const alreadyAtUrl = nativePaneCreated && nativePaneLoadedUrl === url;
   nativeCurrentUrl = url;
   setBrowserNavigationStatus("pending", browserText("navSending"));
@@ -8552,6 +8600,8 @@ async function nativeNavigate(input) {
   if (sequence !== nativeNavigationSequence) return;
   if (!paneReady) {
     setBrowserNavigationStatus("error", browserText("navFailed"));
+    if (sequence === nativeNavigationSequence) nativeNavigationPending = false;
+    scheduleNativeUrlPoll();
     return;
   }
   try {
@@ -8567,6 +8617,9 @@ async function nativeNavigate(input) {
     await invoke("browser_pane_hide").catch(() => {});
     showBrowserStart("error", String(e));
     if (sequence === nativeNavigationSequence) setBrowserNavigationStatus("error", String(e));
+  } finally {
+    if (sequence === nativeNavigationSequence) nativeNavigationPending = false;
+    scheduleNativeUrlPoll();
   }
 }
 

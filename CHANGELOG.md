@@ -8,6 +8,14 @@ For installers, see the [GitHub Releases](https://github.com/ChoiGyber/Mymux/rel
 
 ---
 
+## v0.3.7 — 2026-11-03
+
+### Fixed / 수정
+
+- **브라우저 응답성을 개선합니다 / Improve browser responsiveness.** Remove a redundant UI-thread dispatch around native WebView creation and navigation, serialize address lookups, and preserve an address while the user is editing it.
+
+---
+
 ## v0.3.6 — 2026-11-03
 
 ### Fixed / 수정
