@@ -8,7 +8,6 @@ export function isBrowserTarget(target) {
   if (target.type !== 'page') return false;
   try {
     const url = new URL(target.url);
-    if (target.url === 'about:blank') return true;
     if (!['http:', 'https:'].includes(url.protocol)) return false;
     return !['tauri.localhost', 'localhost.tauri'].includes(url.hostname);
   } catch { return false; }

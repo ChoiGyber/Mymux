@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark" data-accent="blue">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Mymux Sessions</title>
+  <link rel="stylesheet" href="style.css" />
+  <link rel="stylesheet" href="sessions-window.css" />
+</head>
+<body>
+  <main id="sessions-window">
+    <aside id="session-panel" class="sessions-window-panel">
+      <div id="session-header">
+        <span id="sessions-drag-handle" class="sessions-drag-handle" title="Drag onto Mymux's tab bar to return this panel">Sessions</span>
+        <button id="btn-dock-sessions" type="button">Return to Mymux</button>
+      </div>
+      <ul id="ssh-fav-list"></ul>
+      <section id="attention-queue" aria-label="AI agent attention queue">
+        <div class="attention-heading">Agent activity</div>
+        <div class="attention-counts">
+          <button type="button" data-attention-status="working"><span>Working</span><b>0</b></button>
+          <button type="button" data-attention-status="blocked"><span>Blocked</span><b>—</b></button>
+          <button type="button" data-attention-status="done"><span>Done</span><b>0</b></button>
+        </div>
+        <ul id="attention-items" aria-live="polite"></ul>
+      </section>
+      <ul id="session-list"><li class="session-empty">Waiting for the main Mymux window…</li></ul>
+    </aside>
+  </main>
+  <script src="sessions-window.js"></script>
+</body>
+</html>

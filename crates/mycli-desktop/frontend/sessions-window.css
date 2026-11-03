@@ -1,0 +1,22 @@
+body { display: flex; min-width: 260px; }
+#sessions-window { display: flex; flex: 1; min-width: 0; min-height: 0; }
+#session-panel.sessions-window-panel {
+  width: 100%;
+  min-width: 0;
+  height: 100%;
+  border-left: 0;
+}
+#session-header { min-height: 42px; }
+#session-header.sessions-dragging { opacity: .62; }
+#btn-dock-sessions {
+  padding: 5px 9px;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: var(--bg);
+  color: var(--text-dim);
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}
+#btn-dock-sessions:hover { border-color: var(--accent); color: var(--text); }
+#session-resizer { display: none; }

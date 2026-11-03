@@ -47,6 +47,8 @@ const APP_COMMANDS: &[&str] = &[
     "pty_resize",
     "pty_close",
     "pty_ai_process",
+    "terminal_background_handoff",
+    "terminal_shutdown",
     "explorer_list_local",
     "explorer_home_dir",
     "explorer_parent_dir",

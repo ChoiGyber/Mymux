@@ -395,8 +395,11 @@
     <aside id="session-panel">
       <div id="session-resizer" title="드래그해서 세션 패널 너비 조절"></div>
       <div id="session-header">
-        <span>Sessions</span>
-        <button id="btn-toggle-sessions" class="panel-collapse" title="Collapse / expand session panel"><svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.4"><rect x="2.5" y="3.5" width="11" height="9" rx="1.5"/><line x1="8" y1="3.5" x2="8" y2="12.5"/></svg></button>
+        <span id="sessions-drag-handle" class="sessions-drag-handle" title="Drag outside to open Sessions in another window">Sessions</span>
+        <div class="session-header-actions">
+          <button id="btn-detach-sessions" class="panel-collapse" title="Open Sessions in a separate window" aria-label="Open Sessions in a separate window"><svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M6 3H3v10h10v-3M8 2h6v6M14 2 7 9"/></svg></button>
+          <button id="btn-toggle-sessions" class="panel-collapse" title="Collapse / expand session panel"><svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.4"><rect x="2.5" y="3.5" width="11" height="9" rx="1.5"/><line x1="8" y1="3.5" x2="8" y2="12.5"/></svg></button>
+        </div>
       </div>
       <!-- SSH favorites: one click reconnects (key → direct, password → prompt) -->
       <ul id="ssh-fav-list"></ul>
@@ -706,6 +709,18 @@
       <div id="browser-data-list" class="browser-data-list"></div>
       <div class="modal-actions">
         <button id="browser-data-ok" type="button">확인</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="browser-import-prompt" class="hidden" role="dialog" aria-modal="true" aria-labelledby="browser-import-prompt-title">
+    <div class="modal-box browser-import-prompt-box">
+      <h2 id="browser-import-prompt-title"></h2>
+      <p id="browser-import-prompt-copy"></p>
+      <p id="browser-import-prompt-platform" class="browser-import-prompt-platform hidden"></p>
+      <div class="modal-actions">
+        <button id="browser-import-prompt-later" class="secondary" type="button"></button>
+        <button id="browser-import-prompt-now" type="button"></button>
       </div>
     </div>
   </div>

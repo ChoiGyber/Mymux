@@ -80,7 +80,10 @@ let modalOverlay, modalTitle, form, inputName, inputCommand, inputDesc, btnCance
 let terminalTabs, terminalContainer, terminalWelcome;
 let sshInput, sshPort, sshPassword, sshKeyfile, btnSshConnect;
 let toastEl, acPopup, acList;
-let sessionPanel, sessionListEl, btnToggleSessions, btnSplitH, btnSplitV, btnEqualWidth, btnEqualHeight;
+let sessionPanel, sessionListEl, btnToggleSessions, btnDetachSessions, btnSplitH, btnSplitV, btnEqualWidth, btnEqualHeight;
+let sessionsWindowOpen = false;
+let sessionsWindowOpening = false;
+let sessionsWindowSnapshotTimer = null;
 let btnTheme, explorerDrives;
 let pendingTabCloseId = null;
 let explorerDropUnlisten = null;
@@ -259,6 +262,7 @@ window.addEventListener("DOMContentLoaded", async () => {
   sessionPanel = document.getElementById("session-panel");
   sessionListEl = document.getElementById("session-list");
   btnToggleSessions = document.getElementById("btn-toggle-sessions");
+  btnDetachSessions = document.getElementById("btn-detach-sessions");
   btnSplitH = document.getElementById("btn-split-h");
   btnSplitV = document.getElementById("btn-split-v");
   btnEqualWidth = document.getElementById("btn-equal-width");
@@ -280,6 +284,7 @@ window.addEventListener("DOMContentLoaded", async () => {
     console.error("Init error:", e);
   }
   await setupListeners();
+  await setupSessionsWindowBridge();
   restorePanelState();
   initBrowserPanel();
   applyBrowserEnabled();
@@ -749,6 +754,7 @@ async function setupListeners() {
 
   btnToggleSidebar.addEventListener("click", () => { sidebar.classList.toggle("collapsed"); persistPanelState(); updatePanelToggleIcons(); });
   btnToggleSessions.addEventListener("click", () => { sessionPanel.classList.toggle("collapsed"); persistPanelState(); updatePanelToggleIcons(); });
+  btnDetachSessions?.addEventListener("click", () => openSessionsWindow());
 
   // 🔔 Task-done flash settings modal (where the completion pulse shows).
   const btnNotifySettings = document.getElementById("btn-notify-settings");
@@ -7153,9 +7159,10 @@ function renderSshFavs() {
   const list = document.getElementById("ssh-fav-list");
   if (!list) return;
   list.innerHTML = "";
-  for (const f of getSshFavs()) {
+  for (const [favoriteIndex, f] of getSshFavs().entries()) {
     const li = document.createElement("li");
     li.className = "ssh-fav-item";
+    li.dataset.favoriteIndex = String(favoriteIndex);
     const label = f.target + (f.tmux ? ` (tmux${f.tmuxName ? ":" + f.tmuxName : ""})` : "") + (f.keyPath ? " 🔑" : "");
     li.innerHTML = `<span class="ssh-fav-star">★</span><span class="ssh-fav-name"></span><button class="ssh-fav-x" title="Remove favorite">×</button>`;
     li.querySelector(".ssh-fav-name").textContent = label;
@@ -7167,6 +7174,7 @@ function renderSshFavs() {
     });
     list.appendChild(li);
   }
+  scheduleSessionsWindowSnapshot();
 }
 function connectSshFav(f) {
   const parts = (f.target || "").split("@");
@@ -7489,7 +7497,7 @@ function applyBrowserEnabled() {
   const tab = document.getElementById("browser-tab");
   if (tab) tab.style.display = on ? "" : "none";
   const btn = document.getElementById("btn-toggle-browser");
-  if (btn) { btn.classList.toggle("active", on); btn.title = on ? "Turn off browser" : "Turn on browser"; }
+  if (btn) { btn.classList.toggle("active", on); btn.title = on && browserTabActive ? "Turn off browser" : "Open browser"; }
   if (!on) {
     // Turning the browser off is also the escape hatch for a stuck native
     // overlay: leave the view if open, and force-hide the child WebView either way.
@@ -7498,7 +7506,13 @@ function applyBrowserEnabled() {
   }
 }
 function toggleBrowserEnabled() {
-  try { localStorage.setItem("mymux.browserEnabled", browserEnabled() ? "false" : "true"); } catch {}
+  if (!browserEnabled() || !browserTabActive) {
+    try { localStorage.setItem("mymux.browserEnabled", "true"); } catch {}
+    applyBrowserEnabled();
+    requestBrowserView();
+    return;
+  }
+  try { localStorage.setItem("mymux.browserEnabled", "false"); } catch {}
   applyBrowserEnabled();
 }
 
@@ -7508,9 +7522,81 @@ const BROWSER_LABELS = {
   ja: { tab: "ブラウザー", address: "検索またはウェブアドレスを入力", go: "移動", home: "ホーム", title: "Mymux 内でウェブを閲覧", hint: "ウェブアドレスまたは検索語を入力してください。ターミナルセッションは開いたままです。", loading: "ブラウザーを開いています…", error: "ブラウザーを開けませんでした。もう一度お試しください。", retry: "再試行", invalid: "HTTP または HTTPS のアドレスを入力してください" },
   zh: { tab: "浏览器", address: "搜索或输入网址", go: "前往", home: "主页", title: "在 Mymux 中浏览网页", hint: "请输入网址或搜索词。终端会话将保持打开。", loading: "正在打开浏览器…", error: "无法打开浏览器，请重试。", retry: "重试", invalid: "请输入 HTTP 或 HTTPS 地址" },
 };
+const BROWSER_IMPORT_PROMPT_LABELS = {
+  en: {
+    title: "Import from another browser?",
+    copy: "Bring your Chrome or Edge profile into Mymux. Importing bookmarks and history is optional, and login data is copied only after your explicit consent. You can start this later from the Browser panel’s Import section.",
+    platform: "Browser profile and data import is currently available on Windows. On macOS or Linux, you can continue without importing.",
+    now: "Import now",
+    later: "Later",
+  },
+  ko: {
+    title: "다른 브라우저에서 가져올까요?",
+    copy: "Chrome 또는 Edge 프로필을 Mymux에서 사용할 수 있습니다. 북마크와 방문 기록은 선택 항목이며, 로그인 정보는 별도 동의 후에만 복사됩니다. 지금 건너뛰어도 브라우저 화면의 Import 항목에서 나중에 시작할 수 있습니다.",
+    platform: "브라우저 프로필 및 데이터 가져오기는 현재 Windows에서 지원합니다. macOS와 Linux에서는 가져오지 않고 계속할 수 있습니다.",
+    now: "지금 가져오기",
+    later: "나중에",
+  },
+  ja: {
+    title: "別のブラウザーからインポートしますか？",
+    copy: "Chrome または Edge のプロファイルを Mymux で使用できます。ブックマークと履歴は任意で、ログイン情報は明示的な同意後にのみコピーされます。後でブラウザーパネルの Import から開始できます。",
+    platform: "ブラウザープロファイルとデータのインポートは現在 Windows で利用できます。macOS または Linux ではインポートせずに続行できます。",
+    now: "今すぐインポート",
+    later: "後で",
+  },
+  zh: {
+    title: "要从其他浏览器导入吗？",
+    copy: "可以在 Mymux 中使用 Chrome 或 Edge 配置文件。书签和历史记录为可选项，只有在你明确同意后才会复制登录数据。稍后可在浏览器面板的 Import 中开始。",
+    platform: "浏览器配置文件和数据导入目前仅支持 Windows。macOS 或 Linux 用户可以暂不导入并继续。",
+    now: "立即导入",
+    later: "稍后",
+  },
+};
+const BROWSER_IMPORT_PROMPT_SEEN_KEY = "mymux.browserImportPromptSeen.v1";
 function browserText(key) {
   const language = (navigator.language || "en").split("-")[0];
   return (BROWSER_LABELS[language] || BROWSER_LABELS.en)[key];
+}
+function browserImportPromptText(key) {
+  const language = (navigator.language || "en").split("-")[0];
+  return (BROWSER_IMPORT_PROMPT_LABELS[language] || BROWSER_IMPORT_PROMPT_LABELS.en)[key];
+}
+function finishBrowserImportPrompt(importNow) {
+  const modal = document.getElementById("browser-import-prompt");
+  modal?.classList.add("hidden");
+  try { localStorage.setItem(BROWSER_IMPORT_PROMPT_SEEN_KEY, "1"); } catch {}
+  if (!importNow) { openManagedBrowser(); return; }
+  setBrowserMode("ai");
+  setBrowserView(true);
+  const details = document.getElementById("browser-import-details");
+  if (details) details.open = true;
+  if (IS_WINDOWS) scanBrowserProfiles();
+  else toast(browserImportPromptText("platform"), true);
+}
+function requestBrowserView() {
+  let alreadyPrompted = false;
+  try { alreadyPrompted = localStorage.getItem(BROWSER_IMPORT_PROMPT_SEEN_KEY) === "1"; } catch { alreadyPrompted = false; }
+  if (alreadyPrompted) { openManagedBrowser(); return; }
+  const modal = document.getElementById("browser-import-prompt");
+  if (!modal) { openManagedBrowser(); return; }
+  document.getElementById("browser-import-prompt-title").textContent = browserImportPromptText("title");
+  document.getElementById("browser-import-prompt-copy").textContent = browserImportPromptText("copy");
+  document.getElementById("browser-import-prompt-platform").textContent = browserImportPromptText("platform");
+  document.getElementById("browser-import-prompt-platform").classList.toggle("hidden", IS_WINDOWS);
+  document.getElementById("browser-import-prompt-now").textContent = browserImportPromptText("now");
+  document.getElementById("browser-import-prompt-later").textContent = browserImportPromptText("later");
+  modal.classList.remove("hidden");
+  document.getElementById("browser-import-prompt-later").focus();
+}
+async function openManagedBrowser() {
+  if (browserMode !== "ai") setBrowserMode("ai");
+  setBrowserView(true);
+  try {
+    const status = await invoke("browser_status");
+    if (!status?.running) await launchBrowser();
+  } catch {
+    await launchBrowser();
+  }
 }
 
 function resolveBrowserInput(input) {
@@ -7544,10 +7630,10 @@ function initBrowserPanel() {
   tab.title = browserText("tab");
   tab.tabIndex = 0;
   tab.setAttribute("role", "button");
-  tab.addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setBrowserView(true); } });
+  tab.addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); requestBrowserView(); } });
   tab.addEventListener("click", (e) => {
     if (e.target.classList.contains("tab-close")) { setBrowserView(false); return; }
-    setBrowserView(true);
+    requestBrowserView();
   });
   terminalTabs.prepend(tab);
 
@@ -7561,6 +7647,11 @@ function initBrowserPanel() {
   document.getElementById("btn-browser-profile-scan").addEventListener("click", scanBrowserProfiles);
   document.getElementById("btn-browser-profile-import").addEventListener("click", importBrowserProfile);
   document.getElementById("btn-browser-data-import").addEventListener("click", importBrowserData);
+  document.getElementById("browser-import-prompt-now").addEventListener("click", () => finishBrowserImportPrompt(true));
+  document.getElementById("browser-import-prompt-later").addEventListener("click", () => finishBrowserImportPrompt(false));
+  const importPrompt = document.getElementById("browser-import-prompt");
+  importPrompt.addEventListener("click", (event) => { if (event.target === importPrompt) finishBrowserImportPrompt(false); });
+  importPrompt.addEventListener("keydown", (event) => { if (event.key === "Escape") finishBrowserImportPrompt(false); });
   setupBrowserDataModal();
   document.querySelectorAll("#browser-panel .copy-btn").forEach((btn) => {
     btn.addEventListener("click", () => copyBrowserField(btn.dataset.copy));
@@ -7649,6 +7740,7 @@ function setBrowserView(on) {
     // (the native overlay holding focus makes the rest of the UI feel inert).
     if (activeTermId && terminals.has(activeTermId)) terminals.get(activeTermId).term.focus();
   }
+  applyBrowserEnabled();
 }
 
 function browserPort() {
@@ -7860,6 +7952,7 @@ async function importBrowserProfile() {
     try { localStorage.setItem("mymux.browserProfileImported.v1", String(browserPort())); } catch {}
     try { localStorage.setItem("mymux.browserImportedBrowser.v1", selected.browser); } catch {}
     if (browserMode !== "ai") setBrowserMode("ai");
+    if (browserTabActive) await launchBrowser();
   } catch (e) {
     toast(String(e), true);
   }
@@ -8820,6 +8913,7 @@ async function setupCloseHandler() {
 }
 
 async function destroyWindow() {
+  await closeSessionsWindow();
   try {
     await closeAppWindow.destroy();
   } catch (e) {
@@ -10025,6 +10119,169 @@ function startMemoRename(id, memo, row) {
 }
 
 // Rebuild the full session list, grouped by tab.
+async function openSessionsWindow(dragPoint = null) {
+  if (sessionsWindowOpening) return;
+  sessionsWindowOpening = true;
+  try {
+    const Window = window.__TAURI__?.webviewWindow?.WebviewWindow;
+    if (!Window) throw Error("Separate Sessions windows are unavailable in this runtime.");
+    let popup = await Window.getByLabel("sessions");
+    if (!popup) {
+      popup = new Window("sessions", {
+        url: "sessions-window.html",
+        title: "Mymux Sessions",
+        width: 390,
+        height: 760,
+        minWidth: 280,
+        minHeight: 360,
+        resizable: true,
+        ...(dragPoint ? { x: Math.round(dragPoint.x - 190), y: Math.round(dragPoint.y - 20) } : { center: true }),
+      });
+      await new Promise((resolve, reject) => {
+        popup.once("tauri://created", resolve);
+        popup.once("tauri://error", (event) => reject(event?.payload || event));
+      });
+    }
+    sessionsWindowOpen = true;
+    sessionPanel.classList.add("sessions-detached");
+    await popup.show().catch(() => {});
+    await popup.setFocus();
+    scheduleSessionsWindowSnapshot();
+  } catch (error) {
+    toast(`Could not open Sessions window: ${error}`, true);
+  } finally {
+    sessionsWindowOpening = false;
+  }
+}
+
+async function closeSessionsWindow() {
+  try {
+    const Window = window.__TAURI__?.webviewWindow?.WebviewWindow;
+    const popup = await Window?.getByLabel?.("sessions");
+    if (popup) await popup.close();
+  } catch (error) {
+    console.warn("Could not close Sessions window", error);
+  }
+  sessionsWindowOpen = false;
+  sessionPanel?.classList.remove("sessions-detached");
+}
+
+async function setupSessionsWindowBridge() {
+  try {
+    const events = window.__TAURI__?.event;
+    if (!events?.listen) return;
+    await events.listen("mymux:sessions-window-ready", () => {
+      sessionsWindowOpen = true;
+      sessionPanel?.classList.add("sessions-detached");
+      scheduleSessionsWindowSnapshot();
+    });
+    await events.listen("mymux:sessions-window-closed", () => {
+      sessionsWindowOpen = false;
+      sessionPanel?.classList.remove("sessions-detached");
+    });
+    await events.listen("mymux:sessions-window-dock", closeSessionsWindow);
+    await events.listen("mymux:sessions-window-action", (event) => handleSessionsWindowAction(event.payload || {}));
+    await events.listen("mymux:sessions-window-drag", (event) => updateSessionsDockTarget(event.payload || {}));
+    await events.listen("mymux:sessions-window-drop", (event) => finishSessionsWindowDrop(event.payload || {}));
+    setupSessionsDetachDrag();
+  } catch (error) {
+    console.warn("Sessions window event bridge unavailable", error);
+  }
+}
+
+function setupSessionsDetachDrag() {
+  const handle = document.getElementById("sessions-drag-handle");
+  if (!handle) return;
+  let drag = null;
+  handle.addEventListener("pointerdown", (event) => {
+    if (event.button !== 0 || sessionsWindowOpen || event.target.closest("button")) return;
+    drag = { pointerId: event.pointerId, startX: event.screenX, startY: event.screenY, outside: false };
+    handle.setPointerCapture?.(event.pointerId);
+  });
+  handle.addEventListener("pointermove", (event) => {
+    if (!drag || drag.pointerId !== event.pointerId) return;
+    if (Math.hypot(event.screenX - drag.startX, event.screenY - drag.startY) < 8) return;
+    if (event.clientX < 0 || event.clientY < 0 || event.clientX > innerWidth || event.clientY > innerHeight) {
+      drag.outside = true;
+      sessionPanel?.classList.add("sessions-dragging");
+    }
+  });
+  const finish = (event) => {
+    if (!drag || drag.pointerId !== event.pointerId) return;
+    const shouldDetach = drag.outside && (event.clientX < 0 || event.clientY < 0 || event.clientX > innerWidth || event.clientY > innerHeight);
+    drag = null;
+    sessionPanel?.classList.remove("sessions-dragging");
+    if (shouldDetach) openSessionsWindow({ x: event.screenX, y: event.screenY });
+  };
+  handle.addEventListener("pointerup", finish);
+  handle.addEventListener("pointercancel", finish);
+}
+
+function updateSessionsDockTarget(point) {
+  const tabs = document.getElementById("terminal-tabs");
+  if (!tabs || !Number.isFinite(point.x) || !Number.isFinite(point.y)) return;
+  const rect = tabs.getBoundingClientRect();
+  const left = window.screenX + rect.left;
+  const top = window.screenY + rect.top;
+  const inside = point.x >= left && point.x <= left + rect.width && point.y >= top && point.y <= top + rect.height;
+  tabs.classList.toggle("sessions-dock-target", inside);
+  window.__TAURI__?.event?.emitTo?.("sessions", "mymux:sessions-window-dock-target", { inside }).catch(() => {});
+}
+
+function finishSessionsWindowDrop(point) {
+  const tabs = document.getElementById("terminal-tabs");
+  const rect = tabs?.getBoundingClientRect();
+  const left = window.screenX + (rect?.left || 0);
+  const top = window.screenY + (rect?.top || 0);
+  const inside = !!rect && point.x >= left && point.x <= left + rect.width && point.y >= top && point.y <= top + rect.height;
+  tabs?.classList.remove("sessions-dock-target");
+  if (inside) closeSessionsWindow();
+}
+
+function handleSessionsWindowAction(action) {
+  const ptyId = Number(action.ptyId);
+  const t = Number.isFinite(ptyId) ? terminals.get(ptyId) : null;
+  const row = Number.isFinite(ptyId) ? sessionListEl?.querySelector(`.session-item[data-pty-id="${ptyId}"]`) : null;
+  if (action.type === "connect-favorite" || action.type === "remove-favorite") {
+    const item = document.querySelectorAll("#ssh-fav-list .ssh-fav-item")[Number(action.favoriteIndex)];
+    if (action.type === "remove-favorite") item?.querySelector(".ssh-fav-x")?.click();
+    else item?.click();
+    return;
+  }
+  if (action.type === "focus" && t) { focusSession(ptyId); return; }
+  if (action.type === "agent-detail" && t) { showAgentDetail(ptyId, action.agentId); return; }
+  if (action.type === "rename-tab") {
+    const group = sessionListEl?.querySelector(`.session-group[data-tab-idx="${Number(action.tabIdx)}"]`);
+    group?.dispatchEvent(new MouseEvent("dblclick", { bubbles: true }));
+    return;
+  }
+  if (!row) return;
+  if (action.type === "close") row.querySelector(".session-close")?.click();
+  else if (action.type === "rename") row.querySelector(".session-name")?.dispatchEvent(new MouseEvent("dblclick", { bubbles: true }));
+  else if (action.type === "favorite") row.querySelector(".session-fav")?.click();
+  else if (action.type === "toggle-agents") row.querySelector(".session-agents-toggle,.session-agent-more")?.click();
+}
+
+function scheduleSessionsWindowSnapshot() {
+  if (!sessionsWindowOpen) return;
+  clearTimeout(sessionsWindowSnapshotTimer);
+  sessionsWindowSnapshotTimer = setTimeout(async () => {
+    const events = window.__TAURI__?.event;
+    if (!events?.emitTo) return;
+    const value = (status) => document.querySelector(`[data-attention-status="${status}"] b`)?.textContent || "0";
+    try {
+      await events.emitTo("sessions", "mymux:sessions-window-update", {
+        sessions: sessionListEl?.innerHTML || "",
+        favorites: document.getElementById("ssh-fav-list")?.innerHTML || "",
+        attention: document.getElementById("attention-items")?.innerHTML || "",
+        counts: { working: value("working"), blocked: value("blocked"), done: value("done") },
+        theme: document.documentElement.dataset.theme || "dark",
+        accent: document.documentElement.dataset.accent || "blue",
+      });
+    } catch (error) { console.debug("Sessions window update skipped", error); }
+  }, 60);
+}
+
 function refreshSessionList() {
   if (!sessionListEl) return;
   sessionListEl.innerHTML = "";
@@ -10057,6 +10314,7 @@ function refreshSessionList() {
       li.className = "session-item" + (ptyId === focusedPaneId ? " active" : "");
       if (t.unseen) li.classList.add("unseen");
       li.dataset.ptyId = ptyId;
+      li.dataset.sessionKey = t.sessionKey || "";
 
       const dotEl = document.createElement("span");
       dotEl.className = "session-dot";
@@ -10131,6 +10389,7 @@ function refreshSessionList() {
     if (tt.agents && tt.agents.length) renderAgentRows(pid);
   }
   refreshAttentionQueue();
+  scheduleSessionsWindowSnapshot();
 }
 
 // Lightweight: just move the active highlight without rebuilding.
@@ -10139,6 +10398,7 @@ function updateSessionActive() {
   sessionListEl.querySelectorAll(".session-item").forEach((el) => {
     el.classList.toggle("active", Number(el.dataset.ptyId) === focusedPaneId);
   });
+  scheduleSessionsWindowSnapshot();
 }
 
 // ── Subagents under their session ───────────────────────────────────────────
@@ -10248,6 +10508,7 @@ function refreshAttentionQueue() {
     const button = document.createElement("button");
     button.type = "button";
     button.className = `attention-item ${row.agent.status === "running" ? "is-working" : "is-done"}`;
+    button.dataset.ownerPty = String(row.paneId);
     button.title = `${row.session} · ${row.agent.description || row.agent.name} — 클릭하여 세션으로 이동`;
     const state = document.createElement("span");
     state.className = "attention-state";
@@ -10273,6 +10534,7 @@ function refreshAttentionQueue() {
     more.textContent = `+${rows.length - 8} more in Sessions`;
     host.appendChild(more);
   }
+  scheduleSessionsWindowSnapshot();
 }
 
 // The first poll after a session is picked up reads a whole transcript, which
@@ -10854,6 +11116,7 @@ function setTheme(mode) {
   try { localStorage.setItem("mycli-theme", mode); } catch {}
   if (btnTheme) btnTheme.innerHTML = mode === "dark" ? ICON.moon : ICON.sun;
   applyTerminalTheme();
+  scheduleSessionsWindowSnapshot();
 }
 
 function setAccent(accent) {
@@ -10863,6 +11126,7 @@ function setAccent(accent) {
     sw.classList.toggle("active", sw.dataset.accent === accent);
   });
   applyTerminalTheme();
+  scheduleSessionsWindowSnapshot();
 }
 
 function initTheme() {

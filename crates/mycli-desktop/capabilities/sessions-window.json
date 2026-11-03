@@ -1,0 +1,11 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "sessions-window",
+  "description": "Session list window can only exchange session-view events with the main Mymux window.",
+  "local": true,
+  "webviews": ["sessions"],
+  "permissions": [
+    "core:window:allow-close",
+    "core:event:default"
+  ]
+}

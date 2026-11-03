@@ -8,6 +8,33 @@ For installers, see the [GitHub Releases](https://github.com/ChoiGyber/Mymux/rel
 
 ---
 
+## v0.3.5 — 2026-11-03
+
+### Added / 추가
+
+- **Sessions 창을 탭처럼 분리하고 다시 붙일 수 있습니다 / Detach and reattach
+  the Sessions panel like a tab.** Drag the Sessions heading outside the main
+  window to open a separate live view, then drag its heading onto the main tab
+  bar to dock it again. Session and agent lists remain available in the detached
+  window.
+
+- **브라우저 첫 실행 안내와 나중에 가져오기를 추가했습니다 / Added a first-run
+  browser import prompt with a Later option.** The browser icon opens a managed
+  browser that local CLI tools can control; browser profile import remains
+  available from the Browser panel.
+
+### Fixed / 수정
+
+- **CLI 브라우저 제어 대상에서 빈 탭을 제외합니다 / Exclude blank tabs from CLI
+  browser targets.** This aligns target selection with the regression test and
+  avoids treating an uninitialized page as an agent-controlled website.
+
+- **백그라운드 세션 유지 권한을 등록합니다 / Register permissions for background
+  session handoff.** The close flow can now invoke the PTY server handoff and
+  shutdown commands through the app's explicit command manifest.
+
+---
+
 ## v0.3.4 — 2026-10-30
 
 ### Added / 추가

@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-terminal-background-handoff"
+description = "Enables the terminal_background_handoff command without any pre-configured scope."
+commands.allow = ["terminal_background_handoff"]
+
+[[permission]]
+identifier = "deny-terminal-background-handoff"
+description = "Denies the terminal_background_handoff command without any pre-configured scope."
+commands.deny = ["terminal_background_handoff"]

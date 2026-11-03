@@ -1821,7 +1821,7 @@ html[data-theme="light"] #toolbar-actions #btn-update:hover {
 .cmd-item.is-fav { border-left: 2px solid var(--accent); }
 
 /* Generic centered modal (close prompt, ssh password prompt) */
-#close-modal, #sshpw-modal, #ssh-modal, #update-modal, #whatsnew-modal, #sftp-unsupported-modal, #sftp-ai-prompt-modal, #restore-session-modal, #notify-modal, #replay-modal, #agent-modal, #browser-data-modal {
+#close-modal, #sshpw-modal, #ssh-modal, #update-modal, #whatsnew-modal, #sftp-unsupported-modal, #sftp-ai-prompt-modal, #restore-session-modal, #notify-modal, #replay-modal, #agent-modal, #browser-data-modal, #browser-import-prompt {
   position: fixed;
   inset: 0;
   background: rgba(0, 0, 0, 0.55);
@@ -2599,6 +2599,7 @@ html[data-theme="dark"] .pane-command-shortcut {
 }
 #session-resizer:hover { background: var(--accent); opacity: 0.45; }
 #session-panel.collapsed #session-resizer { display: none; }
+#session-panel.sessions-detached { display: none; }
 #session-header {
   display: flex;
   align-items: center;
@@ -2612,6 +2613,12 @@ html[data-theme="dark"] .pane-command-shortcut {
   letter-spacing: 0.5px;
   flex-shrink: 0;
 }
+.session-header-actions { display: flex; align-items: center; gap: 2px; }
+.sessions-drag-handle { cursor: grab; user-select: none; -webkit-user-select: none; }
+.sessions-drag-handle:active { cursor: grabbing; }
+#terminal-tabs.sessions-dock-target { background: color-mix(in srgb, var(--accent) 18%, var(--bg)); outline: 2px solid var(--accent); outline-offset: -2px; }
+body.sessions-dock-target #session-panel { outline: 2px solid var(--accent); outline-offset: -2px; }
+#session-panel.sessions-dragging { opacity: .62; }
 #session-list {
   list-style: none;
   overflow-y: auto;
@@ -2957,6 +2964,8 @@ html[data-theme="dark"] .pane-command-shortcut {
   cursor: pointer;
 }
 .browser-data-box { width: 620px; max-width: 92vw; }
+.browser-import-prompt-box { width: min(480px, 92vw); }
+.browser-import-prompt-platform { padding: 8px 10px; border: 1px solid var(--border); border-radius: 5px; font-size: 11px !important; }
 .browser-data-notes {
   margin: 0 0 10px !important;
   padding: 7px 9px;
