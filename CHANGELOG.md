@@ -12,6 +12,8 @@ For installers, see the [GitHub Releases](https://github.com/ChoiGyber/Mymux/rel
 
 ### Fixed / 수정
 
+- **Prevent duplicate Hangul IME input.** Distinguish xterm's deferred keydown fallback from the actual `input` event even when WebView keeps `window.event` stale, so one commit is not sent twice while genuine repeated Hangul remains intact.
+
 - **브라우저 응답성을 개선합니다 / Improve browser responsiveness.** Remove a redundant UI-thread dispatch around native WebView creation and navigation, serialize address lookups, and preserve an address while the user is editing it.
 
 ---

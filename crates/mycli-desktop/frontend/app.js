@@ -3561,6 +3561,18 @@ async function createPane(parentEl, shell, args, cwd, sessionKey = null) {
   // syncs whenever xterm focuses itself.
   if (term.textarea) {
     term.textarea.addEventListener("focus", () => { if (focusedPaneId !== id) setFocusedPane(id); });
+    // xterm registers its input handler on the textarea in capture phase, so
+    // mark the event on the terminal ancestor where capture runs first.
+    term.element?.addEventListener("input", (e) => {
+      if (e.target !== term.textarea) return;
+      const ti = terminals.get(id);
+      if (!ti) return;
+      const inputDispatch = {};
+      ti.imeInputDispatch = inputDispatch;
+      queueMicrotask(() => {
+        if (ti.imeInputDispatch === inputDispatch) ti.imeInputDispatch = null;
+      });
+    }, true);
     // IME (Hangul) composition guard. When returning to the window, the focus
     // keeper blurs+refocuses this textarea; doing that mid-composition makes the
     // IME commit the syllable twice ("글자가 2개씩") and detaches its candidate
@@ -3891,13 +3903,12 @@ function installCompositionAnchor(term) {
 // the same new character and each emits it. Reproduced against the real WebView2
 // with keydown → keyup → input(insertText) delivered back to back.
 //
-// The guard sits where the two paths meet, in term.onData: a single non-ASCII
-// character equal to the previous one, with no keydown in between, within a
-// moment, and not from the `input` event twice. Each real keystroke fires its own
-// keydown, so a deliberately repeated character ("가가", "ㅋㅋ") always has one
-// between its two emissions and is never touched. Two emissions both from `input`
-// are left alone as well: an IME that lags can legitimately deliver two commits
-// of the same character back to back.
+// The guard sits where the two paths meet, in term.onData. It distinguishes the
+// actual input event from xterm's deferred keydown fallback using
+// imeInputDispatch; window.event can remain stale inside WebView timeouts. If the
+// fallback repeats the input event's commit, imeInputBuf drops the second send.
+// Same-source input events remain allowed because an IME can batch legitimate
+// repeated commits, and a later keydown sequence still protects deliberate repeats.
 //
 // When it drops something it writes the surrounding event trace to a log, so a
 // duplicate that comes from some other path is diagnosable instead of a guess.
@@ -3916,7 +3927,7 @@ function imeTrace(ti, tag, detail) {
 // True when `data` is the duplicate half of one committed character.
 function imeDuplicateCommit(ti, data) {
   if (!ti) return false;
-  const via = (window.event && window.event.type) || "async";
+  const via = ti.imeInputDispatch ? "input" : "async";
   imeTrace(ti, "emit:" + via, data.length > 8 ? data.length + " chars" : data);
   if (!/[^\x00-\x7F]/.test(data)) return false;
   const now = performance.now();
