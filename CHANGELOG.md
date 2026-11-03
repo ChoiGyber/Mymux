@@ -8,6 +8,16 @@ For installers, see the [GitHub Releases](https://github.com/ChoiGyber/Mymux/rel
 
 ---
 
+## v0.3.6 — 2026-11-03
+
+### Fixed / 수정
+
+- **브라우저 가져오기에 진행 모달을 표시합니다 / Show a progress modal while importing browser data.** The modal names the selected browser, profile, and data types while the import runs, then switches to results or an error message.
+
+- **브라우저 주소 이동 피드백을 표시하고 현재 주소 재입력을 새로고침으로 처리합니다 / Show browser navigation feedback and reload when the current address is entered again.** The status reports when the navigation request is accepted; page-load completion is not tracked.
+
+---
+
 ## v0.3.5 — 2026-11-03
 
 ### Added / 추가

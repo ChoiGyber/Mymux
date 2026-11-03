@@ -262,6 +262,7 @@
           <input type="text" id="nav-url" placeholder="Enter an address — e.g. github.com" spellcheck="false" />
           <button id="nav-go" data-browser-text="go"></button>
           <button id="btn-browser-info" class="secondary browser-info-btn" type="button" title="Browser settings" aria-expanded="false">&#9881;</button>
+          <span id="browser-nav-status" class="browser-nav-status hidden" role="status" aria-live="polite"></span>
         </div>
 
         <!-- AI mode: CDP / Playwright controls -->
@@ -695,8 +696,19 @@
   <!-- Results of a Chrome/Edge data import: bookmarks, history, saved passwords.
        Each list opens its links in the in-app browser. Passwords stay masked
        until explicitly revealed. -->
-  <div id="browser-data-modal" class="hidden" role="dialog" aria-modal="true" aria-labelledby="browser-data-title">
+  <div id="browser-data-modal" class="hidden" role="dialog" aria-modal="true" aria-labelledby="browser-import-progress-title" aria-busy="false">
     <div class="modal-box browser-data-box">
+      <section id="browser-import-progress" class="browser-import-progress" aria-live="polite" tabindex="-1">
+        <h2 id="browser-import-progress-title">브라우저 정보를 가져오는 중</h2>
+        <p id="browser-import-progress-source" class="browser-import-progress-source"></p>
+        <p id="browser-import-progress-kinds" class="browser-import-progress-kinds"></p>
+        <div id="browser-import-progress-indicator" class="browser-import-progress-indicator" role="progressbar" aria-label="브라우저 데이터 읽는 중"></div>
+        <p id="browser-import-progress-message" class="browser-import-progress-message">선택한 브라우저 프로필을 읽고 있습니다. 데이터 양에 따라 시간이 걸릴 수 있습니다.</p>
+        <div id="browser-import-progress-actions" class="modal-actions hidden">
+          <button id="browser-import-progress-close" type="button">닫기</button>
+        </div>
+      </section>
+      <div id="browser-data-results" class="hidden">
       <button id="browser-data-close" class="modal-close" type="button" aria-label="Close">×</button>
       <h2 id="browser-data-title">가져온 브라우저 데이터</h2>
       <p id="browser-data-notes" class="browser-data-notes"></p>
@@ -709,6 +721,7 @@
       <div id="browser-data-list" class="browser-data-list"></div>
       <div class="modal-actions">
         <button id="browser-data-ok" type="button">확인</button>
+      </div>
       </div>
     </div>
   </div>

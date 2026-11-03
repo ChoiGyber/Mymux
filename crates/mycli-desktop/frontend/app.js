@@ -7517,10 +7517,10 @@ function toggleBrowserEnabled() {
 }
 
 const BROWSER_LABELS = {
-  en: { tab: "Browser", address: "Search or enter a web address", go: "Go", home: "Home", title: "Browse inside Mymux", hint: "Enter a website or search above. Your terminal sessions stay open.", loading: "Opening browser…", error: "Could not open the browser. Try again.", retry: "Try again", invalid: "Use an HTTP or HTTPS address" },
-  ko: { tab: "브라우저", address: "검색어 또는 웹 주소 입력", go: "이동", home: "홈", title: "Mymux 안에서 웹 탐색", hint: "웹 주소나 검색어를 입력하세요. 터미널 세션은 그대로 유지됩니다.", loading: "브라우저를 여는 중…", error: "브라우저를 열지 못했습니다. 다시 시도해 주세요.", retry: "다시 시도", invalid: "HTTP 또는 HTTPS 주소를 입력하세요" },
-  ja: { tab: "ブラウザー", address: "検索またはウェブアドレスを入力", go: "移動", home: "ホーム", title: "Mymux 内でウェブを閲覧", hint: "ウェブアドレスまたは検索語を入力してください。ターミナルセッションは開いたままです。", loading: "ブラウザーを開いています…", error: "ブラウザーを開けませんでした。もう一度お試しください。", retry: "再試行", invalid: "HTTP または HTTPS のアドレスを入力してください" },
-  zh: { tab: "浏览器", address: "搜索或输入网址", go: "前往", home: "主页", title: "在 Mymux 中浏览网页", hint: "请输入网址或搜索词。终端会话将保持打开。", loading: "正在打开浏览器…", error: "无法打开浏览器，请重试。", retry: "重试", invalid: "请输入 HTTP 或 HTTPS 地址" },
+  en: { tab: "Browser", address: "Search or enter a web address", go: "Go", home: "Home", title: "Browse inside Mymux", hint: "Enter a website or search above. Your terminal sessions stay open.", loading: "Opening browser…", error: "Could not open the browser. Try again.", retry: "Try again", invalid: "Use an HTTP or HTTPS address", navSending: "Sending navigation request…", navSent: "Navigation request sent. Page-load completion is not tracked.", navFailed: "Could not send the navigation request." },
+  ko: { tab: "브라우저", address: "검색어 또는 웹 주소 입력", go: "이동", home: "홈", title: "Mymux 안에서 웹 탐색", hint: "웹 주소나 검색어를 입력하세요. 터미널 세션은 그대로 유지됩니다.", loading: "브라우저를 여는 중…", error: "브라우저를 열지 못했습니다. 다시 시도해 주세요.", retry: "다시 시도", invalid: "HTTP 또는 HTTPS 주소를 입력하세요", navSending: "주소 요청을 보내는 중…", navSent: "브라우저에 주소 요청을 보냈습니다. 페이지 로드 완료 여부는 추적하지 않습니다.", navFailed: "브라우저에 주소 요청을 보내지 못했습니다." },
+  ja: { tab: "ブラウザー", address: "検索またはウェブアドレスを入力", go: "移動", home: "ホーム", title: "Mymux 内でウェブを閲覧", hint: "ウェブアドレスまたは検索語を入力してください。ターミナルセッションは開いたままです。", loading: "ブラウザーを開いています…", error: "ブラウザーを開けませんでした。もう一度お試しください。", retry: "再試行", invalid: "HTTP または HTTPS のアドレスを入力してください", navSending: "移動リクエストを送信しています…", navSent: "移動リクエストを送信しました。ページの読み込み完了は追跡していません。", navFailed: "移動リクエストを送信できませんでした。" },
+  zh: { tab: "浏览器", address: "搜索或输入网址", go: "前往", home: "主页", title: "在 Mymux 中浏览网页", hint: "请输入网址或搜索词。终端会话将保持打开。", loading: "正在打开浏览器…", error: "无法打开浏览器，请重试。", retry: "重试", invalid: "请输入 HTTP 或 HTTPS 地址", navSending: "正在发送导航请求…", navSent: "已发送导航请求。不会跟踪页面是否加载完成。", navFailed: "无法发送导航请求。" },
 };
 const BROWSER_IMPORT_PROMPT_LABELS = {
   en: {
@@ -7964,8 +7964,38 @@ async function importBrowserProfile() {
 // and the result view keeps them masked until the user reveals one.
 let browserData = null;         // the last import result
 let browserDataKind = "bookmarks"; // which tab of the result modal is shown
+let browserDataImporting = false;
+
+function showBrowserDataImportProgress(selected, kinds, error = "") {
+  const modal = document.getElementById("browser-data-modal");
+  const progress = document.getElementById("browser-import-progress");
+  const results = document.getElementById("browser-data-results");
+  const title = document.getElementById("browser-import-progress-title");
+  const source = document.getElementById("browser-import-progress-source");
+  const selectedKinds = document.getElementById("browser-import-progress-kinds");
+  const message = document.getElementById("browser-import-progress-message");
+  const indicator = document.getElementById("browser-import-progress-indicator");
+  const actions = document.getElementById("browser-import-progress-actions");
+  if (!modal || !progress || !results) return;
+
+  const kindNames = { bookmarks: "북마크", history: "방문 기록", passwords: "저장된 비밀번호" };
+  if (title) title.textContent = error ? "브라우저 정보를 가져오지 못했습니다" : "브라우저 정보를 가져오는 중";
+  if (source) source.textContent = `${selected.browser} · ${selected.name} (${selected.profile})`;
+  if (selectedKinds) selectedKinds.textContent = `가져올 항목: ${kinds.map((kind) => kindNames[kind] || kind).join(", ")}`;
+  if (message) message.textContent = error || "선택한 브라우저 프로필을 읽고 있습니다. 데이터 양에 따라 시간이 걸릴 수 있습니다.";
+  if (indicator) indicator.classList.toggle("hidden", Boolean(error));
+  if (actions) actions.classList.toggle("hidden", !error);
+  progress.classList.remove("hidden");
+  results.classList.add("hidden");
+  modal.setAttribute("aria-labelledby", "browser-import-progress-title");
+  modal.setAttribute("aria-busy", String(!error));
+  modal.classList.remove("hidden");
+  if (error) document.getElementById("browser-import-progress-close")?.focus();
+  else progress.focus();
+}
 
 async function importBrowserData() {
+  if (browserDataImporting) return;
   const select = document.getElementById("browser-import-profile");
   const selected = browserImportProfiles.find((p) => p.id === select.value);
   if (!selected) { toast("먼저 Scan 으로 프로필을 고르세요.", true); return; }
@@ -7990,8 +8020,12 @@ async function importBrowserData() {
   if (!window.confirm(lines.join("\n"))) return;
 
   const btn = document.getElementById("btn-browser-data-import");
+  browserDataImporting = true;
   if (btn) { btn.disabled = true; btn.textContent = "불러오는 중…"; }
+  showBrowserDataImportProgress(selected, kinds);
   try {
+    // Let WebView paint the modal before the database read starts.
+    await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
     browserData = await invoke("browser_import_data", {
       browser: selected.browser,
       profile: selected.profile,
@@ -8000,8 +8034,9 @@ async function importBrowserData() {
     });
     showBrowserDataModal(kinds[0]);
   } catch (e) {
-    toast(String(e), true);
+    showBrowserDataImportProgress(selected, kinds, String(e));
   } finally {
+    browserDataImporting = false;
     if (btn) { btn.disabled = false; btn.textContent = "동의하고 불러오기"; }
   }
 }
@@ -8011,7 +8046,8 @@ function setupBrowserDataModal() {
   if (!modal) return;
   document.getElementById("browser-data-close")?.addEventListener("click", hideBrowserDataModal);
   document.getElementById("browser-data-ok")?.addEventListener("click", hideBrowserDataModal);
-  modal.addEventListener("click", (e) => { if (e.target && e.target.id === "browser-data-modal") hideBrowserDataModal(); });
+  document.getElementById("browser-import-progress-close")?.addEventListener("click", hideBrowserDataModal);
+  modal.addEventListener("click", (e) => { if (!browserDataImporting && e.target && e.target.id === "browser-data-modal") hideBrowserDataModal(); });
   modal.querySelectorAll(".bd-tab").forEach((tab) => {
     tab.addEventListener("click", () => showBrowserDataModal(tab.dataset.kind));
   });
@@ -8023,6 +8059,11 @@ function showBrowserDataModal(kind) {
   browserDataKind = kind || browserDataKind;
   const modal = document.getElementById("browser-data-modal");
   if (!modal) return;
+
+  document.getElementById("browser-import-progress")?.classList.add("hidden");
+  document.getElementById("browser-data-results")?.classList.remove("hidden");
+  modal.setAttribute("aria-labelledby", "browser-data-title");
+  modal.setAttribute("aria-busy", "false");
 
   for (const k of ["bookmarks", "history", "passwords"]) {
     const count = (browserData[k] || []).length;
@@ -8041,9 +8082,11 @@ function showBrowserDataModal(kind) {
   if (search) search.value = "";
   renderBrowserDataList();
   modal.classList.remove("hidden");
+  document.getElementById("browser-data-close")?.focus();
 }
 
 function hideBrowserDataModal() {
+  if (browserDataImporting) return;
   document.getElementById("browser-data-modal")?.classList.add("hidden");
 }
 
@@ -8394,6 +8437,24 @@ function setBrowserMode(mode) {
 let nativePaneOpenPromise = null;
 let nativePaneLoadedUrl = null;
 let nativeNavigationSequence = 0;
+let nativeNavigationStatusTimer = null;
+
+function setBrowserNavigationStatus(state, text) {
+  const status = document.getElementById("browser-nav-status");
+  if (!status) return;
+  if (nativeNavigationStatusTimer) clearTimeout(nativeNavigationStatusTimer);
+  nativeNavigationStatusTimer = null;
+  status.textContent = text;
+  status.classList.toggle("is-error", state === "error");
+  status.classList.toggle("hidden", !text);
+  if (text && state === "sent") {
+    nativeNavigationStatusTimer = setTimeout(() => {
+      status.classList.add("hidden");
+      status.textContent = "";
+      nativeNavigationStatusTimer = null;
+    }, 8000);
+  }
+}
 
 function showBrowserStart(state = "home", detail = "") {
   const placeholder = document.getElementById("browser-placeholder");
@@ -8475,21 +8536,37 @@ async function nativeNavigate(input) {
   if (!url) return;
   document.getElementById("nav-url").value = url;
   if (browserMode === "ai") {
-    if (cdpWs?.readyState === WebSocket.OPEN) cdpSend("Page.navigate", { url });
+    if (cdpWs?.readyState === WebSocket.OPEN) {
+      setBrowserNavigationStatus("pending", browserText("navSending"));
+      cdpSend("Page.navigate", { url });
+      setBrowserNavigationStatus("sent", browserText("navSent"));
+    }
     else { document.getElementById("browser-url").value = url; launchBrowser(); }
     return;
   }
   const sequence = ++nativeNavigationSequence;
+  const alreadyAtUrl = nativePaneCreated && nativePaneLoadedUrl === url;
   nativeCurrentUrl = url;
-  if (!(await openNativePane()) || sequence !== nativeNavigationSequence) return;
+  setBrowserNavigationStatus("pending", browserText("navSending"));
+  const paneReady = await openNativePane();
+  if (sequence !== nativeNavigationSequence) return;
+  if (!paneReady) {
+    setBrowserNavigationStatus("error", browserText("navFailed"));
+    return;
+  }
   try {
     if (nativePaneLoadedUrl !== url) {
       await invoke("browser_pane_navigate", { url });
       nativePaneLoadedUrl = url;
+    } else if (alreadyAtUrl) {
+      // Re-entering the current address is an explicit request to reload it.
+      await invoke("browser_pane_reload");
     }
+    if (sequence === nativeNavigationSequence) setBrowserNavigationStatus("sent", browserText("navSent"));
   } catch (e) {
     await invoke("browser_pane_hide").catch(() => {});
     showBrowserStart("error", String(e));
+    if (sequence === nativeNavigationSequence) setBrowserNavigationStatus("error", String(e));
   }
 }
 
