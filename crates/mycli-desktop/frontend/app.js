@@ -96,6 +96,70 @@ let explorerLoadGeneration = 0;
 // ── State ──
 let editingId = null;
 const terminals = new Map(); // ptyId -> { term, fitAddon, paneEl, type }
+const ptyInputQueues = new Map();
+const PTY_INPUT_BATCH_MS = 4;
+const PTY_INPUT_QUEUE_LIMIT = 1024 * 1024;
+
+function queuePtyInput(id, data) {
+  if (!data) return;
+  let queue = ptyInputQueues.get(id);
+  if (!queue) {
+    queue = { chunks: [], length: 0, timer: null, inFlight: null, closed: false, overflowNotified: false };
+    ptyInputQueues.set(id, queue);
+  }
+  if (queue.closed) return;
+  if (queue.length + data.length > PTY_INPUT_QUEUE_LIMIT) {
+    queuePtyInputFlush(id, true);
+    // A single large paste is allowed as its own batch; the cap only limits
+    // data queued behind an in-flight IPC write.
+    if (queue.inFlight && queue.length + data.length > PTY_INPUT_QUEUE_LIMIT) {
+      if (!queue.overflowNotified) {
+        queue.overflowNotified = true;
+        toast("PTY 응답이 늦어 입력 대기 한도를 넘었습니다. 일부 입력이 전달되지 않았을 수 있습니다.", true);
+      }
+      return;
+    }
+  }
+  queue.chunks.push(data);
+  queue.length += data.length;
+  if (queue.length >= 16 * 1024) queuePtyInputFlush(id, true);
+  else if (!queue.timer && !queue.inFlight) {
+    queue.timer = setTimeout(() => queuePtyInputFlush(id, true), PTY_INPUT_BATCH_MS);
+  }
+}
+
+function queuePtyInputFlush(id, immediate = false) {
+  const queue = ptyInputQueues.get(id);
+  if (!queue) return Promise.resolve();
+  if (queue.timer) { clearTimeout(queue.timer); queue.timer = null; }
+  if (queue.inFlight) return queue.inFlight.then(() => queuePtyInputFlush(id, immediate));
+  if (!queue.chunks.length) return Promise.resolve();
+  const data = queue.chunks.join("");
+  queue.chunks = [];
+  queue.length = 0;
+  queue.inFlight = invoke("pty_write", { id, data })
+    .catch((error) => {
+      console.error("PTY input write failed", id, error);
+      toast("터미널 입력 전달에 실패했습니다. PTY 연결 상태를 확인해 주세요.", true);
+    })
+    .finally(() => {
+      queue.inFlight = null;
+      if (queue.chunks.length) {
+        if (immediate || queue.closed) queuePtyInputFlush(id, true);
+        else if (!queue.timer) queue.timer = setTimeout(() => queuePtyInputFlush(id, true), PTY_INPUT_BATCH_MS);
+      } else if (queue.closed) {
+        ptyInputQueues.delete(id);
+      }
+    });
+  return queue.inFlight;
+}
+
+function closePtyInputQueue(id) {
+  const queue = ptyInputQueues.get(id);
+  if (!queue) return invoke("pty_close", { id });
+  queue.closed = true;
+  return queuePtyInputFlush(id, true).finally(() => invoke("pty_close", { id }));
+}
 const tabs = new Map(); // tabIdx -> { root: PaneNode, el: DOM }
 let activeTabIdx = null;
 let activeTermId = null;
@@ -1105,11 +1169,20 @@ async function setupListeners() {
   // runs long — many sessions × IPC, or a heavy output burst like a large paste
   // — the next tick starts before the previous finishes and overlapping loops
   // pile up, multiplying IPC/render work and tanking throughput (paste crawls,
-  // input lags). Here each tick reads every terminal in PARALLEL and only
-  // re-arms once done, so there's never more than one pass in flight.
+  // input lags). Read visible panes at display cadence and hidden panes less
+  // often; each tick still reads its due terminals in parallel and never
+  // overlaps another pass.
   const pumpTerminals = async () => {
     try {
-      await Promise.all([...terminals].map(async ([id, t]) => {
+      const visiblePanes = new Set(getCurrentTabPanes());
+      const now = performance.now();
+      const dueTerminals = [...terminals].filter(([id, t]) => {
+        const interval = visiblePanes.has(id) ? 16 : 120;
+        if (now - (t.lastPtyReadAt || 0) < interval) return false;
+        t.lastPtyReadAt = now;
+        return true;
+      });
+      await Promise.all(dueTerminals.map(async ([id, t]) => {
         try {
           const [chunks, exited] = await invoke("pty_read", { id });
           if (chunks.length) {
@@ -3466,9 +3539,9 @@ async function createPane(parentEl, shell, args, cwd, sessionKey = null) {
     // tab goes to every pane of that tab — tmux synchronize-panes.
     const tab = findTabForPane(id);
     if (tab && tab.broadcast && tab.panes.length > 1) {
-      for (const pid of tab.panes) invoke("pty_write", { id: pid, data });
+      for (const pid of tab.panes) queuePtyInput(pid, data);
     } else {
-      invoke("pty_write", { id, data });
+      queuePtyInput(id, data);
     }
   });
 
@@ -6410,7 +6483,7 @@ function closePane(ptyId) {
   const splitContainer = paneEl.parentElement;
 
   detachPaneSftp(ptyId);
-  invoke("pty_close", { id: ptyId });
+  closePtyInputQueue(ptyId);
   tInfo.term.dispose();
   paneEl.remove();
   terminals.delete(ptyId);
@@ -9314,7 +9387,7 @@ function closeTab(tabIdx) {
     const tInfo = terminals.get(ptyId);
     if (tInfo) {
       detachPaneSftp(ptyId);
-      invoke("pty_close", { id: ptyId });
+      closePtyInputQueue(ptyId);
       tInfo.term.dispose();
       terminals.delete(ptyId);
     }

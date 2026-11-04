@@ -5,11 +5,14 @@ use crate::terminal::{self, TerminalManager};
 use serde_json::{json, Value};
 #[cfg(unix)]
 use std::io::{BufRead, BufReader, Write};
-use std::sync::{Arc, OnceLock};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 
 const SERVER_ARG: &str = "--mymux-pty-server";
 const PIPE_NAME: &str = r"\\.\pipe\mymux-pty-server-v1";
+static SERVER_READY: AtomicBool = AtomicBool::new(false);
+static SERVER_START_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
 
 pub fn is_server_invocation() -> bool {
     std::env::args().any(|arg| arg == SERVER_ARG)
@@ -25,16 +28,49 @@ pub fn run_server() {
 /// Launch or reuse the same-executable helper. The socket/pipe is per-user,
 /// and Unix permissions are restricted to the current account.
 pub fn request(op: &str, payload: Value) -> Result<Value, String> {
-    if !server_responds() {
-        launch_server()?;
+    let request = json!({ "op": op, "payload": payload });
+    for attempt in 0..2 {
+        ensure_server()?;
+        match exchange(&request) {
+            Ok(reply) => {
+                return reply
+                    .get("error")
+                    .and_then(Value::as_str)
+                    .map(|e| Err(e.to_string()))
+                    .unwrap_or(Ok(reply));
+            }
+            Err(_) if attempt == 0 => {
+                // The helper may have exited after the cached readiness check.
+                // Recheck/relaunch once, then retry this request.
+                SERVER_READY.store(false, Ordering::Release);
+                std::thread::sleep(Duration::from_millis(20));
+            }
+            Err(error) => return Err(format!("PTY server request failed: {error}")),
+        }
     }
+    unreachable!("request loop returns on success or final error")
+}
+
+fn ensure_server() -> Result<(), String> {
+    if SERVER_READY.load(Ordering::Acquire) {
+        return Ok(());
+    }
+    let _guard = SERVER_START_LOCK
+        .get_or_init(|| Mutex::new(()))
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    if SERVER_READY.load(Ordering::Acquire) {
+        return Ok(());
+    }
+    if server_responds() {
+        SERVER_READY.store(true, Ordering::Release);
+        return Ok(());
+    }
+    launch_server()?;
     for _ in 0..100 {
-        if let Ok(reply) = exchange(&json!({ "op": op, "payload": payload })) {
-            return reply
-                .get("error")
-                .and_then(Value::as_str)
-                .map(|e| Err(e.to_string()))
-                .unwrap_or(Ok(reply));
+        if server_responds() {
+            SERVER_READY.store(true, Ordering::Release);
+            return Ok(());
         }
         std::thread::sleep(Duration::from_millis(40));
     }

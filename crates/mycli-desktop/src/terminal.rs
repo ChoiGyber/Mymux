@@ -705,7 +705,10 @@ pub(crate) fn spawn_local(
 }
 
 /// Read buffered output from the PTY. Returns all pending data.
-#[tauri::command]
+// PTY I/O crosses a process boundary. Keep each polling/write request off the
+// WebView thread so a slow named-pipe response cannot freeze keyboard input or
+// interrupt an active IME composition.
+#[tauri::command(async)]
 pub fn pty_read(
     _state: tauri::State<'_, Arc<TerminalManager>>,
     id: u32,
@@ -727,7 +730,7 @@ pub(crate) fn read_local(manager: &TerminalManager, id: u32) -> Result<(Vec<Stri
     Ok((data, exited))
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn pty_write(
     _state: tauri::State<'_, Arc<TerminalManager>>,
     id: u32,
