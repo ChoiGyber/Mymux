@@ -103,6 +103,7 @@ let focusedPaneId = null;
 let draggingPaneId = null;
 let tabCounter = 0;
 let browserTabActive = false;
+let browserTogglePending = false;
 let cdpWs = null;
 let cdpMsgId = 0;
 let lastFrameMeta = null;
@@ -935,6 +936,8 @@ async function setupListeners() {
     });
   }
   btnAdd.addEventListener("click", () => openModal());
+  document.getElementById("btn-create-team")?.addEventListener("click", createHarnessTeam);
+  renderHarnessTeams();
   const cmdSearch = document.getElementById("cmd-search");
   if (cmdSearch) cmdSearch.addEventListener("input", () => renderCmdList(savedCmds));
   wireSearchClear(cmdSearch);
@@ -5145,7 +5148,19 @@ function updateGlobalUsageUi() {
     tool.textContent = "CL";
     el.appendChild(tool);
     if (clResetAt && now - clResetAt < RESET_N_MS) el.appendChild(resetNBadge());
-    if (cl.fiveH != null) el.appendChild(usageSeg("5h", cl.fiveH, stale));
+    if (cl.fiveH != null) {
+      const fiveHour = usageSeg("5h", cl.fiveH, stale);
+      if (cl.fiveHResetAt) {
+        const remaining = fmtIsoRemain(cl.fiveHResetAt);
+        if (remaining) {
+          const timer = document.createElement("span");
+          timer.className = "usage-age";
+          timer.textContent = `(${remaining})`;
+          fiveHour.appendChild(timer);
+        }
+      }
+      el.appendChild(fiveHour);
+    }
     if (cl.wk != null) el.appendChild(usageSeg("wk", cl.wk, stale));
     if (cl.mo != null) el.appendChild(usageSeg("mo", cl.mo, stale));
     tips.push("Claude 전체 사용량"
@@ -5399,6 +5414,7 @@ async function loadClaudeUsageApi() {
     if (!u || (u.fiveH == null && u.wk == null)) return;
     claudeLimitsApi = {
       fiveH: u.fiveH,
+      fiveHResetAt: u.fiveHResetsAt,
       fiveHReset: fmtIsoRemain(u.fiveHResetsAt),
       wk: u.wk,
       wkReset: fmtIsoRemain(u.wkResetsAt),
@@ -5458,6 +5474,7 @@ function initCtxUsage() {
   setInterval(loadCodexResetCredits, 60_000);
   loadClaudeUsageApi();
   setInterval(loadClaudeUsageApi, 60_000);
+  setInterval(() => { if (claudeLimitsApi?.fiveHResetAt) updateGlobalUsageUi(); }, 1000);
   // Staleness sweep: dim badges whose statusline stopped redrawing (Claude
   // Code exited or the pane went back to a plain shell).
   setInterval(() => {
@@ -7517,14 +7534,18 @@ function applyBrowserEnabled() {
   }
 }
 function toggleBrowserEnabled() {
+  if (browserTogglePending) return;
+  browserTogglePending = true;
   if (!browserEnabled() || !browserTabActive) {
     try { localStorage.setItem("mymux.browserEnabled", "true"); } catch {}
+    // Flip the HTML view now; initialize/show WebView after this click returns.
     applyBrowserEnabled();
-    requestBrowserView();
+    setTimeout(() => { requestBrowserView(); browserTogglePending = false; }, 0);
     return;
   }
   try { localStorage.setItem("mymux.browserEnabled", "false"); } catch {}
   applyBrowserEnabled();
+  browserTogglePending = false;
 }
 
 const BROWSER_LABELS = {
@@ -11624,6 +11645,112 @@ function setPaneAiMode(t, active) {
   // session out of the several a project folder can hold (see agents.rs).
   if (active) t.aiSince = Date.now();
   renderPaneCommandShortcuts(t.id);
+}
+
+const HARNESS_TEAMS_KEY = "mymux.harnessTeams.v1";
+function readHarnessTeams() {
+  try {
+    const value = JSON.parse(localStorage.getItem(HARNESS_TEAMS_KEY) || "[]");
+    return Array.isArray(value) ? value.filter((team) => team && typeof team.name === "string" && Array.isArray(team.commandIds)) : [];
+  } catch { return []; }
+}
+function renderHarnessTeams() {
+  const host = document.getElementById("harness-teams");
+  if (!host) return;
+  host.replaceChildren();
+  for (const team of readHarnessTeams()) {
+    const row = document.createElement("div");
+    row.className = "harness-team-row";
+    const run = document.createElement("button");
+    run.type = "button";
+    run.className = "harness-team-run";
+    run.textContent = team.name;
+    run.title = `Launch named team: ${team.name}`;
+    run.addEventListener("click", () => launchHarnessTeam(team));
+    const remove = document.createElement("button");
+    remove.type = "button";
+    remove.className = "harness-team-delete";
+    remove.textContent = "×";
+    remove.title = `Delete team ${team.name}`;
+    remove.addEventListener("click", () => {
+      localStorage.setItem(HARNESS_TEAMS_KEY, JSON.stringify(readHarnessTeams().filter((item) => item.id !== team.id)));
+      renderHarnessTeams();
+    });
+    row.append(run, remove);
+    host.appendChild(row);
+  }
+}
+function createHarnessTeam() {
+  if (!savedCmds.length) { toast("Save Claude and collaborator CLI commands first.", true); return; }
+  const name = window.prompt("Name this team (for example, Mymux team):")?.trim();
+  if (!name) return;
+  const options = savedCmds.map((cmd) => `${cmd.name} [${cmd.command}]`).join("\n");
+  const chosen = window.prompt(`Enter the saved command names in launch order, separated by commas. Start with Claude Code.\n\n${options}`, "Claude Code, Codex");
+  if (chosen == null) return;
+  const names = chosen.split(",").map((part) => part.trim().toLocaleLowerCase()).filter(Boolean);
+  const commands = names.map((value) => savedCmds.find((cmd) => cmd.name.trim().toLocaleLowerCase() === value || (cmd.alias || "").trim().toLocaleLowerCase() === value)).filter(Boolean);
+  if (commands.length < 2 || commands.length !== names.length) {
+    toast("Choose at least two saved commands by name or alias.", true); return;
+  }
+  if (!/\bclaude(?:\.exe)?\b/i.test(commands[0].command)) {
+    toast("The first team command must launch Claude Code as team lead.", true); return;
+  }
+  if (!commands.slice(1).some((cmd) => /\bcodex(?:\.exe)?\b/i.test(cmd.command))) {
+    toast("Add at least one saved Codex CLI command as a team worker.", true); return;
+  }
+  const teams = readHarnessTeams();
+  if (teams.some((team) => team.name.toLocaleLowerCase() === name.toLocaleLowerCase())) {
+    toast("A team with that name already exists.", true); return;
+  }
+  teams.push({ id: crypto.randomUUID(), name, commandIds: commands.map((cmd) => cmd.id) });
+  localStorage.setItem(HARNESS_TEAMS_KEY, JSON.stringify(teams));
+  renderHarnessTeams();
+  toast(`Saved team: ${name}`);
+}
+function quoteHarnessArg(value, shellKind) {
+  const text = String(value);
+  if (shellKind === "powershell") return "'" + text.replace(/'/g, "''") + "'";
+  if (shellKind === "cmd") return '"' + text.replace(/"/g, '\\"') + '"';
+  return "'" + text.replace(/'/g, "'\\''") + "'";
+}
+function teamLeadCommand(base, configPath, shellKind) {
+  const allowed = "mcp__mymux_team__list_workers,mcp__mymux_team__delegate_task,mcp__mymux_team__collect_results";
+  const kickoff = "You are the lead of this named Mymux coding team. Use the configured Mymux team MCP tools to delegate independent coding work to workers, then collect and review every result before reporting. Keep every message to workers and every task/result exchange in English. Give workers bounded, non-overlapping scopes. Preserve unrelated work; do not commit, push, or deploy unless the user explicitly asks.";
+  return `${base} --mcp-config ${quoteHarnessArg(configPath, shellKind)} --allowedTools ${quoteHarnessArg(allowed, shellKind)} ${quoteHarnessArg(kickoff, shellKind)}`;
+}
+async function launchHarnessTeam(team) {
+  const commands = team.commandIds.map((id) => savedCmds.find((cmd) => cmd.id === id)).filter(Boolean);
+  if (commands.length !== team.commandIds.length) { toast("A saved team command is missing. Edit the team after restoring its saved commands.", true); return; }
+  if (commands.length < 2 || !/\bclaude(?:\.exe)?\b/i.test(commands[0].command)) { toast("Team lead command must be Claude Code and include at least one worker.", true); return; }
+  const workers = commands.slice(1).filter((cmd) => /\bcodex(?:\.exe)?\b/i.test(cmd.command)).map((cmd) => {
+    const match = cmd.command.match(/(?:--model(?:=|\s+))(?:"([^"]+)"|'([^']+)'|([^\s]+))/i);
+    return { name: cmd.name, model: match ? (match[1] || match[2] || match[3]) : null };
+  });
+  if (!workers.length) { toast("Automatic dispatch currently needs at least one saved Codex CLI command in this team.", true); return; }
+  if (browserTabActive) setBrowserView(false);
+  if (viewerActive) setViewerView(false);
+
+  const teamCwd = commands[0].cwd || undefined;
+  let configPath;
+  try {
+    configPath = await invoke("prepare_harness_mcp", { teamId: team.id, cwd: teamCwd || await invoke("explorer_home_dir"), workers });
+  } catch (error) {
+    toast(`Could not prepare team coordinator: ${error}`, true);
+    return;
+  }
+  const leadId = await spawnTerminal(undefined, teamCwd);
+  if (leadId == null) return;
+  const tabIdx = activeTabIdx;
+  const tab = tabs.get(tabIdx);
+  if (tab) {
+    tab.label = team.name;
+    const tabButton = terminalTabs.querySelector(`.tab[data-id="${tabIdx}"] span:first-child`);
+    if (tabButton) tabButton.textContent = team.name;
+  }
+  const shellKind = paneShellKind(terminals.get(leadId));
+  const command = teamLeadCommand(commands[0].command, configPath, shellKind);
+  sendCommandWhenReady(leadId, command, { ...commands[0], favoriteTarget: "ai", favorite_target: "ai" });
+  toast(`Launched ${team.name}; Claude Code is ready to coordinate ${workers.length} Codex worker(s).`, false);
 }
 
 function renderCmdList(cmds) {

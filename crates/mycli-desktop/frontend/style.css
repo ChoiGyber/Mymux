@@ -3643,3 +3643,8 @@ html[data-theme="light"] .xterm-viewport::-webkit-scrollbar-thumb:hover { backgr
 #browser-start-error { white-space: pre-wrap; overflow-wrap: anywhere; color: var(--red); font-size: 12px; margin: 12px 0; }
 #browser-placeholder[data-state="loading"] .browser-start-form { opacity: .65; }
 #browser-tab:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+
+#harness-teams { display:flex; flex-direction:column; gap:4px; padding:6px 8px; border-bottom:1px solid var(--border); }
+.harness-team-row { display:flex; gap:4px; }
+.harness-team-run { flex:1; text-align:left; padding:6px 8px; color:var(--text); background:var(--surface); border:1px solid var(--border); border-radius:var(--radius); cursor:pointer; }
+.harness-team-delete { width:28px; color:var(--text-dim); background:transparent; border:0; cursor:pointer; }

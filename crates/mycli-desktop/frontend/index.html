@@ -217,7 +217,8 @@
           <span id="commands-drag-handle" title="Drag to move Commands panel">Saved Commands</span>
           <div id="commands-header-actions">
             <button id="btn-dock-commands" class="commands-dock-button hidden" type="button" title="Dock Commands panel">↙</button>
-            <button id="btn-add" title="Add command">+</button>
+            <button id="btn-create-team" type="button" title="Create a named multi-harness team">Team +</button>
+          <button id="btn-add" title="Add command">+</button>
           </div>
         </div>
         <div class="search-wrap">
@@ -228,6 +229,7 @@
           <label class="cmd-suggest-toggle" title="Off: typed commands are no longer recorded and history stops appearing in the autocomplete popup (stored history is kept)"><input type="checkbox" id="cmd-history-toggle" /> 🕘 Command history suggestions</label>
           <label class="cmd-suggest-toggle" title="Off: the saved commands below are left out of the autocomplete popup (the list here stays clickable)"><input type="checkbox" id="cmd-saved-toggle" /> 📌 Saved command suggestions</label>
         </div>
+        <div id="harness-teams" aria-label="Saved harness teams"></div>
         <ul id="command-list"></ul>
         <div id="empty-state" class="hidden">
           <p>No commands saved.</p>

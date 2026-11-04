@@ -18,6 +18,7 @@ const APP_COMMANDS: &[&str] = &[
     "set_favorite",
     "read_text_file",
     "write_text_file",
+    "prepare_harness_mcp",
     "save_text_file_as",
     "codex_rollout_tail",
     "codex_reset_credits",

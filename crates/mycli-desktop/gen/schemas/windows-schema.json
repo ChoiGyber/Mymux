@@ -657,6 +657,12 @@
           "markdownDescription": "Enables the pick_key_file command without any pre-configured scope."
         },
         {
+          "description": "Enables the prepare_harness_mcp command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-prepare-harness-mcp",
+          "markdownDescription": "Enables the prepare_harness_mcp command without any pre-configured scope."
+        },
+        {
           "description": "Enables the pty_ai_process command without any pre-configured scope.",
           "type": "string",
           "const": "allow-pty-ai-process",
@@ -1165,6 +1171,12 @@
           "type": "string",
           "const": "deny-pick-key-file",
           "markdownDescription": "Denies the pick_key_file command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the prepare_harness_mcp command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-prepare-harness-mcp",
+          "markdownDescription": "Denies the prepare_harness_mcp command without any pre-configured scope."
         },
         {
           "description": "Denies the pty_ai_process command without any pre-configured scope.",

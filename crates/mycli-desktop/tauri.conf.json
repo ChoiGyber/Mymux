@@ -1,7 +1,7 @@
 {
   "$schema": "https://raw.githubusercontent.com/nicedayzhu/tauri-schema/refs/heads/v2/tauri.schema.json",
   "productName": "Mymux",
-  "version": "0.3.6",
+  "version": "0.3.7",
   "mainBinaryName": "Mymux",
   "identifier": "com.mycli.desktop",
   "build": {
@@ -46,7 +46,8 @@
     "createUpdaterArtifacts": true,
     "publisher": "ChoiGyber",
     "resources": {
-      "resources/whisper_wrapper.py": "resources/whisper_wrapper.py"
+      "resources/whisper_wrapper.py": "resources/whisper_wrapper.py",
+      "resources/mymux-team-mcp.mjs": "resources/mymux-team-mcp.mjs"
     },
     "icon": [
       "icons/icon.icns",

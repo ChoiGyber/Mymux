@@ -1,9 +1,57 @@
 use mycli_core::{CommandStore, SavedCommand};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::io::{BufRead, BufReader, Write};
 use std::process::{Child, ChildStdin, Command, Stdio};
+use std::path::PathBuf;
+use tauri::Manager;
 
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HarnessWorkerConfig {
+    pub name: String,
+    pub model: Option<String>,
+}
+
+#[tauri::command]
+pub fn prepare_harness_mcp(
+    app: tauri::AppHandle,
+    team_id: String,
+    cwd: String,
+    workers: Vec<HarnessWorkerConfig>,
+) -> Result<String, String> {
+    if team_id.is_empty() || !team_id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-') {
+        return Err("Invalid team identifier".into());
+    }
+    let cwd_path = PathBuf::from(&cwd);
+    if !cwd_path.is_dir() { return Err("Team working directory does not exist".into()); }
+    let safe_workers: Vec<_> = workers.into_iter().map(|worker| {
+        if worker.name.trim().is_empty() || worker.name.len() > 80 {
+            return Err("Invalid worker name".to_string());
+        }
+        if let Some(model) = &worker.model {
+            if model.len() > 100 || !model.chars().all(|c| c.is_ascii_alphanumeric() || "._:-".contains(c)) {
+                return Err("Invalid Codex model identifier".to_string());
+            }
+        }
+        Ok(serde_json::json!({ "name": worker.name, "model": worker.model }))
+    }).collect::<Result<_, _>>()?;
+    let root = app.path().app_local_data_dir().map_err(|e| e.to_string())?
+        .join("teams").join(&team_id);
+    std::fs::create_dir_all(&root).map_err(|e| e.to_string())?;
+    let server = app.path().resolve("resources/mymux-team-mcp.mjs", tauri::path::BaseDirectory::Resource)
+        .map_err(|e| format!("Team MCP server resource is unavailable: {e}"))?;
+    let config = serde_json::json!({
+        "mcpServers": { "mymux_team": {
+            "command": "node",
+            "args": [server.to_string_lossy(), "--cwd", cwd_path.to_string_lossy(), "--state-dir", root.to_string_lossy(), "--workers-json", serde_json::to_string(&safe_workers).map_err(|e| e.to_string())?]
+        }}
+    });
+    let config_path = root.join("mcp.json");
+    std::fs::write(&config_path, serde_json::to_vec_pretty(&config).map_err(|e| e.to_string())?)
+        .map_err(|e| e.to_string())?;
+    Ok(config_path.to_string_lossy().into_owned())
+}
 #[derive(Serialize)]
 pub struct CommandDto {
     pub id: String,

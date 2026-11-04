@@ -8,6 +8,17 @@ For installers, see the [GitHub Releases](https://github.com/ChoiGyber/Mymux/rel
 
 ---
 
+## v0.3.7 — 2026-11-04
+
+### Added
+
+- **Named Claude-led harness teams.** Save a team name and its Claude Code/Codex commands, then launch the team by selecting that name. Claude can delegate bounded tasks to configured Codex workers through a team-scoped MCP server, run up to three tasks concurrently, and collect their results. Agent instructions and result handoffs are in English.
+
+### Improved
+
+- **Claude 5-hour reset countdown.** Show a live countdown beside the account-wide 5h usage percentage.
+- **Browser toolbar responsiveness.** Defer browser startup until after the click handler returns and prevent duplicate toggle requests.
+
 ## v0.3.6 — 2026-11-03
 
 ### Fixed / 수정

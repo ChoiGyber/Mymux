@@ -25,6 +25,7 @@
     "allow-set-favorite",
     "allow-read-text-file",
     "allow-write-text-file",
+    "allow-prepare-harness-mcp",
     "allow-codex-rollout-tail",
     "allow-codex-reset-credits",
     "allow-codex-consume-reset-credit",

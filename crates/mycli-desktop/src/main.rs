@@ -194,6 +194,7 @@ fn main() {
             commands::set_favorite,
             commands::read_text_file,
             commands::write_text_file,
+            commands::prepare_harness_mcp,
             commands::codex_rollout_tail,
             commands::codex_reset_credits,
             commands::codex_consume_reset_credit,
