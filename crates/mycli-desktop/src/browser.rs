@@ -12,6 +12,18 @@ use serde::Serialize;
 use tauri::webview::WebviewBuilder;
 use tauri::{LogicalPosition, LogicalSize, Manager, Rect, State, WebviewUrl};
 
+/// Run blocking filesystem, process, or loopback-CDP work on Tokio's blocking
+/// pool instead of the command dispatcher or async runtime worker.
+async fn run_browser_blocking<T, F>(operation: F) -> Result<T, String>
+where
+    T: Send + 'static,
+    F: FnOnce() -> Result<T, String> + Send + 'static,
+{
+    tokio::task::spawn_blocking(operation)
+        .await
+        .map_err(|error| format!("Browser operation worker failed: {error}"))?
+}
+
 /// A launched browser process plus the parameters needed to describe it.
 struct BrowserProc {
     child: Child,
@@ -102,7 +114,11 @@ fn known_browser_roots() -> Vec<(&'static str, PathBuf)> {
 /// List only profile metadata. Cookie databases and login data are not opened
 /// until the user explicitly confirms an import.
 #[tauri::command]
-pub fn browser_profiles() -> Result<Vec<BrowserProfile>, String> {
+pub async fn browser_profiles() -> Result<Vec<BrowserProfile>, String> {
+    run_browser_blocking(browser_profiles_blocking).await
+}
+
+fn browser_profiles_blocking() -> Result<Vec<BrowserProfile>, String> {
     #[cfg(windows)]
     {
         let mut profiles = Vec::new();
@@ -178,7 +194,7 @@ fn copy_profile_tree(source: &Path, destination: &Path) -> Result<(), String> {
 /// The source profile is never modified. The caller must provide explicit
 /// consent because cookies and login sessions are sensitive credentials.
 #[tauri::command]
-pub fn browser_import_profile(
+pub async fn browser_import_profile(
     browser: String,
     profile: String,
     port: Option<u16>,
@@ -189,43 +205,52 @@ pub fn browser_import_profile(
     }
     #[cfg(windows)]
     {
-        let browser = match browser.as_str() {
-            "Chrome" | "Edge" => browser,
-            _ => return Err("Unsupported browser profile.".into()),
-        };
-        if !(profile == "Default" || profile.starts_with("Profile ")) {
-            return Err("Unsupported browser profile name.".into());
-        }
-        if browser_process_running(&browser) {
-            return Err(format!("Close {browser} before importing its profile."));
-        }
-        let root = known_browser_roots()
-            .into_iter()
-            .find(|(label, _)| *label == browser)
-            .map(|(_, path)| path)
-            .ok_or("Browser profile root not found.")?;
-        let source_profile = root.join(&profile);
-        if !source_profile.is_dir() {
-            return Err("Selected browser profile no longer exists.".into());
-        }
-        let destination = user_data_dir(port.unwrap_or(9222));
-        std::fs::create_dir_all(&destination).map_err(|e| format!("create Mymux profile: {e}"))?;
-        // Local State contains the Chromium encryption key needed by the
-        // copied cookie database. It is DPAPI-bound to the current Windows
-        // user and is copied only after the explicit consent above.
-        let local_state = root.join("Local State");
-        if local_state.is_file() {
-            std::fs::copy(&local_state, destination.join("Local State"))
-                .map_err(|e| format!("copy Local State: {e}"))?;
-        }
-        copy_profile_tree(&source_profile, &destination.join("Default"))?;
-        return Ok(format!("Imported {browser} {profile} into Mymux browser profile."));
+        return run_browser_blocking(move || browser_import_profile_blocking(browser, profile, port)).await;
     }
     #[cfg(not(windows))]
     {
         let _ = (browser, profile, port);
         Err("Browser profile import is currently supported on Windows only.".into())
     }
+}
+
+#[cfg(windows)]
+fn browser_import_profile_blocking(
+    browser: String,
+    profile: String,
+    port: Option<u16>,
+) -> Result<String, String> {
+    let browser = match browser.as_str() {
+        "Chrome" | "Edge" => browser,
+        _ => return Err("Unsupported browser profile.".into()),
+    };
+    if !(profile == "Default" || profile.starts_with("Profile ")) {
+        return Err("Unsupported browser profile name.".into());
+    }
+    if browser_process_running(&browser) {
+        return Err(format!("Close {browser} before importing its profile."));
+    }
+    let root = known_browser_roots()
+        .into_iter()
+        .find(|(label, _)| *label == browser)
+        .map(|(_, path)| path)
+        .ok_or("Browser profile root not found.")?;
+    let source_profile = root.join(&profile);
+    if !source_profile.is_dir() {
+        return Err("Selected browser profile no longer exists.".into());
+    }
+    let destination = user_data_dir(port.unwrap_or(9222));
+    std::fs::create_dir_all(&destination).map_err(|e| format!("create Mymux profile: {e}"))?;
+    // Local State contains the Chromium encryption key needed by the copied
+    // cookie database. It is DPAPI-bound to the current Windows user and is
+    // copied only after the explicit consent above.
+    let local_state = root.join("Local State");
+    if local_state.is_file() {
+        std::fs::copy(&local_state, destination.join("Local State"))
+            .map_err(|e| format!("copy Local State: {e}"))?;
+    }
+    copy_profile_tree(&source_profile, &destination.join("Default"))?;
+    Ok(format!("Imported {browser} {profile} into Mymux browser profile."))
 }
 
 /// Locate an installed Chromium-based browser. Chrome is preferred over Edge.
@@ -317,8 +342,19 @@ fn which_unix(exe: &str) -> Option<String> {
 
 /// Launch (or report an already-running) CDP browser on `port`.
 #[tauri::command]
-pub fn browser_launch(
+pub async fn browser_launch(
     state: State<'_, Arc<BrowserManager>>,
+    port: Option<u16>,
+    url: Option<String>,
+    headless: Option<bool>,
+    browser: Option<String>,
+) -> Result<BrowserStatus, String> {
+    let manager = Arc::clone(state.inner());
+    run_browser_blocking(move || browser_launch_blocking(manager, port, url, headless, browser)).await
+}
+
+fn browser_launch_blocking(
+    manager: Arc<BrowserManager>,
     port: Option<u16>,
     url: Option<String>,
     headless: Option<bool>,
@@ -328,7 +364,7 @@ pub fn browser_launch(
     // Embedded mode (default): run headless so the only view is the in-tab
     // screencast. Headed mode also opens a real OS window alongside the embed.
     let headless = headless.unwrap_or(true);
-    let mut guard = state.proc.lock().map_err(|e| e.to_string())?;
+    let mut guard = manager.proc.lock().map_err(|e| e.to_string())?;
 
     // Already running? Report it instead of double-launching.
     if let Some(proc) = guard.as_mut() {
@@ -387,8 +423,13 @@ pub fn browser_launch(
 
 /// Current browser state, reaping the handle if the process has exited.
 #[tauri::command]
-pub fn browser_status(state: State<'_, Arc<BrowserManager>>) -> Result<BrowserStatus, String> {
-    let mut guard = state.proc.lock().map_err(|e| e.to_string())?;
+pub async fn browser_status(state: State<'_, Arc<BrowserManager>>) -> Result<BrowserStatus, String> {
+    let manager = Arc::clone(state.inner());
+    run_browser_blocking(move || browser_status_blocking(manager)).await
+}
+
+fn browser_status_blocking(manager: Arc<BrowserManager>) -> Result<BrowserStatus, String> {
+    let mut guard = manager.proc.lock().map_err(|e| e.to_string())?;
     if let Some(proc) = guard.as_mut() {
         if matches!(proc.child.try_wait(), Ok(None)) {
             return Ok(BrowserStatus::running(proc.port, proc.browser.clone()));
@@ -400,8 +441,13 @@ pub fn browser_status(state: State<'_, Arc<BrowserManager>>) -> Result<BrowserSt
 
 /// Kill the managed browser process, if any.
 #[tauri::command]
-pub fn browser_close(state: State<'_, Arc<BrowserManager>>) -> Result<(), String> {
-    let mut guard = state.proc.lock().map_err(|e| e.to_string())?;
+pub async fn browser_close(state: State<'_, Arc<BrowserManager>>) -> Result<(), String> {
+    let manager = Arc::clone(state.inner());
+    run_browser_blocking(move || browser_close_blocking(manager)).await
+}
+
+fn browser_close_blocking(manager: Arc<BrowserManager>) -> Result<(), String> {
+    let mut guard = manager.proc.lock().map_err(|e| e.to_string())?;
     if let Some(mut proc) = guard.take() {
         let _ = proc.child.kill();
         let _ = proc.child.wait();
@@ -435,7 +481,11 @@ fn parse_page_targets(body: &str) -> Result<Vec<PageTarget>, String> {
 }
 
 #[tauri::command]
-pub fn browser_page_targets(port: Option<u16>) -> Result<Vec<PageTarget>, String> {
+pub async fn browser_page_targets(port: Option<u16>) -> Result<Vec<PageTarget>, String> {
+    run_browser_blocking(move || browser_page_targets_blocking(port)).await
+}
+
+fn browser_page_targets_blocking(port: Option<u16>) -> Result<Vec<PageTarget>, String> {
     let body = cdp_http_get(port.unwrap_or(9222), "/json/list")?;
     parse_page_targets(&body)
 }
@@ -445,37 +495,41 @@ pub fn browser_page_targets(port: Option<u16>) -> Result<Vec<PageTarget>, String
 /// the CDP HTTP endpoint (the WebSocket itself is allowed via
 /// `--remote-allow-origins=*`).
 #[tauri::command]
-pub fn browser_page_target(port: Option<u16>) -> Result<PageTarget, String> {
-    browser_page_targets(port)?
+pub async fn browser_page_target(port: Option<u16>) -> Result<PageTarget, String> {
+    browser_page_targets(port).await?
         .into_iter()
         .next()
         .ok_or("No page target yet (the browser may still be starting)".to_string())
 }
 
 #[tauri::command]
-pub fn browser_new_tab(port: Option<u16>, url: Option<String>) -> Result<PageTarget, String> {
-    let port = port.unwrap_or(9222);
-    let requested = url.unwrap_or_else(|| "about:blank".to_string());
-    let body = cdp_http_request(port, "PUT", &format!("/json/new?url={}", percent_encode(&requested)))?;
-    let value: serde_json::Value = serde_json::from_str(&body)
-        .map_err(|e| format!("Failed to parse new-tab response: {e}"))?;
-    Ok(PageTarget {
-        ws_url: value.get("webSocketDebuggerUrl").and_then(|v| v.as_str()).ok_or("New tab websocket URL missing")?.to_string(),
-        target_id: value.get("id").and_then(|v| v.as_str()).unwrap_or_default().to_string(),
-        url: value.get("url").and_then(|v| v.as_str()).unwrap_or_default().to_string(),
-    })
+pub async fn browser_new_tab(port: Option<u16>, url: Option<String>) -> Result<PageTarget, String> {
+    run_browser_blocking(move || {
+        let port = port.unwrap_or(9222);
+        let requested = url.unwrap_or_else(|| "about:blank".to_string());
+        let body = cdp_http_request(port, "PUT", &format!("/json/new?url={}", percent_encode(&requested)))?;
+        let value: serde_json::Value = serde_json::from_str(&body)
+            .map_err(|e| format!("Failed to parse new-tab response: {e}"))?;
+        Ok(PageTarget {
+            ws_url: value.get("webSocketDebuggerUrl").and_then(|v| v.as_str()).ok_or("New tab websocket URL missing")?.to_string(),
+            target_id: value.get("id").and_then(|v| v.as_str()).unwrap_or_default().to_string(),
+            url: value.get("url").and_then(|v| v.as_str()).unwrap_or_default().to_string(),
+        })
+    }).await
 }
 
 #[tauri::command]
-pub fn browser_close_tab(port: Option<u16>, target_id: String) -> Result<(), String> {
+pub async fn browser_close_tab(port: Option<u16>, target_id: String) -> Result<(), String> {
     if target_id.is_empty() || target_id.contains('/') || target_id.contains('?') {
         return Err("Invalid browser target id".into());
     }
-    let body = cdp_http_request(port.unwrap_or(9222), "GET", &format!("/json/close/{target_id}"))?;
-    if !body.trim().is_empty() && body.trim() != "Target is closing" {
-        return Err(body);
-    }
-    Ok(())
+    run_browser_blocking(move || {
+        let body = cdp_http_request(port.unwrap_or(9222), "GET", &format!("/json/close/{target_id}"))?;
+        if !body.trim().is_empty() && body.trim() != "Target is closing" {
+            return Err(body);
+        }
+        Ok(())
+    }).await
 }
 
 fn percent_encode(value: &str) -> String {

@@ -4,10 +4,81 @@ use std::io::{Read, Write};
 use std::sync::{Arc, Mutex};
 use std::thread;
 
+/// Upper bound on retained output per session (decoded UTF-8 bytes). Whole
+/// chunks are evicted from the front, so retention may undershoot by one chunk.
+pub(crate) const OUTPUT_HISTORY_MAX_BYTES: usize = 1024 * 1024;
+
+/// Bounded, non-destructive PTY output history addressed by a monotonically
+/// increasing byte offset into the decoded UTF-8 stream. Offset 0 is the first
+/// byte the session ever produced; `base` is the offset of the oldest retained
+/// byte and `end` is the offset the next byte will get.
+#[derive(Default)]
+pub(crate) struct OutputHistory {
+    chunks: std::collections::VecDeque<(u64, String)>,
+    base: u64,
+    end: u64,
+    retained: usize,
+}
+
+pub(crate) struct ReadResult {
+    pub chunks: Vec<String>,
+    /// Offset to pass to the next read (the stream end at read time).
+    pub next: u64,
+    pub exited: bool,
+    /// The requested offset was older than the retained history (or past the
+    /// stream end, which means the caller's cursor belongs to another stream).
+    pub truncated: bool,
+}
+
+impl OutputHistory {
+    pub(crate) fn push(&mut self, data: String) {
+        if data.is_empty() {
+            return;
+        }
+        let len = data.len();
+        let start = self.end;
+        self.end = self.end.saturating_add(len as u64);
+        self.retained = self.retained.saturating_add(len);
+        self.chunks.push_back((start, data));
+        // Always keep the newest chunk, even if it alone exceeds the cap.
+        while self.retained > OUTPUT_HISTORY_MAX_BYTES && self.chunks.len() > 1 {
+            if let Some((_, old)) = self.chunks.pop_front() {
+                self.retained -= old.len();
+            }
+        }
+        self.base = self.chunks.front().map(|(s, _)| *s).unwrap_or(self.end);
+    }
+
+    pub(crate) fn read_after(&self, offset: u64) -> (Vec<String>, u64, bool) {
+        let truncated = offset < self.base || offset > self.end;
+        let from = if truncated { self.base } else { offset };
+        let mut out = Vec::new();
+        for (start, text) in &self.chunks {
+            let chunk_end = start.saturating_add(text.len() as u64);
+            if chunk_end <= from {
+                continue;
+            }
+            if *start >= from {
+                out.push(text.clone());
+            } else {
+                // Cursor lands inside this chunk: slice at a char boundary.
+                let mut rel = ((from - *start) as usize).min(text.len());
+                while rel < text.len() && !text.is_char_boundary(rel) {
+                    rel += 1;
+                }
+                if rel < text.len() {
+                    out.push(text[rel..].to_string());
+                }
+            }
+        }
+        (out, self.end, truncated)
+    }
+}
+
 pub struct PtySession {
     writer: Box<dyn Write + Send>,
     master: Box<dyn MasterPty + Send>,
-    output_buf: Arc<Mutex<Vec<String>>>,
+    output_buf: Arc<Mutex<OutputHistory>>,
     exited: Arc<Mutex<bool>>,
     /// The pane's shell — the root `pty_ai_process` walks down from.
     shell_pid: Option<u32>,
@@ -648,7 +719,7 @@ pub(crate) fn spawn_local(
         id
     };
 
-    let output_buf: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
+    let output_buf: Arc<Mutex<OutputHistory>> = Arc::new(Mutex::new(OutputHistory::default()));
     let exited: Arc<Mutex<bool>> = Arc::new(Mutex::new(false));
 
     let buf_clone = Arc::clone(&output_buf);
@@ -704,27 +775,44 @@ pub(crate) fn spawn_local(
     Ok(id)
 }
 
-/// Read buffered output from the PTY. Returns all pending data.
+/// Read retained output after a byte offset. Non-destructive: every reader
+/// keeps its own cursor and passes back the returned `next`.
+#[derive(serde::Serialize)]
+pub struct PtyReadReply {
+    pub chunks: Vec<String>,
+    pub next: u64,
+    pub exited: bool,
+    pub truncated: bool,
+}
+
 #[tauri::command]
 pub fn pty_read(
     _state: tauri::State<'_, Arc<TerminalManager>>,
     id: u32,
-) -> Result<(Vec<String>, bool), String> {
-    let response = crate::pty_server::request("read", serde_json::json!({ "id": id }))?;
-    let data = serde_json::from_value(response.get("data").cloned().unwrap_or_default()).map_err(|e| e.to_string())?;
-    let exited = response.get("exited").and_then(serde_json::Value::as_bool).unwrap_or(false);
-    Ok((data, exited))
+    offset: Option<u64>,
+) -> Result<PtyReadReply, String> {
+    let response = crate::pty_server::request(
+        "read",
+        serde_json::json!({ "id": id, "offset": offset.unwrap_or(0) }),
+    )?;
+    let chunks = serde_json::from_value(response.get("data").cloned().unwrap_or_default())
+        .map_err(|e| e.to_string())?;
+    Ok(PtyReadReply {
+        chunks,
+        next: response.get("next").and_then(serde_json::Value::as_u64).unwrap_or(0),
+        exited: response.get("exited").and_then(serde_json::Value::as_bool).unwrap_or(false),
+        truncated: response.get("truncated").and_then(serde_json::Value::as_bool).unwrap_or(false),
+    })
 }
 
-pub(crate) fn read_local(manager: &TerminalManager, id: u32) -> Result<(Vec<String>, bool), String> {
+pub(crate) fn read_local(manager: &TerminalManager, id: u32, offset: u64) -> Result<ReadResult, String> {
     let sessions = manager.sessions.lock().unwrap();
     let session = sessions.get(&id).ok_or("Session not found")?;
 
-    let mut buf = session.output_buf.lock().unwrap();
-    let data: Vec<String> = buf.drain(..).collect();
+    let (chunks, next, truncated) = session.output_buf.lock().unwrap().read_after(offset);
     let exited = *session.exited.lock().unwrap();
 
-    Ok((data, exited))
+    Ok(ReadResult { chunks, next, exited, truncated })
 }
 
 #[tauri::command]

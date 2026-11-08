@@ -80,7 +80,7 @@ let modalOverlay, modalTitle, form, inputName, inputCommand, inputDesc, btnCance
 let terminalTabs, terminalContainer, terminalWelcome;
 let sshInput, sshPort, sshPassword, sshKeyfile, btnSshConnect;
 let toastEl, acPopup, acList;
-let sessionPanel, sessionListEl, btnToggleSessions, btnDetachSessions, btnSplitH, btnSplitV, btnEqualWidth, btnEqualHeight;
+let sessionPanel, sessionListEl, btnToggleSessions, btnShowSessions, btnDetachSessions, btnSplitH, btnSplitV, btnEqualWidth, btnEqualHeight;
 let sessionsWindowOpen = false;
 let sessionsWindowOpening = false;
 let sessionsWindowSnapshotTimer = null;
@@ -263,6 +263,7 @@ window.addEventListener("DOMContentLoaded", async () => {
   sessionPanel = document.getElementById("session-panel");
   sessionListEl = document.getElementById("session-list");
   btnToggleSessions = document.getElementById("btn-toggle-sessions");
+  btnShowSessions = document.getElementById("btn-show-sessions");
   btnDetachSessions = document.getElementById("btn-detach-sessions");
   btnSplitH = document.getElementById("btn-split-h");
   btnSplitV = document.getElementById("btn-split-v");
@@ -754,7 +755,8 @@ async function setupListeners() {
   bindCommandsPanelDrag();
 
   btnToggleSidebar.addEventListener("click", () => { sidebar.classList.toggle("collapsed"); persistPanelState(); updatePanelToggleIcons(); });
-  btnToggleSessions.addEventListener("click", () => { sessionPanel.classList.toggle("collapsed"); persistPanelState(); updatePanelToggleIcons(); });
+  btnToggleSessions.addEventListener("click", toggleSessionPanel);
+  btnShowSessions?.addEventListener("click", toggleSessionPanel);
   btnDetachSessions?.addEventListener("click", () => openSessionsWindow());
 
   // 🔔 Task-done flash settings modal (where the completion pulse shows).
@@ -771,8 +773,7 @@ async function setupListeners() {
   if (btnNotifySettings && notifyModal) {
     const closeNotifyModal = () => {
       notifyModal.classList.add("hidden");
-      // Restore the native browser overlay only if we're still on the browser view.
-      if (browserTabActive && browserMode === "native") openNativePane();
+      // Browser pages use an external OS window; there is no overlay to restore.
     };
     btnNotifySettings.addEventListener("click", () => {
       notifyChkPane.checked = notifyFlashPrefs.pane;
@@ -783,8 +784,7 @@ async function setupListeners() {
       if (notifyChkCtxBadge) notifyChkCtxBadge.checked = notifyFlashPrefs.ctxBadge;
       if (notifyChkCtxVoice) notifyChkCtxVoice.checked = notifyFlashPrefs.ctxVoice;
       refreshStatuslineRow();
-      // The native browser overlay floats above all HTML; hide it so the modal shows.
-      if (browserTabActive && browserMode === "native") invoke("browser_pane_hide").catch(() => {});
+      // External browser pages cannot cover Mymux dialogs.
       notifyModal.classList.remove("hidden");
     });
     const btnStatusline = document.getElementById("btn-statusline");
@@ -847,9 +847,9 @@ async function setupListeners() {
   document.querySelectorAll(".accent-swatch").forEach((sw) => {
     sw.addEventListener("click", () => setAccent(sw.dataset.accent));
   });
-  btnNewTerminal.addEventListener("click", () => spawnTerminalForCommand());
+  btnNewTerminal.addEventListener("click", spawnNewTerminalTab);
   const btnTabNew = document.getElementById("btn-tab-new");
-  if (btnTabNew) btnTabNew.addEventListener("click", () => spawnTerminalForCommand());
+  if (btnTabNew) btnTabNew.addEventListener("click", spawnNewTerminalTab);
   setupExplorerFileDrop();
   setupAgentActivity();
 
@@ -996,16 +996,18 @@ async function setupListeners() {
   if (newFolderConfirm) newFolderConfirm.addEventListener("click", confirmNewFolder);
 
   // Mouse "back"(3) / "forward"(4) special buttons — navigate directory
-  // history just like Chrome's back/forward. When the native browser panel is
-  // the active surface, defer to its own page history instead.
+  // history just like Chrome's back/forward. In CDP preview, forward history
+  // commands to the managed page; external browsing uses its own window.
   window.addEventListener("mousedown", (e) => {
     if (e.button === 3 || e.button === 4) e.preventDefault();
   });
   window.addEventListener("mouseup", (e) => {
     if (e.button !== 3 && e.button !== 4) return;
     e.preventDefault();
-    if (browserTabActive) {
-      invoke(e.button === 3 ? "browser_pane_back" : "browser_pane_forward").catch(() => {});
+    if (browserTabActive && browserMode === "ai") {
+      cdpSend("Runtime.evaluate", { expression: e.button === 3 ? "history.back()" : "history.forward()" });
+    } else if (browserTabActive) {
+      return;
     } else if (e.button === 3) {
       explorerBack();
     } else {
@@ -1055,7 +1057,7 @@ async function setupListeners() {
     // Ctrl+Shift+N — new tab
     if (e.ctrlKey && e.shiftKey && e.key === "N") {
       e.preventDefault();
-      spawnTerminal();
+      spawnNewTerminalTab();
     }
     // Ctrl+Shift+F — search the focused pane's scrollback. Also match e.code:
     // with the Korean IME active e.key never arrives as the Latin letter.
@@ -1111,7 +1113,14 @@ async function setupListeners() {
     try {
       await Promise.all([...terminals].map(async ([id, t]) => {
         try {
-          const [chunks, exited] = await invoke("pty_read", { id });
+          // Non-destructive read: one byte-offset cursor per pane. A fresh pane
+          // (including a reconnect with the same session key) starts at 0 and
+          // replays the retained history.
+          const { chunks, next, exited, truncated } = await invoke("pty_read", { id, offset: t.readOffset || 0 });
+          if (typeof next === "number" && next >= 0) t.readOffset = next;
+          if (truncated) {
+            t.term.write("\r\n\x1b[2m[Mymux: older output was trimmed]\x1b[0m\r\n");
+          }
           if (chunks.length) {
             const data = chunks.join("");
             // ConPTY opens every Windows pane with focus reporting switched on
@@ -2161,8 +2170,8 @@ function onViewerLinkClick(e) {
   if (!href) return;
   if (href.startsWith("#")) return; // in-page anchor — let it scroll
   e.preventDefault();
-  if (/^https?:\/\//i.test(href)) { openInNativeBrowser(href); return; }
-  if (/^\/\//.test(href)) { openInNativeBrowser("https:" + href); return; }
+  if (/^https?:\/\//i.test(href)) { openInExternalBrowser(href); return; }
+  if (/^\/\//.test(href)) { openInExternalBrowser("https:" + href); return; }
   if (/^mailto:/i.test(href)) { invoke("open_external", { path: href }).catch(() => {}); return; }
   // Windows-absolute path (C:\..) — a local path, NOT a URI scheme. Route to the
   // local opener (which never executes non-viewable files) instead of letting it
@@ -2184,8 +2193,8 @@ function onViewerLinkClick(e) {
   openLocalLink(resolveLocalPath(viewerDir, target));
 }
 
-// Open a web URL in the embedded Native browser panel (not the OS browser).
-function openInNativeBrowser(url) {
+// Open a web URL in the system browser, outside Mymux's UI process.
+function openInExternalBrowser(url) {
   if (!browserEnabled()) {
     try { localStorage.setItem("mymux.browserEnabled", "true"); } catch {}
     applyBrowserEnabled();
@@ -2362,12 +2371,28 @@ function restorePanelState() {
   updatePanelToggleIcons();
 }
 
+async function toggleSessionPanel() {
+  if (sessionsWindowOpen) {
+    await closeSessionsWindow();
+    return;
+  }
+  sessionPanel.classList.toggle("collapsed");
+  persistPanelState();
+  updatePanelToggleIcons();
+}
+
 // Keep the (split-square) SVG icon; just refresh the tooltip for the state.
 function updatePanelToggleIcons() {
   const sb = document.getElementById("btn-toggle-sidebar");
   const sp = document.getElementById("btn-toggle-sessions");
+  const sessionsTop = document.getElementById("btn-show-sessions");
   if (sb) sb.title = sidebar.classList.contains("collapsed") ? "Expand sidebar" : "Collapse sidebar";
   if (sp) sp.title = sessionPanel.classList.contains("collapsed") ? "Expand session panel" : "Collapse session panel";
+  if (sessionsTop) {
+    const visible = !sessionPanel.classList.contains("collapsed") && !sessionPanel.classList.contains("sessions-detached");
+    sessionsTop.title = visible ? "Hide the Sessions panel" : "Show the Sessions panel";
+    sessionsTop.setAttribute("aria-pressed", String(visible));
+  }
 }
 
 // ── Local path helpers (Windows-first; tolerate / and \) ──
@@ -5653,14 +5678,14 @@ function handleTerminalLink(event, uri) {
 }
 
 // Every terminal link opens in Mymux's own browser — one path for all of them.
-// `openInNativeBrowser` turns the browser on if the user had hidden it, switches
+// `openInExternalBrowser` turns the browser on if the user had hidden it, switches
 // to the native view, and navigates, so a link never leaves the app for an OS
 // browser. `isLogin` only changes the toast wording; the routing is the same,
 // and the login URL still never reaches the imported-profile launcher that could
 // start Chrome.
 function openLinkFromTerminal(uri, isLogin = false) {
   if (!/^https?:\/\//i.test(uri)) return;
-  openInNativeBrowser(uri);
+  openInExternalBrowser(uri);
   toast(isLogin ? "로그인 링크를 Mymux 브라우저에서 엽니다." : "Mymux 브라우저에서 링크를 엽니다.");
 }
 
@@ -5843,7 +5868,7 @@ function copyCommandBlock(id) {
 // ── Command palette (Ctrl+Shift+P) ───────────────────────────────────────
 function commandPaletteActions() {
   return [
-    { name: "New terminal / 새 터미널", hint: "Ctrl+Shift+N", run: () => spawnTerminal() },
+    { name: "New terminal / 새 터미널", hint: "Ctrl+Shift+N", run: () => spawnNewTerminalTab() },
     { name: "Split pane horizontally / 가로 분할", hint: "Ctrl+Shift+D", run: () => splitPane("horizontal") },
     { name: "Split pane vertically / 세로 분할", hint: "Ctrl+Shift+E", run: () => splitPane("vertical") },
     { name: "Close pane / 패인 닫기", hint: "Ctrl+Shift+W", run: () => focusedPaneId && closePane(focusedPaneId) },
@@ -6043,12 +6068,9 @@ async function spawnTerminal(shell, cwd, sessionKey = null) {
   }
 }
 
-// Start with a fresh shell and expose saved commands so the user can choose
-// which preconfigured AI CLI (or other command) to run in that shell.
-async function spawnTerminalForCommand() {
+async function spawnNewTerminalTab() {
   if (browserTabActive) setBrowserView(false);
   if (viewerActive) setViewerView(false);
-  setCommandsVisible(true);
   await spawnTerminal();
 }
 
@@ -6994,8 +7016,7 @@ let sshModalSftpOnlyPaneId = null;
 function openSshModal(prefill = null) {
   const m = document.getElementById("ssh-modal");
   if (!m) return;
-  // The native browser overlay floats above all HTML; hide it so the modal shows.
-  if (browserTabActive && browserMode === "native") invoke("browser_pane_hide").catch(() => {});
+  // External browser pages cannot cover Mymux dialogs.
   sshModalSftpOnlyPaneId = prefill?.forPaneId ?? null;
   if (prefill) {
     const addr = document.getElementById("ssh-modal-input");
@@ -7019,7 +7040,7 @@ function closeSshModal() {
   const pw = document.getElementById("ssh-modal-password");
   if (pw) pw.value = "";
   // Restore the native browser overlay only if we're still on the browser view.
-  if (browserTabActive && browserMode === "native") openNativePane();
+    if (browserTabActive && browserMode === "native") showBrowserStart("external");
   sshModalSftpOnlyPaneId = null;
 }
 
@@ -7527,10 +7548,8 @@ function applyBrowserEnabled() {
   const btn = document.getElementById("btn-toggle-browser");
   if (btn) { btn.classList.toggle("active", on); btn.title = on && browserTabActive ? "Turn off browser" : "Open browser"; }
   if (!on) {
-    // Turning the browser off is also the escape hatch for a stuck native
-    // overlay: leave the view if open, and force-hide the child WebView either way.
+    // Leave the browser panel if open. External pages live in a separate OS window.
     if (browserTabActive) setBrowserView(false);
-    else invoke("browser_pane_hide").catch(() => {});
   }
 }
 function toggleBrowserEnabled() {
@@ -7606,23 +7625,15 @@ function finishBrowserImportPrompt(importNow) {
   else toast(browserImportPromptText("platform"), true);
 }
 function requestBrowserView() {
-  let alreadyPrompted = false;
-  try { alreadyPrompted = localStorage.getItem(BROWSER_IMPORT_PROMPT_SEEN_KEY) === "1"; } catch { alreadyPrompted = false; }
-  if (alreadyPrompted) { openManagedBrowser(); return; }
-  const modal = document.getElementById("browser-import-prompt");
-  if (!modal) { openManagedBrowser(); return; }
-  document.getElementById("browser-import-prompt-title").textContent = browserImportPromptText("title");
-  document.getElementById("browser-import-prompt-copy").textContent = browserImportPromptText("copy");
-  document.getElementById("browser-import-prompt-platform").textContent = browserImportPromptText("platform");
-  document.getElementById("browser-import-prompt-platform").classList.toggle("hidden", IS_WINDOWS);
-  document.getElementById("browser-import-prompt-now").textContent = browserImportPromptText("now");
-  document.getElementById("browser-import-prompt-later").textContent = browserImportPromptText("later");
-  modal.classList.remove("hidden");
-  document.getElementById("browser-import-prompt-later").focus();
+  // Selecting the browser should switch views immediately. Profile import is
+  // optional and remains available from the Browser panel's Import section.
+  try { localStorage.setItem(BROWSER_IMPORT_PROMPT_SEEN_KEY, "1"); } catch {}
+  openManagedBrowser();
 }
 async function openManagedBrowser() {
   if (browserMode !== "ai") setBrowserMode("ai");
   setBrowserView(true);
+  showBrowserStart("loading");
   try {
     const status = await invoke("browser_status");
     if (!status?.running) await launchBrowser();
@@ -7696,9 +7707,8 @@ function initBrowserPanel() {
   // Native address bar
   const navUrl = document.getElementById("nav-url");
   document.getElementById("nav-go").addEventListener("click", () => nativeNavigate(navUrl.value));
-  navUrl.addEventListener("focus", () => { navUrl.select(); stopNativeUrlPoll(); });
+  navUrl.addEventListener("focus", () => navUrl.select());
   navUrl.addEventListener("input", () => { nativeAddressDirty = navUrl.value !== nativeCurrentUrl; });
-  navUrl.addEventListener("blur", () => { if (!nativeAddressDirty) scheduleNativeUrlPoll(0); });
   document.getElementById("nav-home").addEventListener("click", showBrowserHome);
   document.getElementById("browser-start-form").addEventListener("submit", e => {
     e.preventDefault(); nativeNavigate(document.getElementById("browser-start-input").value);
@@ -7707,19 +7717,15 @@ function initBrowserPanel() {
   navUrl.addEventListener("keydown", (e) => {
     if (e.key === "Enter" && !e.isComposing && e.keyCode !== 229) nativeNavigate(navUrl.value);
   });
-  document.getElementById("nav-back").addEventListener("click", () => browserMode === "native" ? invoke("browser_pane_back").catch(() => {}) : cdpSend("Runtime.evaluate", {expression:"history.back()"}));
-  document.getElementById("nav-forward").addEventListener("click", () => browserMode === "native" ? invoke("browser_pane_forward").catch(() => {}) : cdpSend("Runtime.evaluate", {expression:"history.forward()"}));
-  document.getElementById("nav-reload").addEventListener("click", () => browserMode === "native" ? invoke("browser_pane_reload").catch(() => {}) : cdpSend("Page.reload"));
-
-  // Keep the native overlay aligned with its viewport box on any layout change.
-  const vp = document.getElementById("browser-viewport");
-  if (window.ResizeObserver) new ResizeObserver(() => scheduleSync()).observe(vp);
-  window.addEventListener("resize", scheduleSync);
-
-  // Reflect link-click navigation without overlapping IPC calls. The old
-  // async setInterval could queue another main-thread URL lookup every 1.5s
-  // while WebView2 was busy navigating, making the window appear unresponsive.
-  scheduleNativeUrlPoll();
+  document.getElementById("nav-back").addEventListener("click", () => {
+    if (browserMode === "ai") cdpSend("Runtime.evaluate", { expression: "history.back()" });
+  });
+  document.getElementById("nav-forward").addEventListener("click", () => {
+    if (browserMode === "ai") cdpSend("Runtime.evaluate", { expression: "history.forward()" });
+  });
+  document.getElementById("nav-reload").addEventListener("click", () => {
+    if (browserMode === "ai") cdpSend("Page.reload");
+  });
 
   setBrowserMode("native");
   updateBrowserInfo();
@@ -7733,7 +7739,7 @@ function initBrowserPanel() {
   }).catch(() => {});
   setInterval(() => {
     if (browserTabActive && browserMode === "ai") refreshBrowserPages();
-  }, 1500);
+  }, 2500);
 }
 
 function setBrowserView(on) {
@@ -7748,24 +7754,18 @@ function setBrowserView(on) {
     if (tab) tab.classList.add("active");
     terminalTabs.querySelectorAll(".tab").forEach((t) => t.classList.remove("active"));
     if (browserMode === "native") {
-      openNativePane();
-      scheduleNativeUrlPoll();
+      showBrowserStart("external");
     } else {
       refreshBrowserStatus(); // attaches the screencast if a browser is running
     }
   } else {
-    stopNativeUrlPoll();
     nativeNavigationSequence += 1;
-    nativeNavigationPending = false;
     panel.classList.add("hidden");
     terminalContainer.style.display = "";
     if (tab) tab.classList.remove("active");
-    // The native webview floats above all HTML, so it MUST hide when the tab
-    // isn't visible; also stop any AI screencast stream.
-    invoke("browser_pane_hide").catch(() => {});
+    // Stop the AI stream when hidden. External browser pages run independently.
     detachScreencast();
-    // Return focus to the terminal so the app is immediately interactive again
-    // (the native overlay holding focus makes the rest of the UI feel inert).
+    // Return focus to the terminal.
     if (activeTermId && terminals.has(activeTermId)) terminals.get(activeTermId).term.focus();
   }
   applyBrowserEnabled();
@@ -7825,9 +7825,21 @@ function renderBrowserPages() {
   wrap.style.display = browserMode === "ai" && browserPages.length ? "flex" : "none";
 }
 
+let browserPageTargetsPromise = null;
+function getBrowserPageTargets(port = browserPort()) {
+  if (!browserPageTargetsPromise) {
+    browserPageTargetsPromise = invoke("browser_page_targets", { port })
+      .finally(() => { browserPageTargetsPromise = null; });
+  }
+  return browserPageTargetsPromise;
+}
+
+let browserPageRefreshInFlight = false;
 async function refreshBrowserPages() {
+  if (browserPageRefreshInFlight) return;
+  browserPageRefreshInFlight = true;
   try {
-    const pages = await invoke("browser_page_targets", { port: browserPort() });
+    const pages = await getBrowserPageTargets();
     browserPages = Array.isArray(pages) ? pages : [];
     if (!browserPages.some((p) => p.targetId === activeBrowserPageId)) {
       activeBrowserPageId = browserPages[0]?.targetId || null;
@@ -7838,6 +7850,8 @@ async function refreshBrowserPages() {
     browserPages = [];
     activeBrowserPageId = null;
     renderBrowserPages();
+  } finally {
+    browserPageRefreshInFlight = false;
   }
 }
 
@@ -8170,7 +8184,7 @@ function linkRow(title, url, history) {
     row.appendChild(meta);
   }
   row.title = url + "\n클릭하면 Mymux 브라우저에서 엽니다";
-  row.addEventListener("click", () => { openInNativeBrowser(url); hideBrowserDataModal(); });
+  row.addEventListener("click", () => { openInExternalBrowser(url); hideBrowserDataModal(); });
   return row;
 }
 
@@ -8252,7 +8266,7 @@ async function attachScreencast() {
   let target = browserPages.find((p) => p.targetId === activeBrowserPageId) || null;
   for (let i = 0; i < 24 && !target && browserTabActive && browserMode === "ai" && generation === screencastAttachGeneration; i++) {
     try {
-      const pages = await invoke("browser_page_targets", { port });
+      const pages = await getBrowserPageTargets(port);
       browserPages = Array.isArray(pages) ? pages : [];
       target = browserPages.find((p) => p.targetId === activeBrowserPageId) || browserPages[0] || null;
       if (target) {
@@ -8285,9 +8299,11 @@ function openCdp(wsUrl) {
     cdpSend("Page.startScreencast", {
       format: "jpeg",
       quality: 70,
-      maxWidth: Math.max(320, Math.min(1600, Math.round(document.getElementById("browser-viewport").clientWidth))),
-      maxHeight: Math.max(200, Math.min(1000, Math.round(document.getElementById("browser-viewport").clientHeight))),
-      everyNthFrame: 1,
+      // Browser rendering is isolated in Chrome; keep the in-app preview light
+      // enough that image transfer/decode cannot starve terminal interaction.
+      maxWidth: Math.max(320, Math.min(1280, Math.round(document.getElementById("browser-viewport").clientWidth))),
+      maxHeight: Math.max(200, Math.min(720, Math.round(document.getElementById("browser-viewport").clientHeight))),
+      everyNthFrame: 4,
     });
     bindScreenInput();
   };
@@ -8387,9 +8403,20 @@ function bindScreenInput() {
   const img = document.getElementById("browser-screen");
   img.setAttribute("tabindex", "0");
 
+  let pendingMove = null;
+  let moveFramePending = false;
   img.addEventListener("mousemove", (e) => {
     const c = screenCoords(e);
-    if (c) cdpSend("Input.dispatchMouseEvent", { type: "mouseMoved", x: c.x, y: c.y });
+    if (!c) return;
+    pendingMove = c;
+    if (moveFramePending) return;
+    moveFramePending = true;
+    requestAnimationFrame(() => {
+      moveFramePending = false;
+      const point = pendingMove;
+      pendingMove = null;
+      if (point) cdpSend("Input.dispatchMouseEvent", { type: "mouseMoved", x: point.x, y: point.y });
+    });
   });
   img.addEventListener("mousedown", (e) => {
     const c = screenCoords(e);
@@ -8435,9 +8462,9 @@ function sendKey(e, type) {
   });
 }
 
-// ── Native embedded browser (child WebView overlay) ──
-let nativePaneCreated = false;
-
+// ── External browser plus optional CDP preview ──
+// Human browsing opens the system browser in its own process. The Mymux window
+// never hosts the third-party page, so a busy site cannot own its UI thread.
 function setBrowserMode(mode) {
   browserMode = mode;
   document.getElementById("mode-native").classList.toggle("active", mode === "native");
@@ -8449,68 +8476,31 @@ function setBrowserMode(mode) {
   if (pageTabs) pageTabs.style.display = mode === "ai" && browserPages.length ? "flex" : "none";
   const conn = document.getElementById("browser-conn");
   if (conn) conn.classList.toggle("browser-info-open", browserInfoOpen && mode === "ai");
+  for (const id of ["nav-back", "nav-forward", "nav-reload"]) {
+    const button = document.getElementById(id);
+    if (button) {
+      if (button.dataset.aiTitle == null) button.dataset.aiTitle = button.title;
+      button.disabled = mode !== "ai";
+      button.title = mode === "ai" ? button.dataset.aiTitle || button.title : "Use the system browser window";
+    }
+  }
 
   if (mode === "native") {
-    // AI → Native: stop the screencast, hide its image, show the native pane.
+    // AI preview → external browsing: stop frames; the external browser is
+    // independent and remains available in its own window.
     detachScreencast();
     setScreenActive(false);
-    if (browserTabActive) openNativePane();
-    scheduleNativeUrlPoll();
+    showBrowserStart("external");
   } else {
-    stopNativeUrlPoll();
     nativeNavigationSequence += 1;
-    nativeNavigationPending = false;
-    // Native → AI: hide the native overlay, (re)attach screencast if running.
-    invoke("browser_pane_hide").catch(() => {});
+    // External browsing → AI preview. Attach only after the user opts in.
     if (browserTabActive) refreshBrowserStatus();
   }
 }
 
-let nativePaneOpenPromise = null;
-let nativePaneLoadedUrl = null;
 let nativeNavigationSequence = 0;
-let nativeNavigationPending = false;
 let nativeAddressDirty = false;
 let nativeNavigationStatusTimer = null;
-let nativeUrlPollTimer = null;
-let nativeUrlPollInFlight = false;
-
-function stopNativeUrlPoll() {
-  if (nativeUrlPollTimer) clearTimeout(nativeUrlPollTimer);
-  nativeUrlPollTimer = null;
-}
-
-function scheduleNativeUrlPoll(delay = 1500) {
-  if (nativeUrlPollTimer || nativeUrlPollInFlight || nativeNavigationPending || nativeAddressDirty || !nativeCurrentUrl ||
-      !browserTabActive || browserMode !== "native" || !nativePaneCreated) return;
-  nativeUrlPollTimer = setTimeout(async () => {
-    nativeUrlPollTimer = null;
-    const address = document.getElementById("nav-url");
-    if (!browserTabActive || browserMode !== "native" || !nativePaneCreated || !nativeCurrentUrl || nativeNavigationPending || nativeAddressDirty) {
-      scheduleNativeUrlPoll();
-      return;
-    }
-    if (document.activeElement === address) return;
-    nativeUrlPollInFlight = true;
-    const navigationSequence = nativeNavigationSequence;
-    try {
-      const url = await invoke("browser_pane_url");
-      // Never replace a URL the user started editing while the IPC was pending.
-      if (url && nativeCurrentUrl && !nativeAddressDirty && browserTabActive && browserMode === "native" &&
-          navigationSequence === nativeNavigationSequence && document.activeElement !== address) {
-        nativeCurrentUrl = url;
-        nativePaneLoadedUrl = url;
-        address.value = url;
-        nativeAddressDirty = false;
-      }
-    } catch {}
-    finally {
-      nativeUrlPollInFlight = false;
-      scheduleNativeUrlPoll();
-    }
-  }, delay);
-}
-
 function setBrowserNavigationStatus(state, text) {
   const status = document.getElementById("browser-nav-status");
   if (!status) return;
@@ -8531,80 +8521,28 @@ function setBrowserNavigationStatus(state, text) {
 function showBrowserStart(state = "home", detail = "") {
   const placeholder = document.getElementById("browser-placeholder");
   placeholder.dataset.state = state;
-  document.getElementById("browser-start-message").textContent = browserText(state === "loading" ? "loading" : state === "error" ? "error" : "hint");
+  const message = state === "external"
+    ? (/^ko/i.test(navigator.language)
+      ? "웹 페이지는 별도 브라우저 창에서 열립니다. 무거운 페이지도 Mymux 터미널을 멈추지 않습니다."
+      : "Pages open in a separate system browser so heavy websites cannot block Mymux.")
+    : state === "loading" ? browserText("loading") : state === "error" ? browserText("error") : "";
+  document.getElementById("browser-start-message").textContent = message;
+  const title = document.querySelector("#browser-placeholder h2");
+  if (title) title.textContent = state === "external"
+    ? (/^ko/i.test(navigator.language) ? "분리된 브라우저로 안전하게 열기" : "Browse in an isolated window")
+    : "";
   document.getElementById("browser-start-error").textContent = detail;
   document.getElementById("browser-retry").hidden = state !== "error";
 }
 
 function showBrowserHome() {
   nativeNavigationSequence += 1;
-  nativeNavigationPending = false;
   nativeAddressDirty = false;
-  stopNativeUrlPoll();
   nativeCurrentUrl = "";
   document.getElementById("nav-url").value = "";
   if (browserMode !== "native") setBrowserMode("native");
-  invoke("browser_pane_hide").catch(() => {});
-  showBrowserStart();
+  showBrowserStart("external");
   document.getElementById("browser-start-input").focus();
-}
-
-async function openNativePane() {
-  if (memoNativePaneHidden || !browserTabActive || browserMode !== "native") return false;
-  if (!nativeCurrentUrl) { showBrowserStart(); return false; }
-  if (nativePaneOpenPromise) return nativePaneOpenPromise;
-  const requestedUrl = nativeCurrentUrl;
-  nativePaneOpenPromise = (async () => {
-    const vp = document.getElementById("browser-viewport");
-    const r = vp.getBoundingClientRect();
-    if (r.width < 1 || r.height < 1) return false;
-    try {
-      if (!nativePaneCreated) {
-        showBrowserStart("loading");
-        await invoke("browser_pane_open", { url: requestedUrl, x: r.x, y: r.y, width: r.width, height: r.height });
-        nativePaneCreated = true;
-        nativePaneLoadedUrl = requestedUrl;
-      } else {
-        await invoke("browser_pane_set_bounds", { x: r.x, y: r.y, width: r.width, height: r.height });
-        await invoke("browser_pane_show");
-      }
-      // Switching tabs or choosing Home while creation runs must keep it hidden.
-      if (!browserTabActive || browserMode !== "native" || !nativeCurrentUrl || memoNativePaneHidden) {
-        await invoke("browser_pane_hide");
-        return false;
-      }
-      return true;
-    } catch (e) {
-      showBrowserStart("error", String(e));
-      return false;
-    }
-  })();
-  try { return await nativePaneOpenPromise; }
-  finally {
-    nativePaneOpenPromise = null;
-    scheduleNativeUrlPoll();
-  }
-}
-
-function scheduleSync() {
-  // Debounce: ResizeObserver can fire a storm during window drag; coalesce to
-  // one set_bounds per ~100ms so we don't flood the main thread with ops.
-  if (paneSyncPending) return;
-  paneSyncPending = true;
-  setTimeout(() => {
-    paneSyncPending = false;
-    syncPaneBounds();
-  }, 100);
-}
-
-async function syncPaneBounds() {
-  if (!browserTabActive || browserMode !== "native") return;
-  const vp = document.getElementById("browser-viewport");
-  const r = vp.getBoundingClientRect();
-  if (r.width < 1 || r.height < 1) return;
-  try {
-    await invoke("browser_pane_set_bounds", { x: r.x, y: r.y, width: r.width, height: r.height });
-  } catch {}
 }
 
 async function nativeNavigate(input) {
@@ -8624,34 +8562,19 @@ async function nativeNavigate(input) {
     return;
   }
   const sequence = ++nativeNavigationSequence;
-  nativeNavigationPending = true;
-  const alreadyAtUrl = nativePaneCreated && nativePaneLoadedUrl === url;
   nativeCurrentUrl = url;
   setBrowserNavigationStatus("pending", browserText("navSending"));
-  const paneReady = await openNativePane();
-  if (sequence !== nativeNavigationSequence) return;
-  if (!paneReady) {
-    setBrowserNavigationStatus("error", browserText("navFailed"));
-    if (sequence === nativeNavigationSequence) nativeNavigationPending = false;
-    scheduleNativeUrlPoll();
-    return;
-  }
   try {
-    if (nativePaneLoadedUrl !== url) {
-      await invoke("browser_pane_navigate", { url });
-      nativePaneLoadedUrl = url;
-    } else if (alreadyAtUrl) {
-      // Re-entering the current address is an explicit request to reload it.
-      await invoke("browser_pane_reload");
-    }
-    if (sequence === nativeNavigationSequence) setBrowserNavigationStatus("sent", browserText("navSent"));
+    await invoke("open_external", { path: url });
+    if (sequence !== nativeNavigationSequence) return;
+    setBrowserNavigationStatus("sent", /^ko/i.test(navigator.language)
+      ? "기본 브라우저에서 열었습니다. 페이지 탐색은 해당 창에서 계속하세요."
+      : "Opened in your system browser. Continue browsing in that window.");
+    showBrowserStart("external", url);
   } catch (e) {
-    await invoke("browser_pane_hide").catch(() => {});
+    if (sequence !== nativeNavigationSequence) return;
     showBrowserStart("error", String(e));
-    if (sequence === nativeNavigationSequence) setBrowserNavigationStatus("error", String(e));
-  } finally {
-    if (sequence === nativeNavigationSequence) nativeNavigationPending = false;
-    scheduleNativeUrlPoll();
+    setBrowserNavigationStatus("error", String(e));
   }
 }
 
@@ -9040,8 +8963,7 @@ async function setupCloseHandler() {
 
     document.getElementById("close-cancel").addEventListener("click", () => {
       document.getElementById("close-modal").classList.add("hidden");
-      // Restore the native browser overlay we hid to surface this dialog.
-      if (browserTabActive && browserMode === "native") openNativePane();
+      // The external browser cannot cover this dialog.
     });
     document.getElementById("close-save").addEventListener("click", async () => {
       if (document.getElementById("close-remember-pref").checked) setClosePref("always");
@@ -9088,7 +9010,6 @@ async function handleCloseRequest() {
   // dialog — if it's showing, the modal would be trapped behind it and the app
   // would appear frozen (only the browser responds). Hide it first; the
   // close-cancel handler restores it if the user backs out.
-  await invoke("browser_pane_hide").catch(() => {});
   const pref = closePref();
   if (pref === "always") {
     if (!await saveSessionNow()) return;
@@ -9928,24 +9849,8 @@ function cleanupMemoPopoverDrag() {
 function onMemoViewportResize() {
   normalizeMemoPopoverAnchorOffset();
 }
-function hideNativePaneForMemo() {
-  if (memoNativePaneHidden || !browserTabActive || browserMode !== "native") return;
-  memoNativePaneHidden = true;
-  // Serialize hide/restore operations so a rapid open-close-open cannot leave
-  // a late hide request winning after the final restore.
-  memoNativePaneTransitions = memoNativePaneTransitions.then(
-    () => invoke("browser_pane_hide").catch(() => {})
-  );
-}
-function restoreNativePaneAfterMemo() {
-  if (!memoNativePaneHidden) return;
-  memoNativePaneHidden = false;
-  memoNativePaneTransitions = memoNativePaneTransitions.then(async () => {
-    // A newer memo may have opened while this restore was queued.
-    if (memoNativePaneHidden) return;
-    if (browserTabActive && browserMode === "native") await openNativePane();
-  });
-}
+function hideNativePaneForMemo() {}
+function restoreNativePaneAfterMemo() {}
 function closeMemoPopover(restoreFocus = true, restoreNativePane = true) {
   const anchor = memoPopoverAnchor;
   cleanupMemoPopoverDrag();
@@ -11868,7 +11773,7 @@ function openModal(cmd) {
   }
   // The native browser webview is a native overlay above all HTML, so it would
   // cover this modal — hide it while the modal is open.
-  if (browserTabActive && browserMode === "native") invoke("browser_pane_hide").catch(() => {});
+  // External browser windows cannot cover Mymux dialogs.
   modalOverlay.classList.remove("hidden");
   inputName.focus();
 }
@@ -11877,10 +11782,6 @@ function closeModal() {
   modalOverlay.classList.add("hidden");
   form.reset();
   editingId = null;
-  if (browserTabActive && browserMode === "native") {
-    // openNativePane honors the memo-owned hide guard.
-    openNativePane();
-  }
 }
 
 async function handleSave(e) {
@@ -12466,7 +12367,7 @@ window.addEventListener("DOMContentLoaded", () => {
     const closeUpdateModal = () => {
       if (modal) modal.classList.add("hidden");
       // Restore the native browser overlay only if we're still on the browser view.
-      if (browserTabActive && browserMode === "native") openNativePane();
+      if (browserTabActive && browserMode === "native") showBrowserStart("external");
     };
     if (modalOk) modalOk.addEventListener("click", () => { closeUpdateModal(); runInstall(); });
     if (modalCancel) modalCancel.addEventListener("click", closeUpdateModal);
@@ -12487,7 +12388,7 @@ window.addEventListener("DOMContentLoaded", () => {
             : "업데이트를 진행하면 앱이 재시작됩니다. 계속하시겠습니까?";
         }
         // The native browser overlay floats above all HTML; hide it so the modal shows.
-        if (browserTabActive && browserMode === "native") invoke("browser_pane_hide").catch(() => {});
+        // External browser windows cannot cover Mymux dialogs.
         modal.classList.remove("hidden");
         if (modalOk) modalOk.focus();
         return;

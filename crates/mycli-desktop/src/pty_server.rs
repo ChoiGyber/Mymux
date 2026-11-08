@@ -86,8 +86,10 @@ fn dispatch(manager: &Arc<TerminalManager>, request: Value) -> Value {
         }
         "read" => {
             let id = required_id(&p)?;
-            let (data, exited) = terminal::read_local(manager, id)?;
-            Ok(json!({ "data": data, "exited": exited }))
+            // Missing, negative or non-integer offsets read as 0 (full replay).
+            let offset = p.get("offset").and_then(Value::as_u64).unwrap_or(0);
+            let r = terminal::read_local(manager, id, offset)?;
+            Ok(json!({ "data": r.chunks, "next": r.next, "exited": r.exited, "truncated": r.truncated }))
         }
         "write" => { terminal::write_local(manager, required_id(&p)?, required_string(&p, "data")?)?; Ok(json!({})) }
         "resize" => { terminal::resize_local(manager, required_id(&p)?, p["cols"].as_u64().unwrap_or(80) as u16, p["rows"].as_u64().unwrap_or(24) as u16)?; Ok(json!({})) }

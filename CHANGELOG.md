@@ -1,5 +1,13 @@
 # Changelog
 
+## v0.3.8 - 2026-11-09
+
+### Improved
+
+- Open the managed browser view immediately and move blocking browser work off the UI thread.
+- Keep PTY output history bounded while allowing independent readers to replay output from their own offsets.
+- Make the Sessions panel toggle work with a detached Sessions window, and make new terminal tabs open directly without showing the command picker.
+
 All notable changes to **Mymux** are documented here.
 Mymux의 주요 변경 사항을 기록합니다.
 

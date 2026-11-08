@@ -2611,27 +2611,7 @@ html[data-theme="dark"] .pane-command-shortcut {
   transition: width 0.2s;
 }
 #session-panel.collapsed {
-  width: 0;
-  border-left: 0;
-  overflow: visible;
-}
-#session-panel.collapsed #session-list,
-#session-panel.collapsed #ssh-fav-list,
-#session-panel.collapsed #attention-queue,
-#session-panel.collapsed #session-footer,
-#session-panel.collapsed #session-header span { display: none; }
-#session-panel.collapsed #session-header {
-  position: absolute;
-  top: 0;
-  right: 0;
-  width: 34px;
-  box-sizing: border-box;
-  justify-content: center;
-  padding: 8px 0;
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-right: 0;
-  border-radius: var(--radius) 0 0 var(--radius);
+  display: none;
 }
 /* Drag handle on the panel's left edge to resize its width. */
 #session-resizer {
@@ -2644,7 +2624,6 @@ html[data-theme="dark"] .pane-command-shortcut {
   z-index: 5;
 }
 #session-resizer:hover { background: var(--accent); opacity: 0.45; }
-#session-panel.collapsed #session-resizer { display: none; }
 #session-panel.sessions-detached { display: none; }
 #session-header {
   display: flex;
