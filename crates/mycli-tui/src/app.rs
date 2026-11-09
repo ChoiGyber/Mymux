@@ -98,8 +98,7 @@ impl App {
                 if query.is_empty() {
                     return true;
                 }
-                let haystack =
-                    format!("{} {} {}", c.name, c.command, c.description).to_lowercase();
+                let haystack = format!("{} {} {}", c.name, c.command, c.description).to_lowercase();
                 fuzzy_match(&haystack, &query)
             })
             .map(|(i, _)| i)
@@ -553,7 +552,10 @@ mod tests {
             ("container".to_string(), "web".to_string()),
             ("shell".to_string(), "bash".to_string()),
         ];
-        let out = substitute("docker exec -it {{container}} {{shell}} # {{container}}", &params);
+        let out = substitute(
+            "docker exec -it {{container}} {{shell}} # {{container}}",
+            &params,
+        );
         assert_eq!(out, "docker exec -it web bash # web");
     }
 

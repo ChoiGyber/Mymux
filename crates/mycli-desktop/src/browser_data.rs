@@ -22,7 +22,7 @@
 //!   are reported as blocked rather than guessed at — never decrypted here.
 
 #[cfg(windows)]
-use aes_gcm::{aead::Aead, Aes256Gcm, KeyInit, Nonce};
+use aes_gcm::{Aes256Gcm, KeyInit, Nonce, aead::Aead};
 use serde::Serialize;
 #[cfg(windows)]
 use serde_json::Value;
@@ -134,7 +134,11 @@ fn walk_bookmarks(node: &Value, folder: &mut Vec<String>, out: &mut Vec<Bookmark
             });
         }
         Some("folder") => {
-            let name = node.get("name").and_then(Value::as_str).unwrap_or("").to_string();
+            let name = node
+                .get("name")
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .to_string();
             folder.push(name);
             if let Some(children) = node.get("children").and_then(Value::as_array) {
                 for child in children {
@@ -167,7 +171,10 @@ impl DbCopy {
             .map(|d| d.as_nanos())
             .unwrap_or(0);
         rng ^= source.to_string_lossy().len() as u128;
-        let stem = source.file_name().map(|s| s.to_string_lossy().to_string()).unwrap_or_default();
+        let stem = source
+            .file_name()
+            .map(|s| s.to_string_lossy().to_string())
+            .unwrap_or_default();
         let base = std::env::temp_dir().join(format!("mymux-{stem}-{rng:x}"));
         std::fs::copy(source, &base).map_err(|e| format!("copy {stem}: {e}"))?;
         let mut siblings = Vec::new();
@@ -180,7 +187,10 @@ impl DbCopy {
                 }
             }
         }
-        Ok(Self { path: base, siblings })
+        Ok(Self {
+            path: base,
+            siblings,
+        })
     }
 }
 
@@ -197,7 +207,10 @@ impl Drop for DbCopy {
 /// Append a suffix to a file name (not the extension): `History` + `-wal`.
 #[cfg(windows)]
 fn with_suffix(path: &Path, suffix: &str) -> PathBuf {
-    let mut name = path.file_name().map(|s| s.to_os_string()).unwrap_or_default();
+    let mut name = path
+        .file_name()
+        .map(|s| s.to_os_string())
+        .unwrap_or_default();
     name.push(suffix);
     path.with_file_name(name)
 }
@@ -388,7 +401,7 @@ fn master_key(browser: &str) -> Result<Vec<u8>, String> {
 /// `CryptUnprotectData` — DPAPI decryption bound to the current Windows user.
 #[cfg(windows)]
 fn dpapi_unprotect(data: &[u8]) -> Option<Vec<u8>> {
-    use windows_sys::Win32::Security::Cryptography::{CryptUnprotectData, CRYPT_INTEGER_BLOB};
+    use windows_sys::Win32::Security::Cryptography::{CRYPT_INTEGER_BLOB, CryptUnprotectData};
     unsafe {
         let input = CRYPT_INTEGER_BLOB {
             cbData: data.len() as u32,
@@ -525,7 +538,10 @@ mod tests {
         assert_eq!(chrome_time_to_ms(-5), None);
         // 13285932330000000 µs → 2021-12-13 (a real Chrome value magnitude).
         let ms = chrome_time_to_ms(13_285_932_330_000_000).unwrap();
-        assert!(ms > 1_600_000_000_000 && ms < 1_800_000_000_000, "ms was {ms}");
+        assert!(
+            ms > 1_600_000_000_000 && ms < 1_800_000_000_000,
+            "ms was {ms}"
+        );
     }
 
     #[cfg(windows)]
@@ -556,7 +572,10 @@ mod tests {
     #[test]
     fn truncated_v10_blob_is_unreadable_not_a_panic() {
         let key = [0u8; 32];
-        assert!(matches!(decrypt_secret(b"v10short", &key), Secret::Unreadable));
+        assert!(matches!(
+            decrypt_secret(b"v10short", &key),
+            Secret::Unreadable
+        ));
     }
 
     /// Round-trip a real v10 secret: encrypt with a known key exactly as Chrome
@@ -604,7 +623,10 @@ mod tests {
             data.bookmarks.len(),
             data.history.len(),
             data.passwords.len(),
-            data.passwords.iter().filter(|p| p.password.is_some()).count(),
+            data.passwords
+                .iter()
+                .filter(|p| p.password.is_some())
+                .count(),
             data.blocked_passwords,
         );
         for note in &data.notes {
@@ -621,7 +643,10 @@ mod tests {
         // A blocked row never carries a password, and a readable row always does.
         for p in &data.passwords {
             if p.blocked {
-                assert!(p.password.is_none(), "a blocked row must not expose a secret");
+                assert!(
+                    p.password.is_none(),
+                    "a blocked row must not expose a secret"
+                );
             }
         }
     }

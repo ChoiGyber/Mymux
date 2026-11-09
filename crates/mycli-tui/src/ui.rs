@@ -1,10 +1,10 @@
+use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Clear, List, ListItem, Paragraph};
-use ratatui::Frame;
 
-use crate::app::{substitute, App, Mode};
+use crate::app::{App, Mode, substitute};
 
 pub fn render(frame: &mut Frame, app: &App) {
     // Show a dedicated search row while searching or whenever a filter is set.
@@ -44,7 +44,11 @@ pub fn render(frame: &mut Frame, app: &App) {
 
 fn render_header(frame: &mut Frame, area: Rect) {
     let title = Paragraph::new(" Mymux — Command Manager")
-        .style(Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD))
+        .style(
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        )
         .block(Block::default().borders(Borders::BOTTOM));
     frame.render_widget(title, area);
 }
@@ -61,7 +65,11 @@ fn render_search_bar(frame: &mut Frame, area: Rect, app: &App) {
         Span::styled(&app.filter, Style::default().fg(Color::White)),
         Span::styled(cursor, Style::default().fg(Color::Magenta)),
         Span::styled(
-            format!("   ({} match{})", app.visible.len(), if app.visible.len() == 1 { "" } else { "es" }),
+            format!(
+                "   ({} match{})",
+                app.visible.len(),
+                if app.visible.len() == 1 { "" } else { "es" }
+            ),
             Style::default().fg(Color::DarkGray),
         ),
     ]);
@@ -114,8 +122,7 @@ fn render_command_list(frame: &mut Frame, area: Rect, app: &App) {
         })
         .collect();
 
-    let list = List::new(items)
-        .block(Block::default().title(" Commands ").borders(Borders::ALL));
+    let list = List::new(items).block(Block::default().title(" Commands ").borders(Borders::ALL));
     frame.render_widget(list, area);
 }
 
@@ -184,7 +191,10 @@ fn render_field(frame: &mut Frame, area: Rect, label: &str, value: &str, focused
     let cursor = if focused { "▎" } else { "" };
 
     let text = Line::from(vec![
-        Span::styled(format!(" {}: ", label), Style::default().fg(Color::DarkGray)),
+        Span::styled(
+            format!(" {}: ", label),
+            Style::default().fg(Color::DarkGray),
+        ),
         Span::styled(value, style),
         Span::styled(cursor, Style::default().fg(Color::Cyan)),
     ]);

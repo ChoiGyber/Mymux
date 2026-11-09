@@ -40,36 +40,70 @@ pub fn run_statusline() {
     println!("{}", render(&payload));
 }
 
-/// `Model: Opus 5 | ctx:37%` — the exact shape Mymux's own CTX_MODEL_RE /
+/// `Model: Opus 5 | 5h:34% 7d:12% | ctx:<bar> 37%` — the shape Mymux's own CTX_MODEL_RE /
 /// CTX_RE scanners expect. The model name is kept ahead of the `|` because the
 /// model regex stops at that separator.
 fn render(payload: &serde_json::Value) -> String {
     let model = payload
         .pointer("/model/display_name")
         .and_then(serde_json::Value::as_str)
-        .or_else(|| payload.pointer("/model/id").and_then(serde_json::Value::as_str))
+        .or_else(|| {
+            payload
+                .pointer("/model/id")
+                .and_then(serde_json::Value::as_str)
+        })
         .unwrap_or("Claude");
     let mut line = format!("Model: {model}");
     // Account limits ride along when Claude Code sends them. The toolbar's CL
     // readout normally comes straight from the OAuth usage API, but that path
     // deliberately gives up on an expired token — this keeps the readout alive
     // in that case, and it costs nothing when the API is answering.
-    let limits = [("5h", "/rate_limits/five_hour"), ("wk", "/rate_limits/seven_day")]
-        .into_iter()
-        .filter_map(|(label, ptr)| {
-            let pct = payload.pointer(&format!("{ptr}/used_percentage"))?.as_f64()?;
-            Some(format!("{label}:{}%", pct.clamp(0.0, 100.0).round() as u32))
-        })
-        .collect::<Vec<_>>();
+    let limits = [
+        ("5h", "/rate_limits/five_hour"),
+        ("7d", "/rate_limits/seven_day"),
+    ]
+    .into_iter()
+    .filter_map(|(label, ptr)| {
+        let pct = payload
+            .pointer(&format!("{ptr}/used_percentage"))?
+            .as_f64()?;
+        Some(format!("{label}:{}%", pct.clamp(0.0, 100.0).round() as u32))
+    })
+    .collect::<Vec<_>>();
     if !limits.is_empty() {
         line.push_str(&format!(" | {}", limits.join(" ")));
     }
     // No context numbers in this payload — the model name alone still tells the
     // pane badge which tool owns the session.
     if let Some(pct) = context_percent(payload) {
-        line.push_str(&format!(" | ctx:{pct}%"));
+        line.push_str(&format!(" | ctx:{} {pct}%", context_bar(pct)));
     }
     line
+}
+
+const CONTEXT_BAR_WIDTH: usize = 20;
+const CONTEXT_PARTIAL_BLOCKS: [&str; 8] = ["", "▏", "▎", "▍", "▌", "▋", "▊", "▉"];
+
+fn context_bar(pct: u32) -> String {
+    let eighths = (pct.min(100) as usize * CONTEXT_BAR_WIDTH * 8 + 50) / 100;
+    let full = (eighths / 8).min(CONTEXT_BAR_WIDTH);
+    let partial = if full < CONTEXT_BAR_WIDTH {
+        eighths % 8
+    } else {
+        0
+    };
+    let empty = CONTEXT_BAR_WIDTH - full - usize::from(partial > 0);
+    let color = match pct {
+        0..=49 => "32",        // green
+        50..=84 => "38;5;203", // tomato / coral
+        _ => "38;5;196",       // red
+    };
+    format!(
+        "\x1b[{color}m{}{}{}\x1b[0m",
+        "█".repeat(full),
+        CONTEXT_PARTIAL_BLOCKS[partial],
+        "░".repeat(empty),
+    )
 }
 
 /// Percent of the context window in use. Prefers the number Claude Code
@@ -91,7 +125,12 @@ fn manual_percent(window: &serde_json::Value) -> Option<f64> {
         return None;
     }
     let usage = window.get("current_usage")?;
-    let field = |key: &str| usage.get(key).and_then(serde_json::Value::as_f64).unwrap_or(0.0);
+    let field = |key: &str| {
+        usage
+            .get(key)
+            .and_then(serde_json::Value::as_f64)
+            .unwrap_or(0.0)
+    };
     let used = field("input_tokens")
         + field("cache_creation_input_tokens")
         + field("cache_read_input_tokens");
@@ -158,14 +197,28 @@ fn current_command(settings: &serde_json::Value) -> Option<String> {
 fn status_from(path: &PathBuf, settings: Option<&serde_json::Value>) -> StatuslineStatus {
     let path_str = path.display().to_string();
     let Some(settings) = settings else {
-        return StatuslineStatus { state: "unreadable".into(), command: None, path: path_str };
+        return StatuslineStatus {
+            state: "unreadable".into(),
+            command: None,
+            path: path_str,
+        };
     };
     match current_command(settings) {
-        Some(cmd) if is_ours(&cmd) => {
-            StatuslineStatus { state: "mymux".into(), command: Some(cmd), path: path_str }
-        }
-        Some(cmd) => StatuslineStatus { state: "other".into(), command: Some(cmd), path: path_str },
-        None => StatuslineStatus { state: "none".into(), command: None, path: path_str },
+        Some(cmd) if is_ours(&cmd) => StatuslineStatus {
+            state: "mymux".into(),
+            command: Some(cmd),
+            path: path_str,
+        },
+        Some(cmd) => StatuslineStatus {
+            state: "other".into(),
+            command: Some(cmd),
+            path: path_str,
+        },
+        None => StatuslineStatus {
+            state: "none".into(),
+            command: None,
+            path: path_str,
+        },
     }
 }
 
@@ -208,9 +261,8 @@ fn install_into(path: &PathBuf, command: &str) -> Result<StatuslineStatus, Strin
 
 /// Take Mymux's statusline back out. Only ever removes our own entry.
 fn remove_from(path: &PathBuf) -> Result<StatuslineStatus, String> {
-    let mut settings = read_settings(path)?.ok_or(
-        "settings.json 을 JSON 으로 읽을 수 없습니다. / settings.json is not valid JSON.",
-    )?;
+    let mut settings = read_settings(path)?
+        .ok_or("settings.json 을 JSON 으로 읽을 수 없습니다. / settings.json is not valid JSON.")?;
     match current_command(&settings) {
         Some(cmd) if is_ours(&cmd) => {}
         Some(cmd) => {
@@ -257,7 +309,10 @@ mod tests {
             "model": { "id": "claude-opus-5", "display_name": "Opus 5" },
             "context_window": { "used_percentage": 37.4 }
         });
-        assert_eq!(render(&payload), "Model: Opus 5 | ctx:37%");
+        assert_eq!(
+            render(&payload),
+            format!("Model: Opus 5 | ctx:{} 37%", context_bar(37))
+        );
     }
 
     #[test]
@@ -274,7 +329,10 @@ mod tests {
                 }
             }
         });
-        assert_eq!(render(&payload), "Model: Opus 5 | ctx:25%");
+        assert_eq!(
+            render(&payload),
+            format!("Model: Opus 5 | ctx:{} 25%", context_bar(25))
+        );
     }
 
     #[test]
@@ -286,7 +344,47 @@ mod tests {
     #[test]
     fn clamps_out_of_range_percentages() {
         let payload = serde_json::json!({ "context_window": { "used_percentage": 143.0 } });
-        assert_eq!(render(&payload), "Model: Claude | ctx:100%");
+        assert_eq!(
+            render(&payload),
+            format!("Model: Claude | ctx:{} 100%", context_bar(100))
+        );
+    }
+
+    #[test]
+    fn renders_requested_context_bar_examples_and_colors() {
+        let full = char::from_u32(0x2588).unwrap();
+        let empty = char::from_u32(0x2591).unwrap();
+        let partial = |codepoint| char::from_u32(codepoint).unwrap();
+        let expected =
+            |color: &str, full_count: usize, fraction: Option<char>, empty_count: usize| {
+                format!(
+                    "\x1b[{color}m{}{}{}\x1b[0m",
+                    full.to_string().repeat(full_count),
+                    fraction
+                        .map(|character| character.to_string())
+                        .unwrap_or_default(),
+                    empty.to_string().repeat(empty_count),
+                )
+            };
+
+        assert_eq!(
+            context_bar(12),
+            expected("32", 2, Some(partial(0x258d)), 17)
+        );
+        assert_eq!(
+            context_bar(63),
+            expected("38;5;203", 12, Some(partial(0x258b)), 7)
+        );
+        assert_eq!(context_bar(95), expected("38;5;196", 19, None, 1));
+
+        for (pct, color) in [
+            (49, "32"),
+            (50, "38;5;203"),
+            (84, "38;5;203"),
+            (85, "38;5;196"),
+        ] {
+            assert!(context_bar(pct).starts_with(&format!("\x1b[{color}m")));
+        }
     }
 
     #[test]
@@ -299,12 +397,20 @@ mod tests {
             },
             "context_window": { "used_percentage": 63.0 }
         });
-        assert_eq!(render(&payload), "Model: Opus 5 | 5h:34% wk:12% | ctx:63%");
+        assert_eq!(
+            render(&payload),
+            format!(
+                "Model: Opus 5 | 5h:34% 7d:12% | ctx:{} 63%",
+                context_bar(63)
+            )
+        );
     }
 
     #[test]
     fn only_recognizes_our_own_command() {
-        assert!(is_ours("\"C:\\Users\\me\\AppData\\Local\\Mymux\\Mymux.exe\" --statusline"));
+        assert!(is_ours(
+            "\"C:\\Users\\me\\AppData\\Local\\Mymux\\Mymux.exe\" --statusline"
+        ));
         assert!(!is_ours("node /home/me/.claude/hud/omc-hud.mjs"));
         // Another tool that merely takes a --statusline flag is not ours.
         assert!(!is_ours("some-other-tool --statusline"));
@@ -335,7 +441,10 @@ mod tests {
     #[test]
     fn install_keeps_existing_settings_and_their_order() {
         // `theme` first, `language` last — the user's own ordering must survive.
-        let path = temp_settings("order", "{\n \"theme\": \"dark\",\n \"language\": \"ko\"\n}\n");
+        let path = temp_settings(
+            "order",
+            "{\n \"theme\": \"dark\",\n \"language\": \"ko\"\n}\n",
+        );
         assert_eq!(install_into(&path, OUR_COMMAND).unwrap().state, "mymux");
 
         let written = std::fs::read_to_string(&path).unwrap();

@@ -18,6 +18,7 @@
 <button id="btn-voice-input" title="Voice input (hold Ctrl+Space)" aria-label="Voice input (hold Ctrl+Space)">🎙</button>
       <button id="btn-update" class="hidden" title="A new version is available — click to update">⬆ Update</button>
       <button id="btn-notify-settings" title="Task-done flash settings / 작업 완료 알림 설정"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.7 21a2 2 0 0 1-3.4 0"/></svg></button>
+      <button id="btn-mobile" type="button" title="모바일 연결 설정">📱 Mobile</button>
       <button id="btn-toggle-browser" title="Show / hide the browser tab">🌐</button>
       <button id="btn-font-dec" title="Smaller text (Ctrl -)">A<sup>&#8722;</sup></button>
       <button id="btn-font-inc" title="Larger text (Ctrl +)">A<sup>+</sup></button>
@@ -648,6 +649,24 @@
       </div>
       <div class="modal-actions">
         <button id="notify-modal-close">확인</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="mobile-modal" class="hidden" role="dialog" aria-modal="true" aria-labelledby="mobile-modal-title">
+    <div class="modal-box mobile-modal-box">
+      <button id="mobile-modal-close" class="modal-close" type="button" aria-label="Close">×</button>
+      <h2 id="mobile-modal-title">모바일 세션 연결</h2>
+      <p class="mobile-modal-note">같은 사설 LAN에서 QR을 스캔하세요. Noise 암호화 후 요청된 기기를 여기서 승인해야 합니다.</p>
+      <div class="mobile-qr-wrap"><img id="mobile-qr" alt="모바일 일회용 페어링 QR" /><p id="mobile-status" role="status">시작 중…</p></div>
+      <h3>승인 대기 기기</h3>
+      <div id="mobile-pending" class="mobile-device-list"></div>
+      <h3>승인된 기기</h3>
+      <div id="mobile-approved" class="mobile-device-list"></div>
+      <div class="modal-actions">
+        <button id="mobile-refresh-qr" class="secondary" type="button">QR 갱신</button>
+        <button id="mobile-stop" class="secondary" type="button">모바일 연결 끄기</button>
+        <button id="mobile-modal-done" type="button">닫기</button>
       </div>
     </div>
   </div>

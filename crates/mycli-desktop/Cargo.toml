@@ -31,6 +31,11 @@ portable-pty = "0.9"
 russh = "0.58"
 russh-sftp = "2.1"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "process", "time", "io-util", "net"] }
+tokio-tungstenite = "0.29"
+futures-util = "0.3"
+snow = "0.10"
+base64 = "0.22"
+qrcode = { version = "0.14", default-features = false, features = ["svg"] }
 async-trait = "0.1"
 # Encode a clipboard image to PNG for the terminal image-paste path.
 image = { version = "0.25", default-features = false, features = ["png"] }

@@ -509,9 +509,7 @@ async fn connect_sftp_session(
         }
     }
 
-    if !authenticated
-        && let Some(ssh_dir) = auto_key_dir
-    {
+    if !authenticated && let Some(ssh_dir) = auto_key_dir {
         for path in auto_key_candidates(&ssh_dir) {
             let name = path
                 .file_name()
@@ -1193,9 +1191,9 @@ fn upload_local_entry<'a>(
     progress: &'a UploadProgress<'a>,
     cancellation: &'a AtomicBool,
     created: &'a mut Vec<CreatedRemoteEntry>,
-// `Send` matters here: the upload command is a Tauri async command, so its
-// whole future is spawned onto the runtime and must cross threads. Without the
-// bound this recursive boxed future silently makes the caller non-`Send`.
+    // `Send` matters here: the upload command is a Tauri async command, so its
+    // whole future is spawned onto the runtime and must cross threads. Without the
+    // bound this recursive boxed future silently makes the caller non-`Send`.
 ) -> Pin<Box<dyn Future<Output = Result<(), String>> + Send + 'a>> {
     Box::pin(async move {
         ensure_upload_not_cancelled(cancellation)?;
@@ -1453,7 +1451,9 @@ pub fn resolve_ssh_alias(alias: &str, config: &str) -> Option<SshConfigEntry> {
         if !in_block {
             continue;
         }
-        let Some(current) = entry.as_mut() else { continue };
+        let Some(current) = entry.as_mut() else {
+            continue;
+        };
         match keyword.as_str() {
             "hostname" => current.host_name = Some(value.to_string()),
             "user" => current.user = Some(value.to_string()),
@@ -1504,7 +1504,12 @@ fn resolve_target(parsed: ParsedSsh, config: &str, os_user: &str) -> Option<SshT
         .or_else(|| from_config(|e| e.identity_file.clone()))
         .map(|path| expand_home(&path));
 
-    Some(SshTarget { host, port, user, key_path })
+    Some(SshTarget {
+        host,
+        port,
+        user,
+        key_path,
+    })
 }
 
 /// `~/x` → `<home>/x`. Left alone when the home directory is unknown.
@@ -1666,7 +1671,9 @@ Host clp-MS
         // ProxyJump means the real connection is not the one we would open.
         assert!(resolve_ssh_alias("jump", CONFIG).is_none());
         // An Include we cannot follow makes the whole file unreliable.
-        assert!(resolve_ssh_alias("미니맥", "Include other\nHost 미니맥\n  HostName x\n").is_none());
+        assert!(
+            resolve_ssh_alias("미니맥", "Include other\nHost 미니맥\n  HostName x\n").is_none()
+        );
     }
 }
 
@@ -1692,8 +1699,12 @@ mod ssh_target_tests {
         assert_eq!(t.port, 2200);
 
         // Nothing anywhere: ssh's own defaults.
-        let t = resolve_target(parse_ssh_command("ssh host.example.com").unwrap(), "", "osuser")
-            .unwrap();
+        let t = resolve_target(
+            parse_ssh_command("ssh host.example.com").unwrap(),
+            "",
+            "osuser",
+        )
+        .unwrap();
         assert_eq!(t.port, 22);
         assert_eq!(t.user, "osuser");
     }
@@ -2893,8 +2904,8 @@ mod auto_key_tests {
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_nanos();
-        let dir = std::env::temp_dir()
-            .join(format!("mymux-autokey-{}-{nonce}", std::process::id()));
+        let dir =
+            std::env::temp_dir().join(format!("mymux-autokey-{}-{nonce}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         for name in files {
             std::fs::write(dir.join(name), b"").unwrap();

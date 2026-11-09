@@ -2,8 +2,8 @@ use mycli_core::{CommandStore, SavedCommand};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::io::{BufRead, BufReader, Write};
-use std::process::{Child, ChildStdin, Command, Stdio};
 use std::path::PathBuf;
+use std::process::{Child, ChildStdin, Command, Stdio};
 use tauri::Manager;
 
 #[derive(Deserialize)]
@@ -20,26 +20,48 @@ pub fn prepare_harness_mcp(
     cwd: String,
     workers: Vec<HarnessWorkerConfig>,
 ) -> Result<String, String> {
-    if team_id.is_empty() || !team_id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-') {
+    if team_id.is_empty()
+        || !team_id
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-')
+    {
         return Err("Invalid team identifier".into());
     }
     let cwd_path = PathBuf::from(&cwd);
-    if !cwd_path.is_dir() { return Err("Team working directory does not exist".into()); }
-    let safe_workers: Vec<_> = workers.into_iter().map(|worker| {
-        if worker.name.trim().is_empty() || worker.name.len() > 80 {
-            return Err("Invalid worker name".to_string());
-        }
-        if let Some(model) = &worker.model {
-            if model.len() > 100 || !model.chars().all(|c| c.is_ascii_alphanumeric() || "._:-".contains(c)) {
-                return Err("Invalid Codex model identifier".to_string());
+    if !cwd_path.is_dir() {
+        return Err("Team working directory does not exist".into());
+    }
+    let safe_workers: Vec<_> = workers
+        .into_iter()
+        .map(|worker| {
+            if worker.name.trim().is_empty() || worker.name.len() > 80 {
+                return Err("Invalid worker name".to_string());
             }
-        }
-        Ok(serde_json::json!({ "name": worker.name, "model": worker.model }))
-    }).collect::<Result<_, _>>()?;
-    let root = app.path().app_local_data_dir().map_err(|e| e.to_string())?
-        .join("teams").join(&team_id);
+            if let Some(model) = &worker.model {
+                if model.len() > 100
+                    || !model
+                        .chars()
+                        .all(|c| c.is_ascii_alphanumeric() || "._:-".contains(c))
+                {
+                    return Err("Invalid Codex model identifier".to_string());
+                }
+            }
+            Ok(serde_json::json!({ "name": worker.name, "model": worker.model }))
+        })
+        .collect::<Result<_, _>>()?;
+    let root = app
+        .path()
+        .app_local_data_dir()
+        .map_err(|e| e.to_string())?
+        .join("teams")
+        .join(&team_id);
     std::fs::create_dir_all(&root).map_err(|e| e.to_string())?;
-    let server = app.path().resolve("resources/mymux-team-mcp.mjs", tauri::path::BaseDirectory::Resource)
+    let server = app
+        .path()
+        .resolve(
+            "resources/mymux-team-mcp.mjs",
+            tauri::path::BaseDirectory::Resource,
+        )
         .map_err(|e| format!("Team MCP server resource is unavailable: {e}"))?;
     let config = serde_json::json!({
         "mcpServers": { "mymux_team": {
@@ -48,8 +70,11 @@ pub fn prepare_harness_mcp(
         }}
     });
     let config_path = root.join("mcp.json");
-    std::fs::write(&config_path, serde_json::to_vec_pretty(&config).map_err(|e| e.to_string())?)
-        .map_err(|e| e.to_string())?;
+    std::fs::write(
+        &config_path,
+        serde_json::to_vec_pretty(&config).map_err(|e| e.to_string())?,
+    )
+    .map_err(|e| e.to_string())?;
     Ok(config_path.to_string_lossy().into_owned())
 }
 #[derive(Serialize)]
@@ -88,7 +113,11 @@ fn store() -> Result<CommandStore, String> {
 /// name in any shell (PowerShell / Git Bash / CMD), so typing e.g. `cl` offers
 /// `claude --dangerously-skip-permissions`.
 const DEFAULT_COMMANDS: &[(&str, &str, &str)] = &[
-    ("cl", "claude --dangerously-skip-permissions", "Claude Code (skip permission prompts)"),
+    (
+        "cl",
+        "claude --dangerously-skip-permissions",
+        "Claude Code (skip permission prompts)",
+    ),
     ("cc", "claude --continue", "Claude Code: continue"),
     ("cr", "claude --resume", "Claude Code: resume session"),
     ("cp", "claude update", "Update Claude Code"),
@@ -96,7 +125,11 @@ const DEFAULT_COMMANDS: &[(&str, &str, &str)] = &[
     ("co", "codex", "Run Codex"),
     ("cor", "codex resume", "Codex: resume session"),
     ("cle", "clear", "Clear the screen"),
-    ("c&p", "git add -A && git commit -m \"update\" && git push", "Commit and push"),
+    (
+        "c&p",
+        "git add -A && git commit -m \"update\" && git push",
+        "Commit and push",
+    ),
 ];
 
 const DEFAULT_WORKLOG_COMMAND: (&str, &str, &str, &str) = (
@@ -313,7 +346,12 @@ fn sanitize_txt_filename(title: &str) -> String {
     name = name.trim().trim_end_matches('.').trim().to_string();
     // Chars, not bytes: a Korean title would otherwise be cut mid-character.
     if name.chars().count() > 60 {
-        name = name.chars().take(60).collect::<String>().trim_end().to_string();
+        name = name
+            .chars()
+            .take(60)
+            .collect::<String>()
+            .trim_end()
+            .to_string();
     }
     if name.is_empty() {
         name = "메모".to_string();
@@ -408,7 +446,12 @@ mod txt_filename_tests {
 
 fn sorted_dirs_desc(dir: &std::path::Path) -> Vec<std::path::PathBuf> {
     let mut v: Vec<_> = std::fs::read_dir(dir)
-        .map(|rd| rd.flatten().map(|e| e.path()).filter(|p| p.is_dir()).collect())
+        .map(|rd| {
+            rd.flatten()
+                .map(|e| e.path())
+                .filter(|p| p.is_dir())
+                .collect()
+        })
         .unwrap_or_default();
     v.sort();
     v.reverse();
@@ -462,7 +505,9 @@ fn normalize_rollout_cwd_for(value: &str, windows: bool) -> Option<String> {
 fn rollout_session_cwd_for(path: &std::path::Path, windows: bool) -> Option<String> {
     let file = std::fs::File::open(path).ok()?;
     for line in BufReader::new(file).lines().map_while(Result::ok) {
-        let Ok(event) = serde_json::from_str::<Value>(&line) else { continue };
+        let Ok(event) = serde_json::from_str::<Value>(&line) else {
+            continue;
+        };
         if event.get("type").and_then(Value::as_str) != Some("session_meta") {
             continue;
         }
@@ -511,8 +556,8 @@ pub fn codex_rollout_tail(max_bytes: Option<u64>, cwd: Option<String>) -> Result
         .join("sessions");
 
     let candidates = collect_rollout_candidates(&sessions);
-    let path = select_rollout_candidate(&candidates, cwd.as_deref())
-        .ok_or("No codex rollout found")?;
+    let path =
+        select_rollout_candidate(&candidates, cwd.as_deref()).ok_or("No codex rollout found")?;
     let mut f = std::fs::File::open(&path).map_err(|e| e.to_string())?;
     let len = f.metadata().map_err(|e| e.to_string())?.len();
     let start = len.saturating_sub(max_bytes);
@@ -567,10 +612,7 @@ mod codex_rollout_tests {
             normalize_rollout_cwd_for(r"C:\", true),
             Some("c:/".to_string())
         );
-        assert_eq!(
-            normalize_rollout_cwd_for("/", true),
-            Some("/".to_string())
-        );
+        assert_eq!(normalize_rollout_cwd_for("/", true), Some("/".to_string()));
         assert_eq!(
             normalize_rollout_cwd_for("/Project/Mymux/", false),
             Some("/Project/Mymux".to_string())
@@ -587,10 +629,7 @@ mod codex_rollout_tests {
             normalize_rollout_cwd_for(r"/tmp\Name/", false),
             Some(r"/tmp\Name".to_string())
         );
-        assert_eq!(
-            normalize_rollout_cwd_for("/", false),
-            Some("/".to_string())
-        );
+        assert_eq!(normalize_rollout_cwd_for("/", false), Some("/".to_string()));
     }
 
     #[test]
@@ -601,8 +640,14 @@ mod codex_rollout_tests {
         write_rollout(&prefix, r"D:\Project\Mymux-old", "prefix");
         write_rollout(&exact, r"d:/project/mymux/", "exact");
         let candidates = vec![
-            (SystemTime::UNIX_EPOCH + Duration::from_secs(2), prefix.clone()),
-            (SystemTime::UNIX_EPOCH + Duration::from_secs(1), exact.clone()),
+            (
+                SystemTime::UNIX_EPOCH + Duration::from_secs(2),
+                prefix.clone(),
+            ),
+            (
+                SystemTime::UNIX_EPOCH + Duration::from_secs(1),
+                exact.clone(),
+            ),
         ];
 
         assert_eq!(
@@ -619,22 +664,27 @@ mod codex_rollout_tests {
     #[test]
     fn prior_day_exact_session_beats_newer_unrelated_rollout() {
         let root = unique_test_dir();
-        let matching = root.join("2026").join("07").join("29").join("matching.jsonl");
-        let unrelated = root.join("2026").join("07").join("30").join("unrelated.jsonl");
+        let matching = root
+            .join("2026")
+            .join("07")
+            .join("29")
+            .join("matching.jsonl");
+        let unrelated = root
+            .join("2026")
+            .join("07")
+            .join("30")
+            .join("unrelated.jsonl");
         write_rollout(&matching, r"D:\Project\Mymux", "matching-prior-day");
         write_rollout(&unrelated, r"D:\Project\Other", "unrelated-newer-day");
-        set_modified(
-            &matching,
-            SystemTime::UNIX_EPOCH + Duration::from_secs(1),
-        );
-        set_modified(
-            &unrelated,
-            SystemTime::UNIX_EPOCH + Duration::from_secs(2),
-        );
+        set_modified(&matching, SystemTime::UNIX_EPOCH + Duration::from_secs(1));
+        set_modified(&unrelated, SystemTime::UNIX_EPOCH + Duration::from_secs(2));
 
         let candidates = collect_rollout_candidates(&root);
         assert_eq!(candidates.len(), 2, "all date directories must be searched");
-        assert_eq!(candidates[0].1, unrelated, "candidates must be ordered by mtime");
+        assert_eq!(
+            candidates[0].1, unrelated,
+            "candidates must be ordered by mtime"
+        );
 
         assert_eq!(
             select_rollout_candidate_for(&candidates, Some(r"D:\Project\Mymux"), true),
@@ -674,23 +724,34 @@ fn app_server_request(
         "params": params.unwrap_or_else(|| serde_json::json!({})),
     });
     writeln!(stdin, "{}", request).map_err(|e| format!("Codex app-server write failed: {e}"))?;
-    stdin.flush().map_err(|e| format!("Codex app-server flush failed: {e}"))?;
+    stdin
+        .flush()
+        .map_err(|e| format!("Codex app-server flush failed: {e}"))?;
     let mut line = String::new();
     loop {
         line.clear();
-        let n = reader.read_line(&mut line).map_err(|e| format!("Codex app-server read failed: {e}"))?;
-        if n == 0 { return Err("Codex app-server closed before replying".to_string()); }
+        let n = reader
+            .read_line(&mut line)
+            .map_err(|e| format!("Codex app-server read failed: {e}"))?;
+        if n == 0 {
+            return Err("Codex app-server closed before replying".to_string());
+        }
         let value: Value = match serde_json::from_str(line.trim()) {
             Ok(v) => v,
             Err(_) => continue,
         };
-        if value.get("id").and_then(Value::as_u64) != Some(id) { continue; }
-        if let Some(error) = value.get("error") { return Err(format!("Codex app-server error: {error}")); }
+        if value.get("id").and_then(Value::as_u64) != Some(id) {
+            continue;
+        }
+        if let Some(error) = value.get("error") {
+            return Err(format!("Codex app-server error: {error}"));
+        }
         return Ok(value.get("result").cloned().unwrap_or(Value::Null));
     }
 }
 
-fn start_codex_app_server() -> Result<(Child, ChildStdin, BufReader<std::process::ChildStdout>), String> {
+fn start_codex_app_server()
+-> Result<(Child, ChildStdin, BufReader<std::process::ChildStdout>), String> {
     let mut command = Command::new("codex");
     command
         .args(["app-server", "--stdio"])
@@ -709,8 +770,14 @@ fn start_codex_app_server() -> Result<(Child, ChildStdin, BufReader<std::process
     let mut child = command
         .spawn()
         .map_err(|e| format!("Cannot start Codex app-server: {e}"))?;
-    let stdin = child.stdin.take().ok_or("Codex app-server stdin unavailable")?;
-    let stdout = child.stdout.take().ok_or("Codex app-server stdout unavailable")?;
+    let stdin = child
+        .stdin
+        .take()
+        .ok_or("Codex app-server stdin unavailable")?;
+    let stdout = child
+        .stdout
+        .take()
+        .ok_or("Codex app-server stdout unavailable")?;
     Ok((child, stdin, BufReader::new(stdout)))
 }
 
@@ -719,13 +786,26 @@ fn initialize_codex_app_server(
     stdin: &mut ChildStdin,
     reader: &mut BufReader<std::process::ChildStdout>,
 ) -> Result<(), String> {
-    app_server_request(child, stdin, reader, 1, "initialize", Some(serde_json::json!({
-        "clientInfo": { "name": "mymux", "title": "Mymux", "version": env!("CARGO_PKG_VERSION") },
-        "capabilities": { "experimentalApi": true }
-    })))?;
-    writeln!(stdin, "{}", serde_json::json!({"method":"initialized","params":{}}))
-        .map_err(|e| format!("Codex app-server initialized failed: {e}"))?;
-    stdin.flush().map_err(|e| format!("Codex app-server flush failed: {e}"))?;
+    app_server_request(
+        child,
+        stdin,
+        reader,
+        1,
+        "initialize",
+        Some(serde_json::json!({
+            "clientInfo": { "name": "mymux", "title": "Mymux", "version": env!("CARGO_PKG_VERSION") },
+            "capabilities": { "experimentalApi": true }
+        })),
+    )?;
+    writeln!(
+        stdin,
+        "{}",
+        serde_json::json!({"method":"initialized","params":{}})
+    )
+    .map_err(|e| format!("Codex app-server initialized failed: {e}"))?;
+    stdin
+        .flush()
+        .map_err(|e| format!("Codex app-server flush failed: {e}"))?;
     Ok(())
 }
 
@@ -734,17 +814,41 @@ pub fn codex_reset_credits() -> Result<CodexResetCredits, String> {
     let (mut child, mut stdin, mut reader) = start_codex_app_server()?;
     let result = (|| {
         initialize_codex_app_server(&mut child, &mut stdin, &mut reader)?;
-        let result = app_server_request(&mut child, &mut stdin, &mut reader, 2, "account/rateLimits/read", None)?;
+        let result = app_server_request(
+            &mut child,
+            &mut stdin,
+            &mut reader,
+            2,
+            "account/rateLimits/read",
+            None,
+        )?;
         let credits = result.get("rateLimitResetCredits");
-        let rows = credits.and_then(|v| v.get("credits")).and_then(Value::as_array)
-            .map(|items| items.iter().map(|item| CodexResetCredit {
-                id: item.get("id").and_then(Value::as_str).map(str::to_string),
-                title: item.get("title").and_then(Value::as_str).map(str::to_string),
-                description: item.get("description").and_then(Value::as_str).map(str::to_string),
-                expires_at: item.get("expiresAt").and_then(Value::as_i64),
-            }).collect()).unwrap_or_default();
+        let rows = credits
+            .and_then(|v| v.get("credits"))
+            .and_then(Value::as_array)
+            .map(|items| {
+                items
+                    .iter()
+                    .map(|item| CodexResetCredit {
+                        id: item.get("id").and_then(Value::as_str).map(str::to_string),
+                        title: item
+                            .get("title")
+                            .and_then(Value::as_str)
+                            .map(str::to_string),
+                        description: item
+                            .get("description")
+                            .and_then(Value::as_str)
+                            .map(str::to_string),
+                        expires_at: item.get("expiresAt").and_then(Value::as_i64),
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
         Ok(CodexResetCredits {
-            available_count: credits.and_then(|v| v.get("availableCount")).and_then(Value::as_u64).unwrap_or(0),
+            available_count: credits
+                .and_then(|v| v.get("availableCount"))
+                .and_then(Value::as_u64)
+                .unwrap_or(0),
             credits: rows,
         })
     })();
@@ -758,9 +862,22 @@ pub fn codex_consume_reset_credit(credit_id: Option<String>) -> Result<String, S
     let result = (|| {
         initialize_codex_app_server(&mut child, &mut stdin, &mut reader)?;
         let mut params = serde_json::json!({ "idempotencyKey": uuid::Uuid::new_v4().to_string() });
-        if let Some(id) = credit_id.filter(|s| !s.trim().is_empty()) { params["creditId"] = Value::String(id); }
-        let result = app_server_request(&mut child, &mut stdin, &mut reader, 3, "account/rateLimitResetCredit/consume", Some(params))?;
-        Ok(result.get("outcome").and_then(Value::as_str).unwrap_or("unknown").to_string())
+        if let Some(id) = credit_id.filter(|s| !s.trim().is_empty()) {
+            params["creditId"] = Value::String(id);
+        }
+        let result = app_server_request(
+            &mut child,
+            &mut stdin,
+            &mut reader,
+            3,
+            "account/rateLimitResetCredit/consume",
+            Some(params),
+        )?;
+        Ok(result
+            .get("outcome")
+            .and_then(Value::as_str)
+            .unwrap_or("unknown")
+            .to_string())
     })();
     let _ = child.kill();
     result
@@ -800,7 +917,12 @@ fn read_claude_credentials(config_dir: &std::path::Path) -> Result<String, Strin
     #[cfg(target_os = "macos")]
     {
         let out = std::process::Command::new("/usr/bin/security")
-            .args(["find-generic-password", "-s", "Claude Code-credentials", "-w"])
+            .args([
+                "find-generic-password",
+                "-s",
+                "Claude Code-credentials",
+                "-w",
+            ])
             .output()
             .map_err(|e| e.to_string())?;
         if out.status.success() {

@@ -18,11 +18,31 @@ fn key_path() -> Result<PathBuf, String> {
 
 #[cfg(windows)]
 fn protect(data: &[u8]) -> Result<Vec<u8>, String> {
-    use windows_sys::Win32::{Foundation::LocalFree, Security::Cryptography::{CryptProtectData, CRYPT_INTEGER_BLOB}};
+    use windows_sys::Win32::{
+        Foundation::LocalFree,
+        Security::Cryptography::{CRYPT_INTEGER_BLOB, CryptProtectData},
+    };
     unsafe {
-        let mut input = CRYPT_INTEGER_BLOB { cbData: data.len() as u32, pbData: data.as_ptr() as *mut u8 };
-        let mut output = CRYPT_INTEGER_BLOB { cbData: 0, pbData: std::ptr::null_mut() };
-        if CryptProtectData(&mut input, std::ptr::null(), std::ptr::null_mut(), std::ptr::null_mut(), std::ptr::null_mut(), 0, &mut output) == 0 { return Err("Windows DPAPI encryption failed".into()); }
+        let mut input = CRYPT_INTEGER_BLOB {
+            cbData: data.len() as u32,
+            pbData: data.as_ptr() as *mut u8,
+        };
+        let mut output = CRYPT_INTEGER_BLOB {
+            cbData: 0,
+            pbData: std::ptr::null_mut(),
+        };
+        if CryptProtectData(
+            &mut input,
+            std::ptr::null(),
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+            0,
+            &mut output,
+        ) == 0
+        {
+            return Err("Windows DPAPI encryption failed".into());
+        }
         let bytes = std::slice::from_raw_parts(output.pbData, output.cbData as usize).to_vec();
         LocalFree(output.pbData as *mut _);
         Ok(bytes)
@@ -31,25 +51,55 @@ fn protect(data: &[u8]) -> Result<Vec<u8>, String> {
 
 #[cfg(windows)]
 fn unprotect(data: &[u8]) -> Result<Vec<u8>, String> {
-    use windows_sys::Win32::{Foundation::LocalFree, Security::Cryptography::{CryptUnprotectData, CRYPT_INTEGER_BLOB}};
+    use windows_sys::Win32::{
+        Foundation::LocalFree,
+        Security::Cryptography::{CRYPT_INTEGER_BLOB, CryptUnprotectData},
+    };
     unsafe {
-        let mut input = CRYPT_INTEGER_BLOB { cbData: data.len() as u32, pbData: data.as_ptr() as *mut u8 };
-        let mut output = CRYPT_INTEGER_BLOB { cbData: 0, pbData: std::ptr::null_mut() };
-        if CryptUnprotectData(&mut input, std::ptr::null_mut(), std::ptr::null_mut(), std::ptr::null_mut(), std::ptr::null_mut(), 0, &mut output) == 0 { return Err("Windows DPAPI decryption failed".into()); }
+        let mut input = CRYPT_INTEGER_BLOB {
+            cbData: data.len() as u32,
+            pbData: data.as_ptr() as *mut u8,
+        };
+        let mut output = CRYPT_INTEGER_BLOB {
+            cbData: 0,
+            pbData: std::ptr::null_mut(),
+        };
+        if CryptUnprotectData(
+            &mut input,
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+            0,
+            &mut output,
+        ) == 0
+        {
+            return Err("Windows DPAPI decryption failed".into());
+        }
         let bytes = std::slice::from_raw_parts(output.pbData, output.cbData as usize).to_vec();
         LocalFree(output.pbData as *mut _);
         Ok(bytes)
     }
 }
 
-#[cfg(not(windows))] fn protect(_: &[u8]) -> Result<Vec<u8>, String> { Err("Encrypted Deepgram keys are supported on Windows only".into()) }
-#[cfg(not(windows))] fn unprotect(_: &[u8]) -> Result<Vec<u8>, String> { Err("Encrypted Deepgram keys are supported on Windows only".into()) }
+#[cfg(not(windows))]
+fn protect(_: &[u8]) -> Result<Vec<u8>, String> {
+    Err("Encrypted Deepgram keys are supported on Windows only".into())
+}
+#[cfg(not(windows))]
+fn unprotect(_: &[u8]) -> Result<Vec<u8>, String> {
+    Err("Encrypted Deepgram keys are supported on Windows only".into())
+}
 
 #[tauri::command]
 pub fn voice_store_deepgram_key(key: String) -> Result<(), String> {
     let key = key.trim();
-    if key.is_empty() { return Err("API key is empty".into()); }
-    if key.len() > 512 { return Err("API key is too long".into()); }
+    if key.is_empty() {
+        return Err("API key is empty".into());
+    }
+    if key.len() > 512 {
+        return Err("API key is too long".into());
+    }
     let path = key_path()?;
     let tmp = path.with_extension("tmp");
     std::fs::write(&tmp, protect(key.as_bytes())?).map_err(|e| e.to_string())?;
@@ -59,25 +109,41 @@ pub fn voice_store_deepgram_key(key: String) -> Result<(), String> {
 #[tauri::command]
 pub async fn voice_deepgram_token() -> Result<String, String> {
     let bytes = std::fs::read(key_path()?).map_err(|_| "No saved Deepgram API key".to_string())?;
-    let key = String::from_utf8(unprotect(&bytes)?).map_err(|_| "Saved Deepgram API key is invalid".to_string())?;
+    let key = String::from_utf8(unprotect(&bytes)?)
+        .map_err(|_| "Saved Deepgram API key is invalid".to_string())?;
     let response = reqwest::Client::new()
         .post("https://api.deepgram.com/v1/auth/grant")
         .header("Authorization", format!("Token {key}"))
         .json(&serde_json::json!({"ttl_seconds": 30}))
-        .send().await.map_err(|e| e.to_string())?;
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
     if !response.status().is_success() {
         let code = response.status().as_u16();
         let hint = match code {
             // /v1/auth/grant needs the API key to have at least Member permission.
-            403 => " — 이 Deepgram API 키에 임시 토큰 발급 권한이 없습니다. 콘솔에서 키를 'Member' 이상 권한으로 다시 만들어 주세요.",
-            401 => " — Deepgram API 키가 유효하지 않습니다(오타/만료). 콘솔에서 키를 다시 복사해 저장해 주세요.",
+            403 => {
+                " — 이 Deepgram API 키에 임시 토큰 발급 권한이 없습니다. 콘솔에서 키를 'Member' 이상 권한으로 다시 만들어 주세요."
+            }
+            401 => {
+                " — Deepgram API 키가 유효하지 않습니다(오타/만료). 콘솔에서 키를 다시 복사해 저장해 주세요."
+            }
             _ => "",
         };
         return Err(format!("Deepgram token request failed ({code}){hint}"));
     }
-    #[derive(Deserialize)] struct Grant { access_token: String }
-    let token = response.json::<Grant>().await.map_err(|e| e.to_string())?.access_token;
-    if token.is_empty() { return Err("Deepgram returned an empty token".into()); }
+    #[derive(Deserialize)]
+    struct Grant {
+        access_token: String,
+    }
+    let token = response
+        .json::<Grant>()
+        .await
+        .map_err(|e| e.to_string())?
+        .access_token;
+    if token.is_empty() {
+        return Err("Deepgram returned an empty token".into());
+    }
     Ok(token)
 }
 
@@ -126,7 +192,13 @@ fn validate_runner(path: &Path, mode: LocalMode) -> Result<(), String> {
             "whisper-faster",
             "whisper",
         ],
-        LocalMode::Python => &["python.exe", "pythonw.exe", "python3.exe", "python", "python3"],
+        LocalMode::Python => &[
+            "python.exe",
+            "pythonw.exe",
+            "python3.exe",
+            "python",
+            "python3",
+        ],
     };
     if !allowed.contains(&name.as_str()) {
         return Err(match mode {
@@ -147,7 +219,14 @@ fn validate_runner(path: &Path, mode: LocalMode) -> Result<(), String> {
 /// are matched against a closed list rather than escaped.
 fn validate_model(model: &str) -> Result<(), String> {
     const MODELS: [&str; 8] = [
-        "tiny", "base", "small", "medium", "large-v2", "large-v3", "turbo", "distil-large-v3",
+        "tiny",
+        "base",
+        "small",
+        "medium",
+        "large-v2",
+        "large-v3",
+        "turbo",
+        "distil-large-v3",
     ];
     if MODELS.contains(&model) {
         Ok(())
@@ -169,10 +248,10 @@ fn validate_language(language: &str) -> Result<(), String> {
 /// development builds behave like an installed one.
 fn wrapper_script(app: &tauri::AppHandle) -> Result<PathBuf, String> {
     use tauri::Manager;
-    if let Ok(path) = app
-        .path()
-        .resolve("resources/whisper_wrapper.py", tauri::path::BaseDirectory::Resource)
-        && path.is_file()
+    if let Ok(path) = app.path().resolve(
+        "resources/whisper_wrapper.py",
+        tauri::path::BaseDirectory::Resource,
+    ) && path.is_file()
     {
         return Ok(path);
     }
@@ -234,7 +313,11 @@ pub async fn voice_transcribe_local(
                 "--model",
                 &model,
                 "--language",
-                if language == "auto" { "auto" } else { &language },
+                if language == "auto" {
+                    "auto"
+                } else {
+                    &language
+                },
                 "--task",
                 "transcribe",
                 "--output_format",
@@ -290,13 +373,15 @@ pub async fn voice_transcribe_local(
             // The first local-voice release ran `<exe> <audio> <model> ko-KR`, and
             // people built their own wrapper for that. It reads the second argument
             // as the model, so our `--model` reaches WhisperModel("--model").
-            return Err(if mode == LocalMode::Standalone && reason.contains("Invalid model size") {
-                format!(
-                    "{reason}\n\n선택한 실행 파일이 Mymux 가 호출하는 방식(Faster-Whisper-XXL)과 맞지 않습니다. 🎙 의 [자동 설치하고 바로 연결] 을 누르면 필요한 것을 모두 설치해 연결합니다."
-                )
-            } else {
-                reason
-            });
+            return Err(
+                if mode == LocalMode::Standalone && reason.contains("Invalid model size") {
+                    format!(
+                        "{reason}\n\n선택한 실행 파일이 Mymux 가 호출하는 방식(Faster-Whisper-XXL)과 맞지 않습니다. 🎙 의 [자동 설치하고 바로 연결] 을 누르면 필요한 것을 모두 설치해 연결합니다."
+                    )
+                } else {
+                    reason
+                },
+            );
         }
         match mode {
             LocalMode::Python => {
@@ -318,7 +403,10 @@ pub async fn voice_transcribe_local(
 /// timestamp lines out of that beats reporting "no output".
 fn read_transcript_dir(work: &Path) -> Result<String, String> {
     let mut best: Option<PathBuf> = None;
-    for entry in std::fs::read_dir(work).map_err(|e| e.to_string())?.flatten() {
+    for entry in std::fs::read_dir(work)
+        .map_err(|e| e.to_string())?
+        .flatten()
+    {
         let path = entry.path();
         let ext = path
             .extension()
@@ -400,11 +488,19 @@ pub async fn voice_check_local(mode: String, runner_path: String) -> Result<Stri
 
     if output.status.success() {
         let text = String::from_utf8_lossy(&output.stdout);
-        let first = text.lines().find(|l| !l.trim().is_empty()).unwrap_or("").trim();
+        let first = text
+            .lines()
+            .find(|l| !l.trim().is_empty())
+            .unwrap_or("")
+            .trim();
         return Ok(match mode {
             LocalMode::Python => first.to_string(),
             LocalMode::Standalone => {
-                if first.is_empty() { "실행 파일 확인됨".into() } else { first.chars().take(120).collect() }
+                if first.is_empty() {
+                    "실행 파일 확인됨".into()
+                } else {
+                    first.chars().take(120).collect()
+                }
             }
         });
     }
@@ -500,7 +596,9 @@ fn record_model(model: &str) -> Result<(), String> {
 
 /// True when `runner` is the Python this module installed.
 fn is_managed(runner: &Path) -> bool {
-    runtime_dir().map(|d| runner.starts_with(d)).unwrap_or(false)
+    runtime_dir()
+        .map(|d| runner.starts_with(d))
+        .unwrap_or(false)
 }
 
 /// A command for `program` with the private model cache and UTF-8 output.
@@ -586,7 +684,9 @@ async fn run_logged(
         Ok(status) => status.map_err(|e| format!("{label}: {e}"))?,
         Err(_) => {
             let _ = child.kill().await;
-            return Err(format!("{label}: 시간이 너무 오래 걸려 중단했습니다. 네트워크를 확인하고 다시 시도해 주세요."));
+            return Err(format!(
+                "{label}: 시간이 너무 오래 걸려 중단했습니다. 네트워크를 확인하고 다시 시도해 주세요."
+            ));
         }
     };
     let _ = out_task.await;
@@ -628,9 +728,15 @@ async fn download(url: &str, dest: &Path) -> Result<(), String> {
         .await
         .map_err(|e| format!("내려받을 수 없습니다 ({url}): {e}"))?;
     if !response.status().is_success() {
-        return Err(format!("내려받을 수 없습니다 ({url}): HTTP {}", response.status().as_u16()));
+        return Err(format!(
+            "내려받을 수 없습니다 ({url}): HTTP {}",
+            response.status().as_u16()
+        ));
     }
-    let bytes = response.bytes().await.map_err(|e| format!("내려받을 수 없습니다 ({url}): {e}"))?;
+    let bytes = response
+        .bytes()
+        .await
+        .map_err(|e| format!("내려받을 수 없습니다 ({url}): {e}"))?;
     std::fs::write(dest, &bytes).map_err(|e| e.to_string())
 }
 
@@ -666,12 +772,20 @@ async fn ensure_python(app: &tauri::AppHandle) -> Result<PathBuf, String> {
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
         // Full path: a `tar` earlier on PATH (Git's GNU tar) cannot read zip.
-        let tar = PathBuf::from(std::env::var("SystemRoot").unwrap_or_else(|_| "C:\\Windows".into()))
-            .join("System32")
-            .join("tar.exe");
+        let tar =
+            PathBuf::from(std::env::var("SystemRoot").unwrap_or_else(|_| "C:\\Windows".into()))
+                .join("System32")
+                .join("tar.exe");
         let mut command = tokio::process::Command::new(tar);
         command.arg("-xf").arg(&zip).arg("-C").arg(&dir);
-        run_logged(app, command, Duration::from_secs(120), 1, "Python 압축 해제").await?;
+        run_logged(
+            app,
+            command,
+            Duration::from_secs(120),
+            1,
+            "Python 압축 해제",
+        )
+        .await?;
         let _ = std::fs::remove_file(&zip);
         enable_site(&dir)
     }
@@ -704,14 +818,20 @@ async fn ensure_python(app: &tauri::AppHandle) -> Result<PathBuf, String> {
         }
     }
     let Some(system) = system else {
-        return Err("Python 3 가 필요합니다. 패키지 관리자로 python3 를 설치한 뒤 다시 시도해 주세요.".into());
+        return Err(
+            "Python 3 가 필요합니다. 패키지 관리자로 python3 를 설치한 뒤 다시 시도해 주세요."
+                .into(),
+        );
     };
     let venv = runtime_dir()?.join("venv");
     let mut command = tokio::process::Command::new(system);
     command.arg("-m").arg("venv").arg(&venv);
-    if let Err(e) = run_logged(app, command, Duration::from_secs(120), 1, "가상환경 생성").await {
+    if let Err(e) = run_logged(app, command, Duration::from_secs(120), 1, "가상환경 생성").await
+    {
         let _ = std::fs::remove_dir_all(&venv);
-        return Err(format!("{e} (Debian/Ubuntu 는 python3-venv 패키지가 필요할 수 있습니다)"));
+        return Err(format!(
+            "{e} (Debian/Ubuntu 는 python3-venv 패키지가 필요할 수 있습니다)"
+        ));
     }
     Ok(python)
 }
@@ -771,18 +891,37 @@ pub async fn voice_setup_local(
         "--no-warn-script-location",
         "faster-whisper",
     ]);
-    run_logged(&app, install, Duration::from_secs(1800), 3, "faster-whisper 설치").await?;
+    run_logged(
+        &app,
+        install,
+        Duration::from_secs(1800),
+        3,
+        "faster-whisper 설치",
+    )
+    .await?;
     // The runtime works from here on; a failed model download below leaves it
     // usable and only the retry has anything left to do.
     mark_runtime_ready()?;
 
-    emit_progress(&app, 4, &format!("{model} 모델 내려받는 중 (수 분 걸릴 수 있습니다)"), "");
+    emit_progress(
+        &app,
+        4,
+        &format!("{model} 모델 내려받는 중 (수 분 걸릴 수 있습니다)"),
+        "",
+    );
     let script = wrapper_script(&app)?;
     let mut prefetch = managed_command(&python);
     prefetch
         .arg(&script)
         .args(["--prefetch", "--model", &model]);
-    run_logged(&app, prefetch, Duration::from_secs(3600), 4, "모델 내려받기").await?;
+    run_logged(
+        &app,
+        prefetch,
+        Duration::from_secs(3600),
+        4,
+        "모델 내려받기",
+    )
+    .await?;
     record_model(&model)?;
 
     managed_status().ok_or_else(|| "설치는 끝났지만 상태를 읽을 수 없습니다.".to_string())
@@ -817,11 +956,17 @@ pub fn voice_pick_runner(app: tauri::AppHandle) -> Option<String> {
 fn base64_decode(input: &str) -> Result<Vec<u8>, String> {
     let table = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
     let mut out = Vec::with_capacity(input.len() * 3 / 4);
-    let mut value = 0u32; let mut bits = 0u8;
+    let mut value = 0u32;
+    let mut bits = 0u8;
     for c in input.bytes().filter(|c| !b"=\r\n".contains(c)) {
         let n = table.iter().position(|x| *x == c).ok_or("Invalid base64")? as u32;
-        value = (value << 6) | n; bits += 6;
-        if bits >= 8 { bits -= 8; out.push((value >> bits) as u8); value &= (1 << bits) - 1; }
+        value = (value << 6) | n;
+        bits += 6;
+        if bits >= 8 {
+            bits -= 8;
+            out.push((value >> bits) as u8);
+            value &= (1 << bits) - 1;
+        }
     }
     Ok(out)
 }

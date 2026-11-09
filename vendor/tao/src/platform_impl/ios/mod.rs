@@ -85,10 +85,10 @@ use std::fmt;
 
 pub(crate) use self::event_loop::PlatformSpecificEventLoopAttributes;
 pub use self::{
-  event_loop::{EventLoop, EventLoopProxy, EventLoopWindowTarget},
-  keycode::{keycode_from_scancode, keycode_to_scancode},
-  monitor::{MonitorHandle, VideoMode},
-  window::{PlatformSpecificWindowBuilderAttributes, Window, WindowId},
+    event_loop::{EventLoop, EventLoopProxy, EventLoopWindowTarget},
+    keycode::{keycode_from_scancode, keycode_to_scancode},
+    monitor::{MonitorHandle, VideoMode},
+    window::{PlatformSpecificWindowBuilderAttributes, Window, WindowId},
 };
 pub(crate) use crate::icon::NoIcon as PlatformIcon;
 pub(crate) use badge::set_badge_count;
@@ -99,15 +99,15 @@ pub struct KeyEventExtra {}
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct DeviceId {
-  uiscreen: ffi::id,
+    uiscreen: ffi::id,
 }
 
 impl DeviceId {
-  pub unsafe fn dummy() -> Self {
-    DeviceId {
-      uiscreen: std::ptr::null_mut(),
+    pub unsafe fn dummy() -> Self {
+        DeviceId {
+            uiscreen: std::ptr::null_mut(),
+        }
     }
-  }
 }
 
 unsafe impl Send for DeviceId {}
@@ -118,7 +118,7 @@ unsafe impl Sync for DeviceId {}
 pub enum OsError {}
 
 impl fmt::Display for OsError {
-  fn fmt(&self, _: &mut fmt::Formatter<'_>) -> fmt::Result {
-    unreachable!()
-  }
+    fn fmt(&self, _: &mut fmt::Formatter<'_>) -> fmt::Result {
+        unreachable!()
+    }
 }

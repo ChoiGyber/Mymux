@@ -312,8 +312,7 @@ fn ingest_line(line: &str, scan: &mut FileScan) {
                 // notification, and a teammate's often never arrives at all.
                 // Matched by suffix so a later build's third spelling of "I
                 // started it" is not mistaken for a result.
-                let handed_off =
-                    reported.ends_with("_launched") || reported.ends_with("_spawned");
+                let handed_off = reported.ends_with("_launched") || reported.ends_with("_spawned");
                 if !is_error && handed_off {
                     agent.background = true;
                     continue;
@@ -417,7 +416,9 @@ fn project_dir(cwd: &str) -> Option<PathBuf> {
     if slug.is_empty() {
         return None;
     }
-    let root = crate::statusline::claude_config_dir().ok()?.join("projects");
+    let root = crate::statusline::claude_config_dir()
+        .ok()?
+        .join("projects");
     let exact = root.join(&slug);
     if exact.is_dir() {
         return Some(exact);
@@ -426,7 +427,10 @@ fn project_dir(cwd: &str) -> Option<PathBuf> {
     // launched from a differently-cased spelling of the same path keeps that
     // directory for the life of the session.
     for entry in std::fs::read_dir(&root).ok()?.flatten() {
-        if entry.file_name().to_string_lossy().eq_ignore_ascii_case(&slug)
+        if entry
+            .file_name()
+            .to_string_lossy()
+            .eq_ignore_ascii_case(&slug)
             && entry.path().is_dir()
         {
             return Some(entry.path());
@@ -537,7 +541,9 @@ fn assign_transcripts(
         let (Some(dir), Some(current)) = (pane_dirs[i].clone(), chosen[i].clone()) else {
             continue;
         };
-        let Some(list) = by_dir.get(&dir) else { continue };
+        let Some(list) = by_dir.get(&dir) else {
+            continue;
+        };
         let Some(current_c) = list.iter().find(|c| c.path == current) else {
             continue;
         };
@@ -569,7 +575,9 @@ fn assign_transcripts(
             continue;
         }
         let Some(dir) = &pane_dirs[i] else { continue };
-        let Some(list) = by_dir.get(dir) else { continue };
+        let Some(list) = by_dir.get(dir) else {
+            continue;
+        };
         // One minute of slack: the pane notices its AI CLI from the first status
         // footer it prints, which is after Claude Code opened the transcript.
         // With no launch time to go on, skip straight to the newest transcript
@@ -639,10 +647,10 @@ pub fn claude_agent_activity(panes: Vec<PaneQuery>) -> Result<Vec<PaneAgents>, S
             // already parsed in place rather than blanking the pane's list.
             let _ = scan_file(path, scan);
             row.transcript = Some(path.to_string_lossy().to_string());
-            row.session_id = scan.session_id.clone().or_else(|| {
-                path.file_stem()
-                    .map(|s| s.to_string_lossy().to_string())
-            });
+            row.session_id = scan
+                .session_id
+                .clone()
+                .or_else(|| path.file_stem().map(|s| s.to_string_lossy().to_string()));
             let start = scan.order.len().saturating_sub(MAX_AGENTS_PER_PANE);
             row.agents = scan.order[start..]
                 .iter()
@@ -732,9 +740,15 @@ mod tests {
     #[test]
     fn parses_transcript_timestamps() {
         assert_eq!(iso_to_epoch_ms("1970-01-01T00:00:00.000Z"), Some(0));
-        assert_eq!(iso_to_epoch_ms("2026-08-27T02:13:07.664Z"), Some(1_787_796_787_664));
+        assert_eq!(
+            iso_to_epoch_ms("2026-08-27T02:13:07.664Z"),
+            Some(1_787_796_787_664)
+        );
         // Seconds-only form (no fractional part) still parses.
-        assert_eq!(iso_to_epoch_ms("2026-08-27T02:13:07Z"), Some(1_787_796_787_000));
+        assert_eq!(
+            iso_to_epoch_ms("2026-08-27T02:13:07Z"),
+            Some(1_787_796_787_000)
+        );
         assert_eq!(iso_to_epoch_ms("not a timestamp"), None);
     }
 
@@ -839,8 +853,14 @@ mod tests {
             &mut scan,
         );
         let notification = r#"{"type":"queue-operation","sessionId":"s1","timestamp":"TS","content":"<task-notification>\n<tool-use-id>toolu_3</tool-use-id>\n<status>completed</status>\n</task-notification>"}"#;
-        ingest_line(&notification.replace("TS", "2026-08-27T02:01:00.000Z"), &mut scan);
-        ingest_line(&notification.replace("TS", "2026-08-27T02:09:00.000Z"), &mut scan);
+        ingest_line(
+            &notification.replace("TS", "2026-08-27T02:01:00.000Z"),
+            &mut scan,
+        );
+        ingest_line(
+            &notification.replace("TS", "2026-08-27T02:09:00.000Z"),
+            &mut scan,
+        );
         assert_eq!(scan.agents["toolu_3"].duration_ms, Some(60_000));
     }
 
@@ -893,7 +913,10 @@ mod tests {
     /// in the same folder must not be handed the same transcript.
     #[test]
     fn two_panes_in_one_folder_take_different_transcripts() {
-        let panes = [pane(1, Some(NOW - 9_000), None), pane(2, Some(NOW - 3_000), None)];
+        let panes = [
+            pane(1, Some(NOW - 9_000), None),
+            pane(2, Some(NOW - 3_000), None),
+        ];
         let got = assign(
             &panes,
             vec![
@@ -955,7 +978,10 @@ mod tests {
                 candidate("busy.jsonl", NOW - 800_000, NOW - 100),
             ],
         );
-        assert_eq!(got, vec![Some("quiet.jsonl".into()), Some("busy.jsonl".into())]);
+        assert_eq!(
+            got,
+            vec![Some("quiet.jsonl".into()), Some("busy.jsonl".into())]
+        );
     }
 
     /// `claude --resume` appends to a transcript that began long before the pane
@@ -992,7 +1018,10 @@ mod tests {
     #[test]
     fn a_vanished_transcript_is_resolved_again() {
         let panes = [pane(1, Some(NOW - 9_000), Some("deleted.jsonl"))];
-        let got = assign(&panes, vec![candidate("only.jsonl", NOW - 9_100, NOW - 100)]);
+        let got = assign(
+            &panes,
+            vec![candidate("only.jsonl", NOW - 9_100, NOW - 100)],
+        );
         assert_eq!(got, vec![Some("only.jsonl".into())]);
     }
 
@@ -1057,7 +1086,8 @@ mod tests {
         assert_eq!(scan.order, vec!["toolu_a"]);
 
         // The rest of the record lands: the second agent shows up now.
-        let tail = r#""name":"Agent","input":{"description":"two","subagent_type":"t","prompt":"p"}}]}}"#;
+        let tail =
+            r#""name":"Agent","input":{"description":"two","subagent_type":"t","prompt":"p"}}]}}"#;
         std::fs::write(&path, format!("{first}\n{torn}{tail}\n")).unwrap();
         scan_file(&path, &mut scan).unwrap();
         assert_eq!(scan.order, vec!["toolu_a", "toolu_b"]);

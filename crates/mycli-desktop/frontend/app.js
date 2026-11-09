@@ -770,6 +770,108 @@ async function setupListeners() {
   const notifyChkCtxBadge = document.getElementById("notify-chk-ctxbadge");
   const notifyChkCtxVoice = document.getElementById("notify-chk-ctxvoice");
   initFoxDrag();
+  const btnMobile = document.getElementById("btn-mobile");
+  const mobileModal = document.getElementById("mobile-modal");
+  const mobileQr = document.getElementById("mobile-qr");
+  const mobileStatus = document.getElementById("mobile-status");
+  const mobilePending = document.getElementById("mobile-pending");
+  const mobileApproved = document.getElementById("mobile-approved");
+  const mobileCloseButtons = [document.getElementById("mobile-modal-close"), document.getElementById("mobile-modal-done")];
+  let mobileStatusTimer = null;
+  const renderMobileDevices = (container, devices, pending) => {
+    container.replaceChildren();
+    if (!devices?.length) {
+      const empty = document.createElement("div");
+      empty.className = "mobile-device-empty";
+      empty.textContent = pending ? "승인을 기다리는 기기가 없습니다." : "승인된 기기가 없습니다.";
+      container.appendChild(empty);
+      return;
+    }
+    for (const device of devices) {
+      const row = document.createElement("div");
+      row.className = "mobile-device-row";
+      const label = document.createElement("span");
+      label.textContent = device.name || `${device.publicKey.slice(0, 12)}…`;
+      row.appendChild(label);
+      const action = document.createElement("button");
+      action.type = "button";
+      action.textContent = pending ? "승인" : "해제";
+      action.addEventListener("click", async () => {
+        try {
+          if (pending) {
+            const name = `Phone ${device.publicKey.slice(0, 6)}`;
+            await invoke("mobile_gateway_approve", { publicKey: device.publicKey, name });
+          } else {
+            if (!window.confirm(`${device.name} 연결을 해제할까요?`)) return;
+            await invoke("mobile_gateway_revoke", { publicKey: device.publicKey });
+          }
+          await refreshMobileStatus();
+        } catch (error) {
+          mobileStatus.textContent = `기기 설정 실패: ${String(error)}`;
+        }
+      });
+      row.appendChild(action);
+      container.appendChild(row);
+    }
+  };
+  const refreshMobileStatus = async () => {
+    try {
+      const state = await invoke("mobile_gateway_status");
+      const pairing = state.pairing || state;
+      if (!state.running) {
+        mobileStatus.textContent = "모바일 연결이 꺼져 있습니다.";
+        mobileQr.removeAttribute("src");
+      } else {
+        mobileStatus.textContent = pairing.host
+          ? `${pairing.host}:${pairing.port} · 일회용 코드 만료 시각 ${new Date(pairing.pairingCode?.expiresAt || 0).toLocaleTimeString()}`
+          : `${state.host}:${state.port} · QR 코드가 만료되었습니다. 갱신하세요.`;
+        if (pairing.qrSvg) mobileQr.src = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(pairing.qrSvg)}`;
+        else mobileQr.removeAttribute("src");
+      }
+      renderMobileDevices(mobilePending, state.pending, true);
+      renderMobileDevices(mobileApproved, state.devices, false);
+    } catch (error) {
+      mobileStatus.textContent = `모바일 게이트웨이 상태를 읽지 못했습니다: ${String(error)}`;
+    }
+  };
+  if (btnMobile && mobileModal) {
+    const closeMobileModal = () => {
+      mobileModal.classList.add("hidden");
+      if (mobileStatusTimer) clearInterval(mobileStatusTimer);
+      mobileStatusTimer = null;
+    };
+    btnMobile.addEventListener("click", async () => {
+      mobileModal.classList.remove("hidden");
+      mobileStatus.textContent = "LAN 게이트웨이를 시작합니다…";
+      try {
+        const started = await invoke("mobile_gateway_start", { port: null });
+        mobileQr.src = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(started.qrSvg)}`;
+        mobileStatus.textContent = `${started.host}:${started.port} · QR 코드는 3분 뒤 만료됩니다.`;
+      } catch (error) {
+        mobileStatus.textContent = `시작 실패: ${String(error)}`;
+      }
+      await refreshMobileStatus();
+      if (!mobileStatusTimer) mobileStatusTimer = setInterval(() => { void refreshMobileStatus(); }, 1500);
+    });
+    mobileCloseButtons.forEach((button) => button?.addEventListener("click", closeMobileModal));
+    document.getElementById("mobile-refresh-qr")?.addEventListener("click", async () => {
+      try {
+        const started = await invoke("mobile_gateway_start", { port: null });
+        mobileQr.src = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(started.qrSvg)}`;
+        mobileStatus.textContent = `${started.host}:${started.port} · QR 코드는 3분 뒤 만료됩니다.`;
+      } catch (error) {
+        mobileStatus.textContent = `QR 갱신 실패: ${String(error)}`;
+      }
+    });
+    document.getElementById("mobile-stop")?.addEventListener("click", async () => {
+      try {
+        await invoke("mobile_gateway_stop");
+        await refreshMobileStatus();
+      } catch (error) {
+        mobileStatus.textContent = `중지 실패: ${String(error)}`;
+      }
+    });
+  }
   if (btnNotifySettings && notifyModal) {
     const closeNotifyModal = () => {
       notifyModal.classList.add("hidden");
@@ -3222,6 +3324,7 @@ async function createPane(parentEl, shell, args, cwd, sessionKey = null) {
     cols,
     rows,
     sessionKey: stableSessionKey,
+    label: shell === "ssh" ? "SSH" : (cwd ? baseName(cwd) : (shell || "Terminal")),
   });
 
   // Opened in a specific folder → name the session after that folder (shown on
@@ -4543,11 +4646,11 @@ function initFoxDrag() {
 // Codex CLI도 지원: 하단 상태줄의 `NN% context left`(잔량!)를 사용량으로 변환해
 // 같은 배지를 쓰고, 세션 배너의 소문자 `model: gpt-…` 라인에서 모델명을 얻는다.
 // 한 패인에서 두 도구가 번갈아 나오면 나중에 보인 쪽이 현재값이 된다.
-// The bar body never contains "]" and the percent sits right after optional
-// ANSI color codes, so one regex covers both `ctx:67%` and `ctx:[██░░]67%`.
-const CTX_RE = /ctx:(?:\[[^\]]*\])?(?:\x1b\[[0-9;]*m)*(\d{1,3})%/;
+// Statusline bars may be ANSI-colored and appear before the percentage. Keep
+// parsing compatible with older `ctx:NN%` and bracketed `ctx:[██░░]NN%` rows.
+const CTX_RE = /ctx:(?:\x1b\[[0-9;]*m)*(?:\[[^\]]*\]|[█▉▊▋▌▍▎▏░ ]*)?(?:\x1b\[[0-9;]*m)*(\d{1,3})%/;
 // `Model: Fable 5` is wrapped in cyan — capture stops at the trailing ESC.
-const CTX_MODEL_RE = /Model:\s*([^|\r\n]{1,48}?)(?=\s*(?:\||ctx:|5h:|wk:|mo:|$))/i;
+const CTX_MODEL_RE = /Model:\s*([^|\r\n]{1,48}?)(?=\s*(?:\||ctx:|5h:|7d:|wk:|mo:|$))/i;
 // Codex has used both `97% context left` and `Context left: 97%` in its TUI.
 // Match either order (and the newer "remaining" wording) after terminal escape
 // sequences have been removed. Keeping this independent from a line ending is
@@ -4681,11 +4784,11 @@ function clearPaneCtxUi(id, t) {
 }
 
 // Account-wide Claude rate limits ride the same HUD statusline:
-// `5h:45%(3h42m) wk:12%(2d5h) mo:8%(15d3h)` — value colored, reset time dimmed,
+// `5h:45%(3h42m) 7d:12%(2d5h) mo:8%(15d3h)` — value colored, reset time dimmed,
 // stale readings get a `*` after the % and a `~` before the reset time.
 const CL_LIMIT_KEYS = [
   ["5h:", /5h:(?:\x1b\[[0-9;]*m)*(\d{1,3})%(?:\x1b\[[0-9;]*m|\*)*(?:\((~?[0-9dhm]+)\))?/, "fiveH", "fiveHReset"],
-  ["wk:", /wk:(?:\x1b\[[0-9;]*m)*(\d{1,3})%(?:\x1b\[[0-9;]*m|\*)*(?:\((~?[0-9dhm]+)\))?/, "wk", "wkReset"],
+  ["7d:", /(?:7d|wk):(?:\x1b\[[0-9;]*m)*(\d{1,3})%(?:\x1b\[[0-9;]*m|\*)*(?:\((~?[0-9dhm]+)\))?/, "wk", "wkReset"],
   ["mo:", /mo:(?:\x1b\[[0-9;]*m)*(\d{1,3})%(?:\x1b\[[0-9;]*m|\*)*(?:\((~?[0-9dhm]+)\))?/, "mo", "moReset"],
 ];
 // Account-wide usage shown in the top toolbar. Claude comes from any pane's
@@ -10631,7 +10734,20 @@ async function pollAgentActivity() {
     t.agentTranscript = row.transcript || null;
     const before = agentListSignature(t.agents);
     t.agents = row.agents || [];
-    if (agentListSignature(t.agents) !== before) renderAgentRows(row.paneId);
+    // Keep a bounded, prompt-free projection with the PTY owner so the mobile
+    // session list can show the same subagent states even if the GUI closes.
+    if (agentListSignature(t.agents) !== before) {
+      void invoke("pty_mobile_agents_update", {
+        id: Number(row.paneId),
+        agents: t.agents.slice(-60).map((agent) => ({
+          id: String(agent.id || ""),
+          name: Array.from(String(agent.name || "Agent").replace(/[\u0000-\u001f\u007f]/g, " ")).slice(0, 80).join(""),
+          description: Array.from(String(agent.description || "").replace(/[\u0000-\u001f\u007f]/g, " ")).slice(0, 256).join(""),
+          status: agent.status,
+        })),
+      }).catch((error) => console.debug("mobile agent snapshot skipped", error));
+      renderAgentRows(row.paneId);
+    }
   }
   refreshAttentionQueue();
   tickAgentElapsed();

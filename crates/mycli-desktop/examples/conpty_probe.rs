@@ -6,29 +6,47 @@
 //       [cwd] [log] [rcfile] [start_cols] [end_cols]
 // (copy conpty.dll + OpenConsole.exe next to the example exe first so the
 // sideloaded ConPTY is the one being measured, same as the app).
-use portable_pty::{native_pty_system, CommandBuilder, PtySize};
+use portable_pty::{CommandBuilder, PtySize, native_pty_system};
 use std::io::{Read, Write};
 use std::sync::{Arc, Mutex};
 
 fn main() {
     let log: Arc<Mutex<String>> = Arc::new(Mutex::new(String::new()));
-    let start_cols: u16 = std::env::args().nth(4).and_then(|s| s.parse().ok()).unwrap_or(26);
-    let end_cols: u16 = std::env::args().nth(5).and_then(|s| s.parse().ok()).unwrap_or(100);
+    let start_cols: u16 = std::env::args()
+        .nth(4)
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(26);
+    let end_cols: u16 = std::env::args()
+        .nth(5)
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(100);
     let pty = native_pty_system();
     let pair = pty
-        .openpty(PtySize { rows: 12, cols: start_cols, pixel_width: 0, pixel_height: 0 })
+        .openpty(PtySize {
+            rows: 12,
+            cols: start_cols,
+            pixel_width: 0,
+            pixel_height: 0,
+        })
         .unwrap();
 
     let bash = r"C:\Program Files\Git\bin\bash.exe";
     let rc = std::env::args().nth(3).unwrap_or_else(|| {
-        dirs::home_dir().unwrap().join(".mycli").join("mymux.bashrc").to_string_lossy().into_owned()
+        dirs::home_dir()
+            .unwrap()
+            .join(".mycli")
+            .join("mymux.bashrc")
+            .to_string_lossy()
+            .into_owned()
     });
     let mut cmd = CommandBuilder::new(bash);
     cmd.arg("--rcfile");
     cmd.arg(rc.replace('\\', "/"));
     cmd.arg("-i");
     cmd.env("CHERE_INVOKING", "1");
-    let cwd = std::env::args().nth(1).unwrap_or_else(|| r"D:\Project\Mymux\crates\mycli-desktop".into());
+    let cwd = std::env::args()
+        .nth(1)
+        .unwrap_or_else(|| r"D:\Project\Mymux\crates\mycli-desktop".into());
     cmd.cwd(cwd);
 
     let mut child = pair.slave.spawn_command(cmd).unwrap();
@@ -65,12 +83,24 @@ fn main() {
     }
 
     let mark = |m: String| {
-        log.lock().unwrap().push_str(&format!("\n\n======== {} ========", m));
+        log.lock()
+            .unwrap()
+            .push_str(&format!("\n\n======== {} ========", m));
     };
 
     std::thread::sleep(std::time::Duration::from_secs(4));
-    mark(format!("RESIZE cols {} -> {} (rows 12)", start_cols, end_cols));
-    pair.master.resize(PtySize { rows: 12, cols: end_cols, pixel_width: 0, pixel_height: 0 }).unwrap();
+    mark(format!(
+        "RESIZE cols {} -> {} (rows 12)",
+        start_cols, end_cols
+    ));
+    pair.master
+        .resize(PtySize {
+            rows: 12,
+            cols: end_cols,
+            pixel_width: 0,
+            pixel_height: 0,
+        })
+        .unwrap();
     std::thread::sleep(std::time::Duration::from_secs(2));
 
     mark("SEND Enter".into());
@@ -79,7 +109,9 @@ fn main() {
     std::thread::sleep(std::time::Duration::from_secs(2));
 
     let out = log.lock().unwrap().clone();
-    let log_path = std::env::args().nth(2).unwrap_or_else(|| "conpty_probe_log.txt".into());
+    let log_path = std::env::args()
+        .nth(2)
+        .unwrap_or_else(|| "conpty_probe_log.txt".into());
     std::fs::write(&log_path, &out).unwrap();
     println!("log written: {}", log_path);
     let _ = child.kill();

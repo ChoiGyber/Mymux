@@ -9,15 +9,23 @@
 //       [b64|-] [start_cols] [end_cols] [log] [cwd]
 // ("-" = plain -NoLogo control run without the injected prompt; copy
 // conpty.dll + OpenConsole.exe next to the example exe first, same as the app).
-use portable_pty::{native_pty_system, CommandBuilder, PtySize};
+use portable_pty::{CommandBuilder, PtySize, native_pty_system};
 use std::io::{Read, Write};
 use std::sync::{Arc, Mutex};
 
 fn main() {
     let b64 = std::env::args().nth(1).unwrap_or_else(|| "-".into());
-    let start_cols: u16 = std::env::args().nth(2).and_then(|s| s.parse().ok()).unwrap_or(24);
-    let end_cols: u16 = std::env::args().nth(3).and_then(|s| s.parse().ok()).unwrap_or(60);
-    let log_path = std::env::args().nth(4).unwrap_or_else(|| "conpty_ps_probe_log.txt".into());
+    let start_cols: u16 = std::env::args()
+        .nth(2)
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(24);
+    let end_cols: u16 = std::env::args()
+        .nth(3)
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(60);
+    let log_path = std::env::args()
+        .nth(4)
+        .unwrap_or_else(|| "conpty_ps_probe_log.txt".into());
     let cwd = std::env::args()
         .nth(5)
         .unwrap_or_else(|| r"D:\Project\Mymux\crates\mycli-desktop".into());
@@ -25,11 +33,15 @@ fn main() {
     let log: Arc<Mutex<String>> = Arc::new(Mutex::new(String::new()));
     let pty = native_pty_system();
     let pair = pty
-        .openpty(PtySize { rows: 12, cols: start_cols, pixel_width: 0, pixel_height: 0 })
+        .openpty(PtySize {
+            rows: 12,
+            cols: start_cols,
+            pixel_width: 0,
+            pixel_height: 0,
+        })
         .unwrap();
 
-    let mut cmd =
-        CommandBuilder::new(r"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe");
+    let mut cmd = CommandBuilder::new(r"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe");
     cmd.arg("-NoLogo");
     if b64 != "-" {
         cmd.arg("-NoExit");
@@ -72,13 +84,23 @@ fn main() {
     }
 
     let mark = |m: String| {
-        log.lock().unwrap().push_str(&format!("\n\n======== {} ========", m));
+        log.lock()
+            .unwrap()
+            .push_str(&format!("\n\n======== {} ========", m));
     };
 
     std::thread::sleep(std::time::Duration::from_secs(4));
-    mark(format!("RESIZE cols {} -> {} (rows 12)", start_cols, end_cols));
+    mark(format!(
+        "RESIZE cols {} -> {} (rows 12)",
+        start_cols, end_cols
+    ));
     pair.master
-        .resize(PtySize { rows: 12, cols: end_cols, pixel_width: 0, pixel_height: 0 })
+        .resize(PtySize {
+            rows: 12,
+            cols: end_cols,
+            pixel_width: 0,
+            pixel_height: 0,
+        })
         .unwrap();
     std::thread::sleep(std::time::Duration::from_secs(2));
 

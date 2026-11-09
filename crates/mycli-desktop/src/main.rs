@@ -5,10 +5,11 @@ mod browser;
 mod browser_data;
 mod commands;
 mod explorer;
+mod mobile_gateway;
+mod pty_server;
 mod session;
 mod statusline;
 mod terminal;
-mod pty_server;
 mod tools;
 mod update;
 mod voice;
@@ -46,9 +47,11 @@ fn window_state_flags() -> tauri_plugin_window_state::StateFlags {
 /// by default (CW_USEDEFAULT cascades new windows) — and would shove it under a
 /// taskbar docked at the top or left.
 #[cfg(windows)]
-fn monitor_work_area<R: tauri::Runtime>(win: &tauri::WebviewWindow<R>) -> Option<(i32, i32, u32, u32)> {
+fn monitor_work_area<R: tauri::Runtime>(
+    win: &tauri::WebviewWindow<R>,
+) -> Option<(i32, i32, u32, u32)> {
     use windows_sys::Win32::Graphics::Gdi::{
-        GetMonitorInfoW, MonitorFromWindow, MONITORINFO, MONITOR_DEFAULTTONEAREST,
+        GetMonitorInfoW, MONITOR_DEFAULTTONEAREST, MONITORINFO, MonitorFromWindow,
     };
     let hwnd = win.hwnd().ok()?;
     let monitor = unsafe { MonitorFromWindow(hwnd.0 as _, MONITOR_DEFAULTTONEAREST) };
@@ -75,7 +78,9 @@ fn monitor_work_area<R: tauri::Runtime>(win: &tauri::WebviewWindow<R>) -> Option
 /// worst case is less protection than Windows gets — never a regression.
 /// `NSScreen::visibleFrame` is the exact counterpart if this becomes a problem.
 #[cfg(not(windows))]
-fn monitor_work_area<R: tauri::Runtime>(win: &tauri::WebviewWindow<R>) -> Option<(i32, i32, u32, u32)> {
+fn monitor_work_area<R: tauri::Runtime>(
+    win: &tauri::WebviewWindow<R>,
+) -> Option<(i32, i32, u32, u32)> {
     let monitor = win.current_monitor().ok().flatten()?;
     let size = monitor.size();
     let origin = monitor.position();
@@ -219,6 +224,13 @@ fn main() {
             session::session_load,
             session::session_clear,
             terminal::pty_spawn,
+            terminal::pty_list,
+            terminal::pty_mobile_agents_update,
+            mobile_gateway::mobile_gateway_start,
+            mobile_gateway::mobile_gateway_stop,
+            mobile_gateway::mobile_gateway_status,
+            mobile_gateway::mobile_gateway_approve,
+            mobile_gateway::mobile_gateway_revoke,
             terminal::pty_read,
             terminal::pty_write,
             terminal::pty_resize,
@@ -275,6 +287,12 @@ fn main() {
             voice::voice_managed_status,
         ])
         .setup(|_app| {
+            use tauri::Listener;
+            // The LAN gateway is opt-in, but it must not survive a graceful
+            // desktop shutdown with an orphan listener or live client keys.
+            _app.listen("tauri://destroyed", |_| {
+                let _ = mobile_gateway::mobile_gateway_stop();
+            });
             // Save the window geometry the moment the main window is
             // destroyed, then quit. The plugin only writes its file on
             // `RunEvent::Exit`; saving here keeps that from being the single
@@ -480,10 +498,7 @@ mod security_regression_tests {
         let capability: serde_json::Value =
             serde_json::from_str(include_str!("../capabilities/buddy-overlay.json")).unwrap();
         assert_eq!(capability["local"], true);
-        assert_eq!(
-            capability["webviews"],
-            serde_json::json!(["buddy-overlay"])
-        );
+        assert_eq!(capability["webviews"], serde_json::json!(["buddy-overlay"]));
         assert!(capability.get("windows").is_none());
         assert!(capability.get("remote").is_none());
         assert_eq!(
@@ -561,7 +576,10 @@ mod security_regression_tests {
             ),
         ];
         for (asset, marker) in assets {
-            assert!(asset.contains(marker), "vendor asset does not contain {marker}");
+            assert!(
+                asset.contains(marker),
+                "vendor asset does not contain {marker}"
+            );
         }
     }
 }

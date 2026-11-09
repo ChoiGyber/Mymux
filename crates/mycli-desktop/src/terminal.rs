@@ -7,6 +7,8 @@ use std::thread;
 /// Upper bound on retained output per session (decoded UTF-8 bytes). Whole
 /// chunks are evicted from the front, so retention may undershoot by one chunk.
 pub(crate) const OUTPUT_HISTORY_MAX_BYTES: usize = 1024 * 1024;
+/// Maximum response size for a single mobile/output polling batch.
+pub(crate) const OUTPUT_READ_BATCH_MAX_BYTES: usize = 64 * 1024;
 
 /// Bounded, non-destructive PTY output history addressed by a monotonically
 /// increasing byte offset into the decoded UTF-8 stream. Offset 0 is the first
@@ -28,6 +30,30 @@ pub(crate) struct ReadResult {
     /// The requested offset was older than the retained history (or past the
     /// stream end, which means the caller's cursor belongs to another stream).
     pub truncated: bool,
+}
+
+#[derive(serde::Serialize, serde::Deserialize)]
+pub struct PtySessionSnapshot {
+    pub id: u32,
+    pub exited: bool,
+    pub label: String,
+}
+
+#[derive(serde::Serialize, serde::Deserialize)]
+pub struct MobilePtySessionSnapshot {
+    pub id: String,
+    pub exited: bool,
+    pub label: String,
+    pub agents: Vec<MobileAgentSnapshot>,
+}
+
+#[derive(serde::Serialize, serde::Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct MobileAgentSnapshot {
+    pub id: String,
+    pub name: String,
+    pub description: String,
+    pub status: String,
 }
 
 impl OutputHistory {
@@ -73,6 +99,93 @@ impl OutputHistory {
         }
         (out, self.end, truncated)
     }
+
+    pub(crate) fn read_after_limited(
+        &self,
+        offset: u64,
+        max_bytes: usize,
+    ) -> (Vec<String>, u64, bool) {
+        let truncated = offset < self.base || offset > self.end;
+        let from = if truncated { self.base } else { offset };
+        let limit = max_bytes.clamp(4, OUTPUT_READ_BATCH_MAX_BYTES);
+        let mut out = Vec::new();
+        let mut cursor = from;
+        let mut total = 0usize;
+        'chunks: for (start, text) in &self.chunks {
+            let chunk_end = start.saturating_add(text.len() as u64);
+            if chunk_end <= cursor {
+                continue;
+            }
+            let mut rel = ((cursor.saturating_sub(*start)) as usize).min(text.len());
+            while rel < text.len() && !text.is_char_boundary(rel) {
+                rel += 1;
+            }
+            if rel == text.len() {
+                cursor = chunk_end;
+                continue;
+            }
+            let remaining = limit - total;
+            let mut take_end = (rel + remaining.min(text.len() - rel)).min(text.len());
+            while take_end > rel && !text.is_char_boundary(take_end) {
+                take_end -= 1;
+            }
+            if take_end == rel {
+                break;
+            }
+            out.push(text[rel..take_end].to_string());
+            total += take_end - rel;
+            cursor = start.saturating_add(take_end as u64);
+            if total == limit {
+                break 'chunks;
+            }
+        }
+        (out, cursor, truncated)
+    }
+}
+
+#[cfg(test)]
+mod output_history_tests {
+    use super::{OUTPUT_HISTORY_MAX_BYTES, OutputHistory};
+
+    #[test]
+    fn limited_reads_keep_utf8_boundaries_and_advance_by_bytes() {
+        let mut history = OutputHistory::default();
+        history.push("A😀B".into());
+
+        let (first, first_next, first_truncated) = history.read_after_limited(0, 4);
+        assert_eq!(first, ["A"]);
+        assert_eq!(first_next, 1);
+        assert!(!first_truncated);
+
+        let (second, second_next, second_truncated) =
+            history.read_after_limited(first_next, 4);
+        assert_eq!(second, ["😀"]);
+        assert_eq!(second_next, 5);
+        assert!(!second_truncated);
+
+        let (third, third_next, third_truncated) =
+            history.read_after_limited(second_next, 4);
+        assert_eq!(third, ["B"]);
+        assert_eq!(third_next, 6);
+        assert!(!third_truncated);
+    }
+
+    #[test]
+    fn stale_cursor_restarts_at_retained_history_and_marks_truncation() {
+        let mut history = OutputHistory::default();
+        history.push("old".into());
+        history.push("n".repeat(OUTPUT_HISTORY_MAX_BYTES));
+
+        let (chunks, next, truncated) = history.read_after_limited(0, 4);
+        assert_eq!(chunks, ["nnnn"]);
+        assert_eq!(next, 7);
+        assert!(truncated);
+
+        let (chunks, next, truncated) = history.read_after_limited(u64::MAX, 4);
+        assert_eq!(chunks, ["nnnn"]);
+        assert_eq!(next, 7);
+        assert!(truncated);
+    }
 }
 
 pub struct PtySession {
@@ -89,6 +202,11 @@ pub struct TerminalManager {
     pub(crate) next_id: Mutex<u32>,
     pub(crate) session_keys: Mutex<HashMap<String, u32>>,
     pub(crate) background_keys: Mutex<std::collections::HashSet<String>>,
+    pub(crate) session_labels: Mutex<HashMap<u32, String>>,
+    /// Per-PTY random handles. Never expose the frontend's `sessionKey` or
+    /// process-local numeric ID through the mobile-facing adapter.
+    pub(crate) mobile_session_ids: Mutex<HashMap<u32, String>>,
+    pub(crate) mobile_agents: Mutex<HashMap<u32, Vec<MobileAgentSnapshot>>>,
 }
 
 impl TerminalManager {
@@ -98,8 +216,99 @@ impl TerminalManager {
             next_id: Mutex::new(1),
             session_keys: Mutex::new(HashMap::new()),
             background_keys: Mutex::new(std::collections::HashSet::new()),
+            session_labels: Mutex::new(HashMap::new()),
+            mobile_session_ids: Mutex::new(HashMap::new()),
+            mobile_agents: Mutex::new(HashMap::new()),
         }
     }
+}
+
+pub(crate) fn list_local(manager: &TerminalManager) -> Vec<PtySessionSnapshot> {
+    let sessions = manager.sessions.lock().unwrap();
+    let labels = manager.session_labels.lock().unwrap();
+    let mut snapshot: Vec<_> = sessions
+        .iter()
+        .map(|(id, session)| PtySessionSnapshot {
+            id: *id,
+            exited: *session.exited.lock().unwrap(),
+            label: labels.get(id).cloned().unwrap_or_else(|| "Terminal".into()),
+        })
+        .collect();
+    snapshot.sort_by_key(|session| session.id);
+    snapshot
+}
+
+pub(crate) fn list_mobile(manager: &TerminalManager) -> Vec<MobilePtySessionSnapshot> {
+    let sessions = manager.sessions.lock().unwrap();
+    let labels = manager.session_labels.lock().unwrap();
+    let mut mobile_ids = manager.mobile_session_ids.lock().unwrap();
+    let agents = manager.mobile_agents.lock().unwrap();
+    let mut snapshot: Vec<_> = sessions
+        .iter()
+        .map(|(id, session)| {
+            let mobile_id = mobile_session_id(&mut mobile_ids, *id);
+            MobilePtySessionSnapshot {
+                id: mobile_id,
+                exited: *session.exited.lock().unwrap(),
+                label: labels.get(id).cloned().unwrap_or_else(|| "Terminal".into()),
+                agents: agents.get(id).cloned().unwrap_or_default(),
+            }
+        })
+        .collect();
+    snapshot.sort_by(|a, b| a.id.cmp(&b.id));
+    snapshot
+}
+
+pub(crate) fn ensure_mobile_session_id(manager: &TerminalManager, id: u32) -> String {
+    let mut mobile_ids = manager.mobile_session_ids.lock().unwrap();
+    mobile_session_id(&mut mobile_ids, id)
+}
+
+fn mobile_session_id(mobile_ids: &mut HashMap<u32, String>, id: u32) -> String {
+    mobile_ids
+        .entry(id)
+        .or_insert_with(|| uuid::Uuid::new_v4().to_string())
+        .clone()
+}
+
+#[cfg(test)]
+mod mobile_session_id_tests {
+    use super::mobile_session_id;
+    use std::collections::HashMap;
+
+    #[test]
+    fn mobile_ids_are_stable_per_live_pty_and_distinct_between_ptys() {
+        let mut ids = HashMap::new();
+        let first = mobile_session_id(&mut ids, 10);
+        assert_eq!(mobile_session_id(&mut ids, 10), first);
+        assert_ne!(mobile_session_id(&mut ids, 11), first);
+    }
+}
+
+pub(crate) fn resolve_mobile_session_id(
+    manager: &TerminalManager,
+    mobile_id: &str,
+) -> Result<u32, String> {
+    manager
+        .mobile_session_ids
+        .lock()
+        .unwrap()
+        .iter()
+        .find_map(|(id, candidate)| (candidate == mobile_id).then_some(*id))
+        .ok_or_else(|| "Session not found".into())
+}
+
+pub(crate) fn update_mobile_agents(
+    manager: &TerminalManager,
+    id: u32,
+    agents: Vec<MobileAgentSnapshot>,
+) -> Result<(), String> {
+    let sessions = manager.sessions.lock().unwrap();
+    if !sessions.contains_key(&id) {
+        return Err("Session not found".into());
+    }
+    manager.mobile_agents.lock().unwrap().insert(id, agents);
+    Ok(())
 }
 
 /// Find an executable on the PATH.
@@ -656,11 +865,13 @@ pub fn pty_spawn(
     cols: u16,
     rows: u16,
     session_key: Option<String>,
+    label: Option<String>,
 ) -> Result<u32, String> {
     let _ = state;
     let key = session_key.unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
     let response = crate::pty_server::request("spawn", serde_json::json!({
         "sessionKey": key,
+        "label": label.unwrap_or_else(|| "Terminal".into()),
         "shell": shell,
         "args": args,
         "cwd": cwd,
@@ -786,14 +997,37 @@ pub struct PtyReadReply {
 }
 
 #[tauri::command]
+pub fn pty_list(
+    _state: tauri::State<'_, Arc<TerminalManager>>,
+) -> Result<Vec<PtySessionSnapshot>, String> {
+    let response = crate::pty_server::request("list", serde_json::json!({}))?;
+    serde_json::from_value(response.get("sessions").cloned().unwrap_or_default())
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn pty_mobile_agents_update(
+    _state: tauri::State<'_, Arc<TerminalManager>>,
+    id: u32,
+    agents: Vec<MobileAgentSnapshot>,
+) -> Result<(), String> {
+    crate::pty_server::request(
+        "mobileAgentsUpdate",
+        serde_json::json!({ "id": id, "agents": agents }),
+    )?;
+    Ok(())
+}
+
+#[tauri::command]
 pub fn pty_read(
     _state: tauri::State<'_, Arc<TerminalManager>>,
     id: u32,
     offset: Option<u64>,
+    max_bytes: Option<u64>,
 ) -> Result<PtyReadReply, String> {
     let response = crate::pty_server::request(
         "read",
-        serde_json::json!({ "id": id, "offset": offset.unwrap_or(0) }),
+        serde_json::json!({ "id": id, "offset": offset.unwrap_or(0), "maxBytes": max_bytes }),
     )?;
     let chunks = serde_json::from_value(response.get("data").cloned().unwrap_or_default())
         .map_err(|e| e.to_string())?;
@@ -805,11 +1039,20 @@ pub fn pty_read(
     })
 }
 
-pub(crate) fn read_local(manager: &TerminalManager, id: u32, offset: u64) -> Result<ReadResult, String> {
+pub(crate) fn read_local_limited(
+    manager: &TerminalManager,
+    id: u32,
+    offset: u64,
+    max_bytes: Option<usize>,
+) -> Result<ReadResult, String> {
     let sessions = manager.sessions.lock().unwrap();
     let session = sessions.get(&id).ok_or("Session not found")?;
 
-    let (chunks, next, truncated) = session.output_buf.lock().unwrap().read_after(offset);
+    let history = session.output_buf.lock().unwrap();
+    let (chunks, next, truncated) = match max_bytes {
+        Some(limit) => history.read_after_limited(offset, limit),
+        None => history.read_after(offset),
+    };
     let exited = *session.exited.lock().unwrap();
 
     Ok(ReadResult { chunks, next, exited, truncated })
@@ -874,6 +1117,9 @@ pub(crate) fn close_local(manager: &TerminalManager, id: u32) -> Result<(), Stri
     let mut sessions = manager.sessions.lock().unwrap();
     sessions.remove(&id);
     manager.session_keys.lock().unwrap().retain(|_, value| *value != id);
+    manager.session_labels.lock().unwrap().remove(&id);
+    manager.mobile_session_ids.lock().unwrap().remove(&id);
+    manager.mobile_agents.lock().unwrap().remove(&id);
     Ok(())
 }
 

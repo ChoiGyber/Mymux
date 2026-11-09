@@ -92,7 +92,11 @@ async fn main() {
     let started = Instant::now();
     let key = match russh::keys::load_secret_key(&key_path, None) {
         Ok(key) => {
-            println!("{:<28}ok    {:>7.2}s", "2 load_secret_key", started.elapsed().as_secs_f64());
+            println!(
+                "{:<28}ok    {:>7.2}s",
+                "2 load_secret_key",
+                started.elapsed().as_secs_f64()
+            );
             key
         }
         Err(e) => {
@@ -153,8 +157,12 @@ async fn main() {
     }
 
     // 6. SFTP protocol handshake.
-    let Some(session) = stage("6 SftpSession::new", 20, SftpSession::new(channel.into_stream()))
-        .await
+    let Some(session) = stage(
+        "6 SftpSession::new",
+        20,
+        SftpSession::new(channel.into_stream()),
+    )
+    .await
     else {
         return;
     };

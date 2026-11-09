@@ -135,15 +135,15 @@
 //! [`raw_window_handle`]: ./window/struct.Window.html#method.raw_window_handle
 //! [`raw_display_handle`]: ./window/struct.Window.html#method.raw_display_handle
 #![allow(
-  clippy::match_str_case_mismatch,
-  clippy::upper_case_acronyms,
-  clippy::from_over_into,
-  clippy::option_map_unit_fn,
-  clippy::needless_lifetimes,
-  clippy::type_complexity,
-  clippy::identity_op,
-  clippy::wrong_self_convention,
-  clippy::non_send_fields_in_send_ty
+    clippy::match_str_case_mismatch,
+    clippy::upper_case_acronyms,
+    clippy::from_over_into,
+    clippy::option_map_unit_fn,
+    clippy::needless_lifetimes,
+    clippy::type_complexity,
+    clippy::identity_op,
+    clippy::wrong_self_convention,
+    clippy::non_send_fields_in_send_ty
 )]
 #![deny(rustdoc::broken_intra_doc_links)]
 
@@ -183,14 +183,14 @@ pub mod window;
 pub mod platform;
 
 pub(crate) fn extract_width_height(size: dpi::Size) -> (PixelUnit, PixelUnit) {
-  match size {
-    dpi::Size::Physical(size) => (
-      PixelUnit::Physical(size.width.into()),
-      PixelUnit::Physical(size.height.into()),
-    ),
-    dpi::Size::Logical(size) => (
-      PixelUnit::Logical(size.width.into()),
-      PixelUnit::Logical(size.height.into()),
-    ),
-  }
+    match size {
+        dpi::Size::Physical(size) => (
+            PixelUnit::Physical(size.width.into()),
+            PixelUnit::Physical(size.height.into()),
+        ),
+        dpi::Size::Logical(size) => (
+            PixelUnit::Logical(size.width.into()),
+            PixelUnit::Logical(size.height.into()),
+        ),
+    }
 }

@@ -8,7 +8,7 @@ use crate::icon::{BadIcon, RgbaIcon};
 pub struct PlatformIcon(RgbaIcon);
 
 impl PlatformIcon {
-  pub fn from_rgba(rgba: Vec<u8>, width: u32, height: u32) -> Result<Self, BadIcon> {
-    Ok(PlatformIcon(RgbaIcon::from_rgba(rgba, width, height)?))
-  }
+    pub fn from_rgba(rgba: Vec<u8>, width: u32, height: u32) -> Result<Self, BadIcon> {
+        Ok(PlatformIcon(RgbaIcon::from_rgba(rgba, width, height)?))
+    }
 }

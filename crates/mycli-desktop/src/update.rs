@@ -38,7 +38,10 @@ pub struct UpdateInfo {
 pub async fn update_check(app: tauri::AppHandle) -> Result<Option<UpdateInfo>, String> {
     let updater = app.updater().map_err(|e| e.to_string())?;
     match updater.check().await {
-        Ok(Some(update)) => Ok(Some(UpdateInfo { version: update.version, body: update.body })),
+        Ok(Some(update)) => Ok(Some(UpdateInfo {
+            version: update.version,
+            body: update.body,
+        })),
         Ok(None) => Ok(None),
         Err(e) => Err(e.to_string()),
     }

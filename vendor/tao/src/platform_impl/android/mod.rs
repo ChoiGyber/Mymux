@@ -3,121 +3,120 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::{
-  dpi::{PhysicalPosition, PhysicalSize, Position, Size},
-  error, event,
-  event_loop::{self, ControlFlow},
-  keyboard::{KeyCode, NativeKeyCode},
-  monitor,
-  window::{self, ResizeDirection, Theme, WindowSizeConstraints},
+    dpi::{PhysicalPosition, PhysicalSize, Position, Size},
+    error, event,
+    event_loop::{self, ControlFlow},
+    keyboard::{KeyCode, NativeKeyCode},
+    monitor,
+    window::{self, ResizeDirection, Theme, WindowSizeConstraints},
 };
 use crossbeam_channel::{Receiver, Sender};
 use ndk::{
-  configuration::Configuration,
-  looper::{ForeignLooper, Poll, ThreadLooper},
+    configuration::Configuration,
+    looper::{ForeignLooper, Poll, ThreadLooper},
 };
 use once_cell::sync::Lazy;
 use std::{
-  collections::VecDeque,
-  error::Error,
-  fmt,
-  sync::RwLock,
-  time::{Duration, Instant},
+    collections::VecDeque,
+    error::Error,
+    fmt,
+    sync::RwLock,
+    time::{Duration, Instant},
 };
 
 #[derive(Debug)]
 pub struct JniCallError {
-  source: jni::errors::Error,
-  java_exception: Option<String>,
+    source: jni::errors::Error,
+    java_exception: Option<String>,
 }
 
 impl JniCallError {
-  fn new(source: jni::errors::Error, java_exception: Option<String>) -> Self {
-    Self {
-      source,
-      java_exception,
+    fn new(source: jni::errors::Error, java_exception: Option<String>) -> Self {
+        Self {
+            source,
+            java_exception,
+        }
     }
-  }
 }
 
 impl From<jni::errors::Error> for JniCallError {
-  fn from(source: jni::errors::Error) -> Self {
-    Self::new(source, None)
-  }
+    fn from(source: jni::errors::Error) -> Self {
+        Self::new(source, None)
+    }
 }
 
 impl fmt::Display for JniCallError {
-  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-    match &self.java_exception {
-      Some(java_exception) => write!(f, "{}: {java_exception}", self.source),
-      None => self.source.fmt(f),
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match &self.java_exception {
+            Some(java_exception) => write!(f, "{}: {java_exception}", self.source),
+            None => self.source.fmt(f),
+        }
     }
-  }
 }
 
 impl Error for JniCallError {
-  fn source(&self) -> Option<&(dyn Error + 'static)> {
-    Some(&self.source)
-  }
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        Some(&self.source)
+    }
 }
 
 /// Logs and clears a pending Java exception while preserving the original JNI error.
 macro_rules! jni_handle_error {
-  ($env:ident, $e:expr) => {{
-    let e = $e;
-    let message = (|| -> jni::errors::Result<Option<String>> {
-      if $env.exception_check()? {
-        let throwable = $env.exception_occurred()?;
-        $env.exception_clear()?;
+    ($env:ident, $e:expr) => {{
+        let e = $e;
+        let message = (|| -> jni::errors::Result<Option<String>> {
+            if $env.exception_check()? {
+                let throwable = $env.exception_occurred()?;
+                $env.exception_clear()?;
 
-        let message = $env
-          .call_method(&throwable, "toString", "()Ljava/lang/String;", &[])?
-          .l()?;
-        let message: jni::objects::JString = message.into();
-        return $env.get_string(&message).map(|s| Some(s.into()));
-      }
+                let message = $env
+                    .call_method(&throwable, "toString", "()Ljava/lang/String;", &[])?
+                    .l()?;
+                let message: jni::objects::JString = message.into();
+                return $env.get_string(&message).map(|s| Some(s.into()));
+            }
 
-      Ok(None)
-    })();
+            Ok(None)
+        })();
 
-    let java_exception = match message {
-      Ok(Some(message)) => {
-        log::error!(
-          "tao: JNI call failed at {}:{} with Java exception: {message}",
-          file!(),
-          line!()
-        );
-        Some(message)
-      }
-      Ok(None) => {
-        log::error!("tao: JNI call failed at {}:{}: {e}", file!(), line!());
-        None
-      }
-      Err(err) => {
-        let message = format!("failed to read Java exception: {err}");
-        log::error!(
-          "tao: JNI call failed at {}:{}: {e}; {message}",
-          file!(),
-          line!()
-        );
-        Some(message)
-      }
-    };
+        let java_exception = match message {
+            Ok(Some(message)) => {
+                log::error!(
+                    "tao: JNI call failed at {}:{} with Java exception: {message}",
+                    file!(),
+                    line!()
+                );
+                Some(message)
+            }
+            Ok(None) => {
+                log::error!("tao: JNI call failed at {}:{}: {e}", file!(), line!());
+                None
+            }
+            Err(err) => {
+                let message = format!("failed to read Java exception: {err}");
+                log::error!(
+                    "tao: JNI call failed at {}:{}: {e}; {message}",
+                    file!(),
+                    line!()
+                );
+                Some(message)
+            }
+        };
 
-    $crate::platform_impl::platform::JniCallError::new(e, java_exception)
-  }};
+        $crate::platform_impl::platform::JniCallError::new(e, java_exception)
+    }};
 }
 
 macro_rules! jni_call_method {
-  ($env:ident, $obj:expr, $method:expr, $sig:expr, $args:expr, $ret_typ:ident) => {{
-    $env
-      .call_method($obj, $method, $sig, $args)
-      .and_then(|v| v.$ret_typ())
-      .map_err(|e| jni_handle_error!($env, e))
-  }};
+    ($env:ident, $obj:expr, $method:expr, $sig:expr, $args:expr, $ret_typ:ident) => {{
+        $env.call_method($obj, $method, $sig, $args)
+            .and_then(|v| v.$ret_typ())
+            .map_err(|e| jni_handle_error!($env, e))
+    }};
 
-  ($env:ident, $obj:expr, $method:expr, $sig:expr, $ret_typ:ident) => {
-    jni_call_method!($env, $obj, $method, $sig, &[], $ret_typ)
-  };
+    ($env:ident, $obj:expr, $method:expr, $sig:expr, $ret_typ:ident) => {
+        jni_call_method!($env, $obj, $method, $sig, &[], $ret_typ)
+    };
 }
 
 pub mod ndk_glue;
@@ -127,819 +126,822 @@ static CONFIG: Lazy<RwLock<Configuration>> = Lazy::new(|| RwLock::new(Configurat
 
 #[derive(Debug)]
 pub enum OsError {
-  JniCallError(JniCallError),
-  NoAvailableActivity,
+    JniCallError(JniCallError),
+    NoAvailableActivity,
 }
 
 impl std::error::Error for OsError {}
 impl std::fmt::Display for OsError {
-  fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-    match self {
-      OsError::JniCallError(e) => write!(f, "JNI error: {e}"),
-      OsError::NoAvailableActivity => write!(f, "no available activity"),
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            OsError::JniCallError(e) => write!(f, "JNI error: {e}"),
+            OsError::NoAvailableActivity => write!(f, "no available activity"),
+        }
     }
-  }
 }
 
 enum EventSource {
-  Callback,
-  InputQueue,
-  User,
+    Callback,
+    InputQueue,
+    User,
 }
 
 fn poll(poll: Poll) -> Option<EventSource> {
-  match poll {
-    Poll::Event { ident, .. } => match ident {
-      ndk_glue::NDK_GLUE_LOOPER_EVENT_PIPE_IDENT => Some(EventSource::Callback),
-      ndk_glue::NDK_GLUE_LOOPER_INPUT_QUEUE_IDENT => Some(EventSource::InputQueue),
-      _ => unreachable!(),
-    },
-    Poll::Timeout => None,
-    Poll::Wake => Some(EventSource::User),
-    Poll::Callback => unreachable!(),
-  }
+    match poll {
+        Poll::Event { ident, .. } => match ident {
+            ndk_glue::NDK_GLUE_LOOPER_EVENT_PIPE_IDENT => Some(EventSource::Callback),
+            ndk_glue::NDK_GLUE_LOOPER_INPUT_QUEUE_IDENT => Some(EventSource::InputQueue),
+            _ => unreachable!(),
+        },
+        Poll::Timeout => None,
+        Poll::Wake => Some(EventSource::User),
+        Poll::Callback => unreachable!(),
+    }
 }
 
 #[derive(Debug, Clone, Eq, PartialEq, Hash)]
 pub struct KeyEventExtra {}
 
 pub struct EventLoop<T: 'static> {
-  window_target: event_loop::EventLoopWindowTarget<T>,
-  receiver: Receiver<T>,
-  sender_to_clone: Sender<T>,
-  first_event: Option<EventSource>,
-  start_cause: event::StartCause,
-  looper: ThreadLooper,
-  running: bool,
+    window_target: event_loop::EventLoopWindowTarget<T>,
+    receiver: Receiver<T>,
+    sender_to_clone: Sender<T>,
+    first_event: Option<EventSource>,
+    start_cause: event::StartCause,
+    looper: ThreadLooper,
+    running: bool,
 }
 
 #[derive(Default, Debug, Copy, Clone, PartialEq, Eq, Hash)]
 pub(crate) struct PlatformSpecificEventLoopAttributes {}
 
 macro_rules! call_event_handler {
-  ( $event_handler:expr, $window_target:expr, $cf:expr, $event:expr ) => {{
-    if let ControlFlow::ExitWithCode(code) = $cf {
-      $event_handler($event, $window_target, &mut ControlFlow::ExitWithCode(code));
-    } else {
-      $event_handler($event, $window_target, &mut $cf);
-    }
-  }};
+    ( $event_handler:expr, $window_target:expr, $cf:expr, $event:expr ) => {{
+        if let ControlFlow::ExitWithCode(code) = $cf {
+            $event_handler($event, $window_target, &mut ControlFlow::ExitWithCode(code));
+        } else {
+            $event_handler($event, $window_target, &mut $cf);
+        }
+    }};
 }
 
 impl<T: 'static> EventLoop<T> {
-  pub(crate) fn new(_: &PlatformSpecificEventLoopAttributes) -> Self {
-    let (sender, receiver) = crossbeam_channel::unbounded();
+    pub(crate) fn new(_: &PlatformSpecificEventLoopAttributes) -> Self {
+        let (sender, receiver) = crossbeam_channel::unbounded();
 
-    Self {
-      window_target: event_loop::EventLoopWindowTarget {
-        p: EventLoopWindowTarget {
-          _marker: std::marker::PhantomData,
-        },
-        _marker: std::marker::PhantomData,
-      },
-      sender_to_clone: sender,
-      receiver,
-      first_event: None,
-      start_cause: event::StartCause::Init,
-      looper: ThreadLooper::for_thread().unwrap(),
-      running: false,
+        Self {
+            window_target: event_loop::EventLoopWindowTarget {
+                p: EventLoopWindowTarget {
+                    _marker: std::marker::PhantomData,
+                },
+                _marker: std::marker::PhantomData,
+            },
+            sender_to_clone: sender,
+            receiver,
+            first_event: None,
+            start_cause: event::StartCause::Init,
+            looper: ThreadLooper::for_thread().unwrap(),
+            running: false,
+        }
     }
-  }
 
-  pub fn run<F>(mut self, event_handler: F) -> !
-  where
-    F:
-      'static + FnMut(event::Event<'_, T>, &event_loop::EventLoopWindowTarget<T>, &mut ControlFlow),
-  {
-    let exit_code = self.run_return(event_handler);
-    ::std::process::exit(exit_code);
-  }
+    pub fn run<F>(mut self, event_handler: F) -> !
+    where
+        F: 'static
+            + FnMut(event::Event<'_, T>, &event_loop::EventLoopWindowTarget<T>, &mut ControlFlow),
+    {
+        let exit_code = self.run_return(event_handler);
+        ::std::process::exit(exit_code);
+    }
 
-  pub fn run_return<F>(&mut self, mut event_handler: F) -> i32
-  where
-    F: FnMut(event::Event<'_, T>, &event_loop::EventLoopWindowTarget<T>, &mut ControlFlow),
-  {
-    let mut control_flow = ControlFlow::default();
+    pub fn run_return<F>(&mut self, mut event_handler: F) -> i32
+    where
+        F: FnMut(event::Event<'_, T>, &event_loop::EventLoopWindowTarget<T>, &mut ControlFlow),
+    {
+        let mut control_flow = ControlFlow::default();
 
-    'event_loop: loop {
-      call_event_handler!(
-        event_handler,
-        self.window_target(),
-        control_flow,
-        event::Event::NewEvents(self.start_cause)
-      );
-
-      let mut redraw_window_id = None;
-      let mut resized_window_id = None;
-
-      match self.first_event.take() {
-        Some(EventSource::Callback) => match ndk_glue::poll_events().unwrap() {
-          Event::Resume => {
+        'event_loop: loop {
             call_event_handler!(
-              event_handler,
-              self.window_target(),
-              control_flow,
-              event::Event::Resumed
+                event_handler,
+                self.window_target(),
+                control_flow,
+                event::Event::NewEvents(self.start_cause)
             );
-          }
-          Event::WindowEvent {
-            id: window_id,
-            event,
-          } => match event {
-            WindowEvent::Resized => resized_window_id = Some(window_id),
-            WindowEvent::RedrawNeeded => redraw_window_id = Some(window_id),
-            WindowEvent::Focused(focused) => {
-              call_event_handler!(
-                event_handler,
-                self.window_target(),
-                control_flow,
-                event::Event::WindowEvent {
-                  window_id,
-                  event: event::WindowEvent::Focused(focused)
-                }
-              );
-            }
-            WindowEvent::Destroyed => {
-              call_event_handler!(
-                event_handler,
-                self.window_target(),
-                control_flow,
-                event::Event::WindowEvent {
-                  window_id,
-                  event: event::WindowEvent::Destroyed,
-                }
-              );
-            }
-            _ => {}
-          },
-          Event::Pause => {
-            call_event_handler!(
-              event_handler,
-              self.window_target(),
-              control_flow,
-              event::Event::Suspended
-            );
-          }
-          Event::Stop => self.running = false,
-          Event::Start => self.running = true,
-          Event::Opened => {
-            let urls = ndk_glue::take_intent_urls();
-            if !urls.is_empty() {
-              call_event_handler!(
-                event_handler,
-                self.window_target(),
-                control_flow,
-                event::Event::Opened { urls }
-              );
-            }
-          }
-          //Event::ConfigChanged => {
-          // #[allow(deprecated)] // TODO: use ndk-context instead
-          // let am = ndk_glue::native_activity().asset_manager();
-          // let config = Configuration::from_asset_manager(&am);
-          // let old_scale_factor = MonitorHandle.scale_factor();
-          // *CONFIG.write().unwrap() = config;
-          // let scale_factor = MonitorHandle.scale_factor();
-          // if (scale_factor - old_scale_factor).abs() < f64::EPSILON {
-          //   let mut size = MonitorHandle.size();
-          //   let event = event::Event::WindowEvent {
-          //     window_id: window::WindowId(WindowId),
-          //     event: event::WindowEvent::ScaleFactorChanged {
-          //       new_inner_size: &mut size,
-          //       scale_factor,
-          //     },
-          //   };
-          //   call_event_handler!(event_handler, self.window_target(), control_flow, event);
-          // }
-          //}
-          _ => {}
-        },
 
-        Some(EventSource::InputQueue) => {
-          /*
-            if let Some(input_queue) = ndk_glue::input_queue().as_ref() {
-              while let Ok(Some(event)) = input_queue.event() {
-                if let Some(event) = input_queue.pre_dispatch(event) {
-                  let mut handled = true;
-                  let window_id = window::WindowId(WindowId);
-                  let device_id = event::DeviceId(DeviceId);
-                  match &event {
-                    InputEvent::MotionEvent(motion_event) => {
-                      let phase = match motion_event.action() {
-                        MotionAction::Down | MotionAction::PointerDown => {
-                          Some(event::TouchPhase::Started)
-                        }
-                        MotionAction::Up | MotionAction::PointerUp => Some(event::TouchPhase::Ended),
-                        MotionAction::Move => Some(event::TouchPhase::Moved),
-                        MotionAction::Cancel => Some(event::TouchPhase::Cancelled),
-                        _ => {
-                          handled = false;
-                          None // TODO mouse events
-                        }
-                      };
-                      if let Some(phase) = phase {
-                        let pointers: Box<dyn Iterator<Item = ndk::event::Pointer<'_>>> = match phase
-                        {
-                          event::TouchPhase::Started | event::TouchPhase::Ended => {
-                            Box::new(std::iter::once(
-                              motion_event.pointer_at_index(motion_event.pointer_index()),
-                            ))
-                          }
-                          event::TouchPhase::Moved | event::TouchPhase::Cancelled => {
-                            Box::new(motion_event.pointers())
-                          }
-                        };
+            let mut redraw_window_id = None;
+            let mut resized_window_id = None;
 
-                        for pointer in pointers {
-                          let location = PhysicalPosition {
-                            x: pointer.x() as _,
-                            y: pointer.y() as _,
-                          };
-                          let event = event::Event::WindowEvent {
-                            window_id,
-                            event: event::WindowEvent::Touch(event::Touch {
-                              device_id,
-                              phase,
-                              location,
-                              id: pointer.pointer_id() as u64,
-                              force: None,
-                            }),
-                          };
-                          call_event_handler!(
+            match self.first_event.take() {
+                Some(EventSource::Callback) => match ndk_glue::poll_events().unwrap() {
+                    Event::Resume => {
+                        call_event_handler!(
                             event_handler,
                             self.window_target(),
                             control_flow,
-                            event
-                          );
+                            event::Event::Resumed
+                        );
+                    }
+                    Event::WindowEvent {
+                        id: window_id,
+                        event,
+                    } => match event {
+                        WindowEvent::Resized => resized_window_id = Some(window_id),
+                        WindowEvent::RedrawNeeded => redraw_window_id = Some(window_id),
+                        WindowEvent::Focused(focused) => {
+                            call_event_handler!(
+                                event_handler,
+                                self.window_target(),
+                                control_flow,
+                                event::Event::WindowEvent {
+                                    window_id,
+                                    event: event::WindowEvent::Focused(focused)
+                                }
+                            );
+                        }
+                        WindowEvent::Destroyed => {
+                            call_event_handler!(
+                                event_handler,
+                                self.window_target(),
+                                control_flow,
+                                event::Event::WindowEvent {
+                                    window_id,
+                                    event: event::WindowEvent::Destroyed,
+                                }
+                            );
+                        }
+                        _ => {}
+                    },
+                    Event::Pause => {
+                        call_event_handler!(
+                            event_handler,
+                            self.window_target(),
+                            control_flow,
+                            event::Event::Suspended
+                        );
+                    }
+                    Event::Stop => self.running = false,
+                    Event::Start => self.running = true,
+                    Event::Opened => {
+                        let urls = ndk_glue::take_intent_urls();
+                        if !urls.is_empty() {
+                            call_event_handler!(
+                                event_handler,
+                                self.window_target(),
+                                control_flow,
+                                event::Event::Opened { urls }
+                            );
+                        }
+                    }
+                    //Event::ConfigChanged => {
+                    // #[allow(deprecated)] // TODO: use ndk-context instead
+                    // let am = ndk_glue::native_activity().asset_manager();
+                    // let config = Configuration::from_asset_manager(&am);
+                    // let old_scale_factor = MonitorHandle.scale_factor();
+                    // *CONFIG.write().unwrap() = config;
+                    // let scale_factor = MonitorHandle.scale_factor();
+                    // if (scale_factor - old_scale_factor).abs() < f64::EPSILON {
+                    //   let mut size = MonitorHandle.size();
+                    //   let event = event::Event::WindowEvent {
+                    //     window_id: window::WindowId(WindowId),
+                    //     event: event::WindowEvent::ScaleFactorChanged {
+                    //       new_inner_size: &mut size,
+                    //       scale_factor,
+                    //     },
+                    //   };
+                    //   call_event_handler!(event_handler, self.window_target(), control_flow, event);
+                    // }
+                    //}
+                    _ => {}
+                },
+
+                Some(EventSource::InputQueue) => {
+                    /*
+                      if let Some(input_queue) = ndk_glue::input_queue().as_ref() {
+                        while let Ok(Some(event)) = input_queue.event() {
+                          if let Some(event) = input_queue.pre_dispatch(event) {
+                            let mut handled = true;
+                            let window_id = window::WindowId(WindowId);
+                            let device_id = event::DeviceId(DeviceId);
+                            match &event {
+                              InputEvent::MotionEvent(motion_event) => {
+                                let phase = match motion_event.action() {
+                                  MotionAction::Down | MotionAction::PointerDown => {
+                                    Some(event::TouchPhase::Started)
+                                  }
+                                  MotionAction::Up | MotionAction::PointerUp => Some(event::TouchPhase::Ended),
+                                  MotionAction::Move => Some(event::TouchPhase::Moved),
+                                  MotionAction::Cancel => Some(event::TouchPhase::Cancelled),
+                                  _ => {
+                                    handled = false;
+                                    None // TODO mouse events
+                                  }
+                                };
+                                if let Some(phase) = phase {
+                                  let pointers: Box<dyn Iterator<Item = ndk::event::Pointer<'_>>> = match phase
+                                  {
+                                    event::TouchPhase::Started | event::TouchPhase::Ended => {
+                                      Box::new(std::iter::once(
+                                        motion_event.pointer_at_index(motion_event.pointer_index()),
+                                      ))
+                                    }
+                                    event::TouchPhase::Moved | event::TouchPhase::Cancelled => {
+                                      Box::new(motion_event.pointers())
+                                    }
+                                  };
+
+                                  for pointer in pointers {
+                                    let location = PhysicalPosition {
+                                      x: pointer.x() as _,
+                                      y: pointer.y() as _,
+                                    };
+                                    let event = event::Event::WindowEvent {
+                                      window_id,
+                                      event: event::WindowEvent::Touch(event::Touch {
+                                        device_id,
+                                        phase,
+                                        location,
+                                        id: pointer.pointer_id() as u64,
+                                        force: None,
+                                      }),
+                                    };
+                                    call_event_handler!(
+                                      event_handler,
+                                      self.window_target(),
+                                      control_flow,
+                                      event
+                                    );
+                                  }
+                                }
+                              }
+                              InputEvent::KeyEvent(key) => {
+                                let state = match key.action() {
+                                  KeyAction::Down => event::ElementState::Pressed,
+                                  KeyAction::Up => event::ElementState::Released,
+                                  _ => event::ElementState::Released,
+                                };
+
+                                let keycode = key.key_code();
+                                let native = NativeKeyCode::Android(keycode.into());
+                                let physical_key = KeyCode::Unidentified(native);
+                                let logical_key = keycode_to_logical(keycode, native);
+                                // TODO: maybe use getUnicodeChar to get the logical key
+
+                                let event = event::Event::WindowEvent {
+                                  window_id,
+                                  event: event::WindowEvent::KeyboardInput {
+                                    device_id,
+                                    event: event::KeyEvent {
+                                      state,
+                                      physical_key,
+                                      logical_key,
+                                      location: keycode_to_location(keycode),
+                                      repeat: key.repeat_count() > 0,
+                                      text: None,
+                                      platform_specific: KeyEventExtra {},
+                                    },
+                                    is_synthetic: false,
+                                  },
+                                };
+                                call_event_handler!(event_handler, self.window_target(), control_flow, event);
+                              }
+                              _ => {}
+                            };
+                            input_queue.finish_event(event, handled);
+                          }
                         }
                       }
-                    }
-                    InputEvent::KeyEvent(key) => {
-                      let state = match key.action() {
-                        KeyAction::Down => event::ElementState::Pressed,
-                        KeyAction::Up => event::ElementState::Released,
-                        _ => event::ElementState::Released,
-                      };
-
-                      let keycode = key.key_code();
-                      let native = NativeKeyCode::Android(keycode.into());
-                      let physical_key = KeyCode::Unidentified(native);
-                      let logical_key = keycode_to_logical(keycode, native);
-                      // TODO: maybe use getUnicodeChar to get the logical key
-
-                      let event = event::Event::WindowEvent {
-                        window_id,
-                        event: event::WindowEvent::KeyboardInput {
-                          device_id,
-                          event: event::KeyEvent {
-                            state,
-                            physical_key,
-                            logical_key,
-                            location: keycode_to_location(keycode),
-                            repeat: key.repeat_count() > 0,
-                            text: None,
-                            platform_specific: KeyEventExtra {},
-                          },
-                          is_synthetic: false,
-                        },
-                      };
-                      call_event_handler!(event_handler, self.window_target(), control_flow, event);
-                    }
-                    _ => {}
-                  };
-                  input_queue.finish_event(event, handled);
+                    */
                 }
-              }
+                Some(EventSource::User) => {
+                    while let Ok(event) = self.receiver.try_recv() {
+                        call_event_handler!(
+                            event_handler,
+                            self.window_target(),
+                            control_flow,
+                            event::Event::UserEvent(event)
+                        );
+                    }
+                }
+                None => {}
             }
-          */
-        }
-        Some(EventSource::User) => {
-          while let Ok(event) = self.receiver.try_recv() {
+
             call_event_handler!(
-              event_handler,
-              self.window_target(),
-              control_flow,
-              event::Event::UserEvent(event)
+                event_handler,
+                self.window_target(),
+                control_flow,
+                event::Event::MainEventsCleared
             );
-          }
-        }
-        None => {}
-      }
 
-      call_event_handler!(
-        event_handler,
-        self.window_target(),
-        control_flow,
-        event::Event::MainEventsCleared
-      );
-
-      if let Some(window_id) = resized_window_id {
-        if self.running {
-          let size = MonitorHandle.size();
-          let event = event::Event::WindowEvent {
-            window_id,
-            event: event::WindowEvent::Resized(size),
-          };
-          call_event_handler!(event_handler, self.window_target(), control_flow, event);
-        }
-      }
-
-      if let Some(window_id) = redraw_window_id {
-        if self.running {
-          let event = event::Event::RedrawRequested(window_id);
-          call_event_handler!(event_handler, self.window_target(), control_flow, event);
-        }
-      }
-
-      call_event_handler!(
-        event_handler,
-        self.window_target(),
-        control_flow,
-        event::Event::RedrawEventsCleared
-      );
-
-      match control_flow {
-        ControlFlow::ExitWithCode(code) => {
-          self.first_event = poll(
-            self
-              .looper
-              .poll_once_timeout(Duration::from_millis(0))
-              .unwrap(),
-          );
-          self.start_cause = event::StartCause::WaitCancelled {
-            start: Instant::now(),
-            requested_resume: None,
-          };
-
-          call_event_handler!(
-            event_handler,
-            self.window_target(),
-            control_flow,
-            event::Event::LoopDestroyed
-          );
-
-          break 'event_loop code;
-        }
-        ControlFlow::Poll => {
-          self.first_event = poll(
-            self
-              .looper
-              .poll_all_timeout(Duration::from_millis(0))
-              .unwrap(),
-          );
-          self.start_cause = event::StartCause::Poll;
-        }
-        ControlFlow::Wait => {
-          self.first_event = poll(self.looper.poll_all().unwrap());
-          self.start_cause = event::StartCause::WaitCancelled {
-            start: Instant::now(),
-            requested_resume: None,
-          }
-        }
-        ControlFlow::WaitUntil(instant) => {
-          let start = Instant::now();
-          let duration = if instant <= start {
-            Duration::default()
-          } else {
-            instant - start
-          };
-          self.first_event = poll(self.looper.poll_all_timeout(duration).unwrap());
-          self.start_cause = if self.first_event.is_some() {
-            event::StartCause::WaitCancelled {
-              start,
-              requested_resume: Some(instant),
+            if let Some(window_id) = resized_window_id {
+                if self.running {
+                    let size = MonitorHandle.size();
+                    let event = event::Event::WindowEvent {
+                        window_id,
+                        event: event::WindowEvent::Resized(size),
+                    };
+                    call_event_handler!(event_handler, self.window_target(), control_flow, event);
+                }
             }
-          } else {
-            event::StartCause::ResumeTimeReached {
-              start,
-              requested_resume: instant,
+
+            if let Some(window_id) = redraw_window_id {
+                if self.running {
+                    let event = event::Event::RedrawRequested(window_id);
+                    call_event_handler!(event_handler, self.window_target(), control_flow, event);
+                }
             }
-          }
+
+            call_event_handler!(
+                event_handler,
+                self.window_target(),
+                control_flow,
+                event::Event::RedrawEventsCleared
+            );
+
+            match control_flow {
+                ControlFlow::ExitWithCode(code) => {
+                    self.first_event = poll(
+                        self.looper
+                            .poll_once_timeout(Duration::from_millis(0))
+                            .unwrap(),
+                    );
+                    self.start_cause = event::StartCause::WaitCancelled {
+                        start: Instant::now(),
+                        requested_resume: None,
+                    };
+
+                    call_event_handler!(
+                        event_handler,
+                        self.window_target(),
+                        control_flow,
+                        event::Event::LoopDestroyed
+                    );
+
+                    break 'event_loop code;
+                }
+                ControlFlow::Poll => {
+                    self.first_event = poll(
+                        self.looper
+                            .poll_all_timeout(Duration::from_millis(0))
+                            .unwrap(),
+                    );
+                    self.start_cause = event::StartCause::Poll;
+                }
+                ControlFlow::Wait => {
+                    self.first_event = poll(self.looper.poll_all().unwrap());
+                    self.start_cause = event::StartCause::WaitCancelled {
+                        start: Instant::now(),
+                        requested_resume: None,
+                    }
+                }
+                ControlFlow::WaitUntil(instant) => {
+                    let start = Instant::now();
+                    let duration = if instant <= start {
+                        Duration::default()
+                    } else {
+                        instant - start
+                    };
+                    self.first_event = poll(self.looper.poll_all_timeout(duration).unwrap());
+                    self.start_cause = if self.first_event.is_some() {
+                        event::StartCause::WaitCancelled {
+                            start,
+                            requested_resume: Some(instant),
+                        }
+                    } else {
+                        event::StartCause::ResumeTimeReached {
+                            start,
+                            requested_resume: instant,
+                        }
+                    }
+                }
+            }
         }
-      }
     }
-  }
 
-  pub fn window_target(&self) -> &event_loop::EventLoopWindowTarget<T> {
-    &self.window_target
-  }
-
-  pub fn create_proxy(&self) -> EventLoopProxy<T> {
-    EventLoopProxy {
-      queue: self.sender_to_clone.clone(),
-      looper: ForeignLooper::for_thread().expect("called from event loop thread"),
+    pub fn window_target(&self) -> &event_loop::EventLoopWindowTarget<T> {
+        &self.window_target
     }
-  }
+
+    pub fn create_proxy(&self) -> EventLoopProxy<T> {
+        EventLoopProxy {
+            queue: self.sender_to_clone.clone(),
+            looper: ForeignLooper::for_thread().expect("called from event loop thread"),
+        }
+    }
 }
 
 pub struct EventLoopProxy<T: 'static> {
-  queue: Sender<T>,
-  looper: ForeignLooper,
+    queue: Sender<T>,
+    looper: ForeignLooper,
 }
 
 impl<T> EventLoopProxy<T> {
-  pub fn send_event(&self, event: T) -> Result<(), event_loop::EventLoopClosed<T>> {
-    _ = self.queue.try_send(event);
-    self.looper.wake();
-    Ok(())
-  }
+    pub fn send_event(&self, event: T) -> Result<(), event_loop::EventLoopClosed<T>> {
+        _ = self.queue.try_send(event);
+        self.looper.wake();
+        Ok(())
+    }
 }
 
 impl<T> Clone for EventLoopProxy<T> {
-  fn clone(&self) -> Self {
-    EventLoopProxy {
-      queue: self.queue.clone(),
-      looper: self.looper.clone(),
+    fn clone(&self) -> Self {
+        EventLoopProxy {
+            queue: self.queue.clone(),
+            looper: self.looper.clone(),
+        }
     }
-  }
 }
 
 #[derive(Clone)]
 pub struct EventLoopWindowTarget<T: 'static> {
-  _marker: std::marker::PhantomData<T>,
+    _marker: std::marker::PhantomData<T>,
 }
 
 impl<T: 'static> EventLoopWindowTarget<T> {
-  pub fn primary_monitor(&self) -> Option<monitor::MonitorHandle> {
-    Some(monitor::MonitorHandle {
-      inner: MonitorHandle,
-    })
-  }
+    pub fn primary_monitor(&self) -> Option<monitor::MonitorHandle> {
+        Some(monitor::MonitorHandle {
+            inner: MonitorHandle,
+        })
+    }
 
-  #[inline]
-  pub fn monitor_from_point(&self, _x: f64, _y: f64) -> Option<MonitorHandle> {
-    warn!("`Window::monitor_from_point` is ignored on Android");
-    None
-  }
+    #[inline]
+    pub fn monitor_from_point(&self, _x: f64, _y: f64) -> Option<MonitorHandle> {
+        warn!("`Window::monitor_from_point` is ignored on Android");
+        None
+    }
 
-  pub fn available_monitors(&self) -> VecDeque<MonitorHandle> {
-    let mut v = VecDeque::with_capacity(1);
-    v.push_back(MonitorHandle);
-    v
-  }
+    pub fn available_monitors(&self) -> VecDeque<MonitorHandle> {
+        let mut v = VecDeque::with_capacity(1);
+        v.push_back(MonitorHandle);
+        v
+    }
 
-  #[cfg(feature = "rwh_05")]
-  #[inline]
-  pub fn raw_display_handle_rwh_05(&self) -> rwh_05::RawDisplayHandle {
-    rwh_05::RawDisplayHandle::Android(rwh_05::AndroidDisplayHandle::empty())
-  }
+    #[cfg(feature = "rwh_05")]
+    #[inline]
+    pub fn raw_display_handle_rwh_05(&self) -> rwh_05::RawDisplayHandle {
+        rwh_05::RawDisplayHandle::Android(rwh_05::AndroidDisplayHandle::empty())
+    }
 
-  #[cfg(feature = "rwh_06")]
-  #[inline]
-  pub fn raw_display_handle_rwh_06(&self) -> Result<rwh_06::RawDisplayHandle, rwh_06::HandleError> {
-    Ok(rwh_06::RawDisplayHandle::Android(
-      rwh_06::AndroidDisplayHandle::new(),
-    ))
-  }
+    #[cfg(feature = "rwh_06")]
+    #[inline]
+    pub fn raw_display_handle_rwh_06(
+        &self,
+    ) -> Result<rwh_06::RawDisplayHandle, rwh_06::HandleError> {
+        Ok(rwh_06::RawDisplayHandle::Android(
+            rwh_06::AndroidDisplayHandle::new(),
+        ))
+    }
 
-  pub fn cursor_position(&self) -> Result<PhysicalPosition<f64>, error::ExternalError> {
-    debug!("`EventLoopWindowTarget::cursor_position` is ignored on Android");
-    Ok((0, 0).into())
-  }
+    pub fn cursor_position(&self) -> Result<PhysicalPosition<f64>, error::ExternalError> {
+        debug!("`EventLoopWindowTarget::cursor_position` is ignored on Android");
+        Ok((0, 0).into())
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct WindowId(ActivityId);
 
 impl WindowId {
-  pub fn dummy() -> Self {
-    WindowId(0)
-  }
+    pub fn dummy() -> Self {
+        WindowId(0)
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct DeviceId;
 
 impl DeviceId {
-  pub fn dummy() -> Self {
-    DeviceId
-  }
+    pub fn dummy() -> Self {
+        DeviceId
+    }
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct PlatformSpecificWindowBuilderAttributes {
-  pub activity_id: Option<ActivityId>,
-  pub activity_name: Option<String>,
-  pub created_by_activity_name: Option<String>,
+    pub activity_id: Option<ActivityId>,
+    pub activity_name: Option<String>,
+    pub created_by_activity_name: Option<String>,
 }
 
 pub struct Window {
-  activity_id: ActivityId,
-  activity_name: String,
+    activity_id: ActivityId,
+    activity_name: String,
 }
 
 impl Window {
-  pub fn new<T: 'static>(
-    _el: &EventLoopWindowTarget<T>,
-    _window_attrs: window::WindowAttributes,
-    pl_attrs: PlatformSpecificWindowBuilderAttributes,
-  ) -> Result<Self, error::OsError> {
-    // FIXME this ignores requested window attributes
+    pub fn new<T: 'static>(
+        _el: &EventLoopWindowTarget<T>,
+        _window_attrs: window::WindowAttributes,
+        pl_attrs: PlatformSpecificWindowBuilderAttributes,
+    ) -> Result<Self, error::OsError> {
+        // FIXME this ignores requested window attributes
 
-    let (activity_id, activity_name) = match pl_attrs.activity_name {
-      Some(activity_name) => {
-        let ctx = if let Some(created_by_activity_name) = pl_attrs.created_by_activity_name {
-          ndk_glue::CONTEXTS
-            .lock()
-            .unwrap()
-            .values()
-            .find(|ctx| ctx.activity_name == created_by_activity_name)
-            .cloned()
-        } else {
-          ndk_glue::main_android_context()
-        }
-        .ok_or_else(|| os_error!(OsError::NoAvailableActivity))?;
-        let activity_id = ctx
-          .create_activity(&activity_name)
-          .map_err(|error| os_error!(OsError::JniCallError(error)))?;
-        (activity_id, activity_name)
-      }
-      None => ndk_glue::next_available_activity()
-        .map(|(activity_id, ctx)| (activity_id, ctx.activity_name.clone()))
-        .ok_or_else(|| os_error!(OsError::NoAvailableActivity))?,
-    };
-    Ok(Self {
-      activity_id,
-      activity_name,
-    })
-  }
-
-  pub fn id(&self) -> WindowId {
-    WindowId(self.activity_id)
-  }
-
-  pub fn primary_monitor(&self) -> Option<monitor::MonitorHandle> {
-    Some(monitor::MonitorHandle {
-      inner: MonitorHandle,
-    })
-  }
-
-  pub fn available_monitors(&self) -> VecDeque<MonitorHandle> {
-    let mut v = VecDeque::with_capacity(1);
-    v.push_back(MonitorHandle);
-    v
-  }
-
-  #[inline]
-  pub fn monitor_from_point(&self, _x: f64, _y: f64) -> Option<monitor::MonitorHandle> {
-    warn!("`Window::monitor_from_point` is ignored on Android");
-    None
-  }
-
-  pub fn current_monitor(&self) -> Option<monitor::MonitorHandle> {
-    Some(monitor::MonitorHandle {
-      inner: MonitorHandle,
-    })
-  }
-
-  pub fn scale_factor(&self) -> f64 {
-    MonitorHandle.scale_factor()
-  }
-
-  pub fn request_redraw(&self) {
-    // TODO
-  }
-
-  pub fn inner_position(&self) -> Result<PhysicalPosition<i32>, error::NotSupportedError> {
-    Err(error::NotSupportedError::new())
-  }
-
-  pub fn outer_position(&self) -> Result<PhysicalPosition<i32>, error::NotSupportedError> {
-    Err(error::NotSupportedError::new())
-  }
-
-  pub fn set_outer_position(&self, _position: Position) {
-    // no effect
-  }
-
-  pub fn inner_size(&self) -> PhysicalSize<u32> {
-    self.outer_size()
-  }
-
-  pub fn set_inner_size(&self, _size: Size) {
-    warn!("Cannot set window size on Android");
-  }
-
-  pub fn outer_size(&self) -> PhysicalSize<u32> {
-    MonitorHandle.size()
-  }
-
-  pub fn set_min_inner_size(&self, _: Option<Size>) {}
-  pub fn set_max_inner_size(&self, _: Option<Size>) {}
-  pub fn set_inner_size_constraints(&self, _: WindowSizeConstraints) {}
-
-  pub fn set_title(&self, _title: &str) {}
-  pub fn title(&self) -> String {
-    String::new()
-  }
-
-  pub fn set_visible(&self, _visibility: bool) {}
-
-  pub fn set_focus(&self) {
-    //FIXME: implementation goes here
-    warn!("set_focus not yet implemented on Android");
-  }
-
-  pub fn set_focusable(&self, _focusable: bool) {
-    warn!("set_focusable not yet implemented on Android");
-  }
-
-  pub fn is_focused(&self) -> bool {
-    log::warn!("`Window::is_focused` is ignored on Android");
-    false
-  }
-
-  pub fn is_always_on_top(&self) -> bool {
-    log::warn!("`Window::is_always_on_top` is ignored on Android");
-    false
-  }
-
-  pub fn set_resizable(&self, _resizeable: bool) {
-    warn!("`Window::set_resizable` is ignored on Android")
-  }
-
-  pub fn set_minimizable(&self, _minimizable: bool) {
-    warn!("`Window::set_minimizable` is ignored on Android")
-  }
-
-  pub fn set_maximizable(&self, _maximizable: bool) {
-    warn!("`Window::set_maximizable` is ignored on Android")
-  }
-
-  pub fn set_closable(&self, _closable: bool) {
-    warn!("`Window::set_closable` is ignored on Android")
-  }
-
-  pub fn set_minimized(&self, _minimized: bool) {}
-
-  pub fn set_maximized(&self, _maximized: bool) {}
-
-  pub fn is_maximized(&self) -> bool {
-    false
-  }
-
-  pub fn is_minimized(&self) -> bool {
-    false
-  }
-
-  pub fn is_visible(&self) -> bool {
-    log::warn!("`Window::is_visible` is ignored on Android");
-    false
-  }
-
-  pub fn is_resizable(&self) -> bool {
-    warn!("`Window::is_resizable` is ignored on Android");
-    false
-  }
-
-  pub fn is_minimizable(&self) -> bool {
-    warn!("`Window::is_minimizable` is ignored on Android");
-    false
-  }
-
-  pub fn is_maximizable(&self) -> bool {
-    warn!("`Window::is_maximizable` is ignored on Android");
-    false
-  }
-
-  pub fn is_closable(&self) -> bool {
-    warn!("`Window::is_closable` is ignored on Android");
-    false
-  }
-
-  pub fn is_decorated(&self) -> bool {
-    warn!("`Window::is_decorated` is ignored on Android");
-    false
-  }
-
-  pub fn set_fullscreen(&self, _monitor: Option<window::Fullscreen>) {
-    warn!("Cannot set fullscreen on Android");
-  }
-
-  pub fn fullscreen(&self) -> Option<window::Fullscreen> {
-    None
-  }
-
-  pub fn set_decorations(&self, _decorations: bool) {}
-
-  pub fn set_always_on_bottom(&self, _always_on_bottom: bool) {}
-
-  pub fn set_always_on_top(&self, _always_on_top: bool) {}
-
-  pub fn set_window_icon(&self, _window_icon: Option<crate::icon::Icon>) {}
-
-  pub fn set_ime_position(&self, _position: Position) {}
-
-  pub fn request_user_attention(&self, _request_type: Option<window::UserAttentionType>) {}
-
-  pub fn set_cursor_icon(&self, _: window::CursorIcon) {}
-
-  pub fn set_cursor_position(&self, _: Position) -> Result<(), error::ExternalError> {
-    Err(error::ExternalError::NotSupported(
-      error::NotSupportedError::new(),
-    ))
-  }
-
-  pub fn set_cursor_grab(&self, _: bool) -> Result<(), error::ExternalError> {
-    Err(error::ExternalError::NotSupported(
-      error::NotSupportedError::new(),
-    ))
-  }
-
-  pub fn set_cursor_visible(&self, _: bool) {}
-
-  pub fn drag_window(&self) -> Result<(), error::ExternalError> {
-    Err(error::ExternalError::NotSupported(
-      error::NotSupportedError::new(),
-    ))
-  }
-
-  pub fn drag_resize_window(
-    &self,
-    _direction: ResizeDirection,
-  ) -> Result<(), error::ExternalError> {
-    Err(error::ExternalError::NotSupported(
-      error::NotSupportedError::new(),
-    ))
-  }
-
-  pub fn set_background_color(&self, _color: Option<crate::window::RGBA>) {}
-
-  pub fn set_ignore_cursor_events(&self, _ignore: bool) -> Result<(), error::ExternalError> {
-    Err(error::ExternalError::NotSupported(
-      error::NotSupportedError::new(),
-    ))
-  }
-
-  pub fn cursor_position(&self) -> Result<PhysicalPosition<f64>, error::ExternalError> {
-    debug!("`Window::cursor_position` is ignored on Android");
-    Ok((0, 0).into())
-  }
-
-  #[cfg(feature = "rwh_04")]
-  pub fn raw_window_handle_rwh_04(&self) -> rwh_04::RawWindowHandle {
-    // TODO: Use main activity instead?
-    let mut handle = rwh_04::AndroidNdkHandle::empty();
-    if let Some(w) = ndk_glue::activity_window_manager(self.activity_id).as_ref() {
-      handle.a_native_window = w.as_obj().as_raw() as *mut _;
-    } else {
-      panic!("Cannot get the native window, it's null and will always be null before Event::Resumed and after Event::Suspended. Make sure you only call this function between those events.");
-    };
-    rwh_04::RawWindowHandle::AndroidNdk(handle)
-  }
-
-  #[cfg(feature = "rwh_05")]
-  pub fn raw_window_handle_rwh_05(&self) -> rwh_05::RawWindowHandle {
-    // TODO: Use main activity instead?
-    let mut handle = rwh_05::AndroidNdkWindowHandle::empty();
-    if let Some(w) = ndk_glue::activity_window_manager(self.activity_id).as_ref() {
-      handle.a_native_window = w.as_obj().as_raw() as *mut _;
-    } else {
-      panic!("Cannot get the native window, it's null and will always be null before Event::Resumed and after Event::Suspended. Make sure you only call this function between those events.");
-    };
-    rwh_05::RawWindowHandle::AndroidNdk(handle)
-  }
-
-  #[cfg(feature = "rwh_05")]
-  pub fn raw_display_handle_rwh_05(&self) -> rwh_05::RawDisplayHandle {
-    rwh_05::RawDisplayHandle::Android(rwh_05::AndroidDisplayHandle::empty())
-  }
-
-  #[cfg(feature = "rwh_06")]
-  pub fn raw_window_handle_rwh_06(&self) -> Result<rwh_06::RawWindowHandle, rwh_06::HandleError> {
-    // TODO: Use main activity instead?
-    if let Some(w) = ndk_glue::activity_window_manager(self.activity_id).as_ref() {
-      let native_window =
-        unsafe { std::ptr::NonNull::new_unchecked(w.as_obj().as_raw() as *mut _) };
-      // native_window shuldn't be null
-      let handle = rwh_06::AndroidNdkWindowHandle::new(native_window);
-      Ok(rwh_06::RawWindowHandle::AndroidNdk(handle))
-    } else {
-      Err(rwh_06::HandleError::Unavailable)
+        let (activity_id, activity_name) = match pl_attrs.activity_name {
+            Some(activity_name) => {
+                let ctx = if let Some(created_by_activity_name) = pl_attrs.created_by_activity_name
+                {
+                    ndk_glue::CONTEXTS
+                        .lock()
+                        .unwrap()
+                        .values()
+                        .find(|ctx| ctx.activity_name == created_by_activity_name)
+                        .cloned()
+                } else {
+                    ndk_glue::main_android_context()
+                }
+                .ok_or_else(|| os_error!(OsError::NoAvailableActivity))?;
+                let activity_id = ctx
+                    .create_activity(&activity_name)
+                    .map_err(|error| os_error!(OsError::JniCallError(error)))?;
+                (activity_id, activity_name)
+            }
+            None => ndk_glue::next_available_activity()
+                .map(|(activity_id, ctx)| (activity_id, ctx.activity_name.clone()))
+                .ok_or_else(|| os_error!(OsError::NoAvailableActivity))?,
+        };
+        Ok(Self {
+            activity_id,
+            activity_name,
+        })
     }
-  }
 
-  #[cfg(feature = "rwh_06")]
-  pub fn raw_display_handle_rwh_06(&self) -> Result<rwh_06::RawDisplayHandle, rwh_06::HandleError> {
-    Ok(rwh_06::RawDisplayHandle::Android(
-      rwh_06::AndroidDisplayHandle::new(),
-    ))
-  }
-  pub fn config(&self) -> Configuration {
-    CONFIG.read().unwrap().clone()
-  }
+    pub fn id(&self) -> WindowId {
+        WindowId(self.activity_id)
+    }
 
-  pub fn content_rect(&self) -> Rect {
-    ndk_glue::content_rect()
-  }
+    pub fn primary_monitor(&self) -> Option<monitor::MonitorHandle> {
+        Some(monitor::MonitorHandle {
+            inner: MonitorHandle,
+        })
+    }
 
-  pub fn activity_name(&self) -> &str {
-    &self.activity_name
-  }
+    pub fn available_monitors(&self) -> VecDeque<MonitorHandle> {
+        let mut v = VecDeque::with_capacity(1);
+        v.push_back(MonitorHandle);
+        v
+    }
 
-  pub fn theme(&self) -> Theme {
-    Theme::Light
-  }
+    #[inline]
+    pub fn monitor_from_point(&self, _x: f64, _y: f64) -> Option<monitor::MonitorHandle> {
+        warn!("`Window::monitor_from_point` is ignored on Android");
+        None
+    }
+
+    pub fn current_monitor(&self) -> Option<monitor::MonitorHandle> {
+        Some(monitor::MonitorHandle {
+            inner: MonitorHandle,
+        })
+    }
+
+    pub fn scale_factor(&self) -> f64 {
+        MonitorHandle.scale_factor()
+    }
+
+    pub fn request_redraw(&self) {
+        // TODO
+    }
+
+    pub fn inner_position(&self) -> Result<PhysicalPosition<i32>, error::NotSupportedError> {
+        Err(error::NotSupportedError::new())
+    }
+
+    pub fn outer_position(&self) -> Result<PhysicalPosition<i32>, error::NotSupportedError> {
+        Err(error::NotSupportedError::new())
+    }
+
+    pub fn set_outer_position(&self, _position: Position) {
+        // no effect
+    }
+
+    pub fn inner_size(&self) -> PhysicalSize<u32> {
+        self.outer_size()
+    }
+
+    pub fn set_inner_size(&self, _size: Size) {
+        warn!("Cannot set window size on Android");
+    }
+
+    pub fn outer_size(&self) -> PhysicalSize<u32> {
+        MonitorHandle.size()
+    }
+
+    pub fn set_min_inner_size(&self, _: Option<Size>) {}
+    pub fn set_max_inner_size(&self, _: Option<Size>) {}
+    pub fn set_inner_size_constraints(&self, _: WindowSizeConstraints) {}
+
+    pub fn set_title(&self, _title: &str) {}
+    pub fn title(&self) -> String {
+        String::new()
+    }
+
+    pub fn set_visible(&self, _visibility: bool) {}
+
+    pub fn set_focus(&self) {
+        //FIXME: implementation goes here
+        warn!("set_focus not yet implemented on Android");
+    }
+
+    pub fn set_focusable(&self, _focusable: bool) {
+        warn!("set_focusable not yet implemented on Android");
+    }
+
+    pub fn is_focused(&self) -> bool {
+        log::warn!("`Window::is_focused` is ignored on Android");
+        false
+    }
+
+    pub fn is_always_on_top(&self) -> bool {
+        log::warn!("`Window::is_always_on_top` is ignored on Android");
+        false
+    }
+
+    pub fn set_resizable(&self, _resizeable: bool) {
+        warn!("`Window::set_resizable` is ignored on Android")
+    }
+
+    pub fn set_minimizable(&self, _minimizable: bool) {
+        warn!("`Window::set_minimizable` is ignored on Android")
+    }
+
+    pub fn set_maximizable(&self, _maximizable: bool) {
+        warn!("`Window::set_maximizable` is ignored on Android")
+    }
+
+    pub fn set_closable(&self, _closable: bool) {
+        warn!("`Window::set_closable` is ignored on Android")
+    }
+
+    pub fn set_minimized(&self, _minimized: bool) {}
+
+    pub fn set_maximized(&self, _maximized: bool) {}
+
+    pub fn is_maximized(&self) -> bool {
+        false
+    }
+
+    pub fn is_minimized(&self) -> bool {
+        false
+    }
+
+    pub fn is_visible(&self) -> bool {
+        log::warn!("`Window::is_visible` is ignored on Android");
+        false
+    }
+
+    pub fn is_resizable(&self) -> bool {
+        warn!("`Window::is_resizable` is ignored on Android");
+        false
+    }
+
+    pub fn is_minimizable(&self) -> bool {
+        warn!("`Window::is_minimizable` is ignored on Android");
+        false
+    }
+
+    pub fn is_maximizable(&self) -> bool {
+        warn!("`Window::is_maximizable` is ignored on Android");
+        false
+    }
+
+    pub fn is_closable(&self) -> bool {
+        warn!("`Window::is_closable` is ignored on Android");
+        false
+    }
+
+    pub fn is_decorated(&self) -> bool {
+        warn!("`Window::is_decorated` is ignored on Android");
+        false
+    }
+
+    pub fn set_fullscreen(&self, _monitor: Option<window::Fullscreen>) {
+        warn!("Cannot set fullscreen on Android");
+    }
+
+    pub fn fullscreen(&self) -> Option<window::Fullscreen> {
+        None
+    }
+
+    pub fn set_decorations(&self, _decorations: bool) {}
+
+    pub fn set_always_on_bottom(&self, _always_on_bottom: bool) {}
+
+    pub fn set_always_on_top(&self, _always_on_top: bool) {}
+
+    pub fn set_window_icon(&self, _window_icon: Option<crate::icon::Icon>) {}
+
+    pub fn set_ime_position(&self, _position: Position) {}
+
+    pub fn request_user_attention(&self, _request_type: Option<window::UserAttentionType>) {}
+
+    pub fn set_cursor_icon(&self, _: window::CursorIcon) {}
+
+    pub fn set_cursor_position(&self, _: Position) -> Result<(), error::ExternalError> {
+        Err(error::ExternalError::NotSupported(
+            error::NotSupportedError::new(),
+        ))
+    }
+
+    pub fn set_cursor_grab(&self, _: bool) -> Result<(), error::ExternalError> {
+        Err(error::ExternalError::NotSupported(
+            error::NotSupportedError::new(),
+        ))
+    }
+
+    pub fn set_cursor_visible(&self, _: bool) {}
+
+    pub fn drag_window(&self) -> Result<(), error::ExternalError> {
+        Err(error::ExternalError::NotSupported(
+            error::NotSupportedError::new(),
+        ))
+    }
+
+    pub fn drag_resize_window(
+        &self,
+        _direction: ResizeDirection,
+    ) -> Result<(), error::ExternalError> {
+        Err(error::ExternalError::NotSupported(
+            error::NotSupportedError::new(),
+        ))
+    }
+
+    pub fn set_background_color(&self, _color: Option<crate::window::RGBA>) {}
+
+    pub fn set_ignore_cursor_events(&self, _ignore: bool) -> Result<(), error::ExternalError> {
+        Err(error::ExternalError::NotSupported(
+            error::NotSupportedError::new(),
+        ))
+    }
+
+    pub fn cursor_position(&self) -> Result<PhysicalPosition<f64>, error::ExternalError> {
+        debug!("`Window::cursor_position` is ignored on Android");
+        Ok((0, 0).into())
+    }
+
+    #[cfg(feature = "rwh_04")]
+    pub fn raw_window_handle_rwh_04(&self) -> rwh_04::RawWindowHandle {
+        // TODO: Use main activity instead?
+        let mut handle = rwh_04::AndroidNdkHandle::empty();
+        if let Some(w) = ndk_glue::activity_window_manager(self.activity_id).as_ref() {
+            handle.a_native_window = w.as_obj().as_raw() as *mut _;
+        } else {
+            panic!("Cannot get the native window, it's null and will always be null before Event::Resumed and after Event::Suspended. Make sure you only call this function between those events.");
+        };
+        rwh_04::RawWindowHandle::AndroidNdk(handle)
+    }
+
+    #[cfg(feature = "rwh_05")]
+    pub fn raw_window_handle_rwh_05(&self) -> rwh_05::RawWindowHandle {
+        // TODO: Use main activity instead?
+        let mut handle = rwh_05::AndroidNdkWindowHandle::empty();
+        if let Some(w) = ndk_glue::activity_window_manager(self.activity_id).as_ref() {
+            handle.a_native_window = w.as_obj().as_raw() as *mut _;
+        } else {
+            panic!("Cannot get the native window, it's null and will always be null before Event::Resumed and after Event::Suspended. Make sure you only call this function between those events.");
+        };
+        rwh_05::RawWindowHandle::AndroidNdk(handle)
+    }
+
+    #[cfg(feature = "rwh_05")]
+    pub fn raw_display_handle_rwh_05(&self) -> rwh_05::RawDisplayHandle {
+        rwh_05::RawDisplayHandle::Android(rwh_05::AndroidDisplayHandle::empty())
+    }
+
+    #[cfg(feature = "rwh_06")]
+    pub fn raw_window_handle_rwh_06(&self) -> Result<rwh_06::RawWindowHandle, rwh_06::HandleError> {
+        // TODO: Use main activity instead?
+        if let Some(w) = ndk_glue::activity_window_manager(self.activity_id).as_ref() {
+            let native_window =
+                unsafe { std::ptr::NonNull::new_unchecked(w.as_obj().as_raw() as *mut _) };
+            // native_window shuldn't be null
+            let handle = rwh_06::AndroidNdkWindowHandle::new(native_window);
+            Ok(rwh_06::RawWindowHandle::AndroidNdk(handle))
+        } else {
+            Err(rwh_06::HandleError::Unavailable)
+        }
+    }
+
+    #[cfg(feature = "rwh_06")]
+    pub fn raw_display_handle_rwh_06(
+        &self,
+    ) -> Result<rwh_06::RawDisplayHandle, rwh_06::HandleError> {
+        Ok(rwh_06::RawDisplayHandle::Android(
+            rwh_06::AndroidDisplayHandle::new(),
+        ))
+    }
+    pub fn config(&self) -> Configuration {
+        CONFIG.read().unwrap().clone()
+    }
+
+    pub fn content_rect(&self) -> Rect {
+        ndk_glue::content_rect()
+    }
+
+    pub fn activity_name(&self) -> &str {
+        &self.activity_name
+    }
+
+    pub fn theme(&self) -> Theme {
+        Theme::Light
+    }
 }
 
 pub(crate) use crate::icon::NoIcon as PlatformIcon;
@@ -948,159 +950,159 @@ pub(crate) use crate::icon::NoIcon as PlatformIcon;
 pub struct MonitorHandle;
 
 fn current_window_metrics_size(
-  env: &mut jni::JNIEnv<'_>,
-  window_manager: &jni::objects::JObject<'_>,
+    env: &mut jni::JNIEnv<'_>,
+    window_manager: &jni::objects::JObject<'_>,
 ) -> Option<PhysicalSize<u32>> {
-  let metrics = jni_call_method!(
-    env,
-    window_manager,
-    "getCurrentWindowMetrics",
-    "()Landroid/view/WindowMetrics;",
-    l
-  )
-  .ok()?;
+    let metrics = jni_call_method!(
+        env,
+        window_manager,
+        "getCurrentWindowMetrics",
+        "()Landroid/view/WindowMetrics;",
+        l
+    )
+    .ok()?;
 
-  let rect = jni_call_method!(env, &metrics, "getBounds", "()Landroid/graphics/Rect;", l).ok()?;
-  let width = jni_call_method!(env, &rect, "width", "()I", i).ok()?;
-  let height = jni_call_method!(env, &rect, "height", "()I", i).ok()?;
-  Some(PhysicalSize::new(width as u32, height as u32))
+    let rect = jni_call_method!(env, &metrics, "getBounds", "()Landroid/graphics/Rect;", l).ok()?;
+    let width = jni_call_method!(env, &rect, "width", "()I", i).ok()?;
+    let height = jni_call_method!(env, &rect, "height", "()I", i).ok()?;
+    Some(PhysicalSize::new(width as u32, height as u32))
 }
 
 fn legacy_display_metrics_size(
-  env: &mut jni::JNIEnv<'_>,
-  window_manager: &jni::objects::JObject<'_>,
+    env: &mut jni::JNIEnv<'_>,
+    window_manager: &jni::objects::JObject<'_>,
 ) -> Option<PhysicalSize<u32>> {
-  let display = jni_call_method!(
-    env,
-    window_manager,
-    "getDefaultDisplay",
-    "()Landroid/view/Display;",
-    l
-  )
-  .ok()?;
-  let display_metrics = env
-    .new_object("android/util/DisplayMetrics", "()V", &[])
+    let display = jni_call_method!(
+        env,
+        window_manager,
+        "getDefaultDisplay",
+        "()Landroid/view/Display;",
+        l
+    )
+    .ok()?;
+    let display_metrics = env
+        .new_object("android/util/DisplayMetrics", "()V", &[])
+        .ok()?;
+
+    jni_call_method!(
+        env,
+        &display,
+        "getRealMetrics",
+        "(Landroid/util/DisplayMetrics;)V",
+        &[(&display_metrics).into()],
+        v
+    )
     .ok()?;
 
-  jni_call_method!(
-    env,
-    &display,
-    "getRealMetrics",
-    "(Landroid/util/DisplayMetrics;)V",
-    &[(&display_metrics).into()],
-    v
-  )
-  .ok()?;
+    let width = env
+        .get_field(&display_metrics, "widthPixels", "I")
+        .and_then(|v| v.i())
+        .ok()?;
+    let height = env
+        .get_field(&display_metrics, "heightPixels", "I")
+        .and_then(|v| v.i())
+        .ok()?;
 
-  let width = env
-    .get_field(&display_metrics, "widthPixels", "I")
-    .and_then(|v| v.i())
-    .ok()?;
-  let height = env
-    .get_field(&display_metrics, "heightPixels", "I")
-    .and_then(|v| v.i())
-    .ok()?;
-
-  Some(PhysicalSize::new(width as u32, height as u32))
+    Some(PhysicalSize::new(width as u32, height as u32))
 }
 
 impl MonitorHandle {
-  pub fn name(&self) -> Option<String> {
-    Some("Android Device".to_owned())
-  }
-
-  pub fn size(&self) -> PhysicalSize<u32> {
-    // TODO: support multi-window (main_window_manager might be incorrect)
-
-    // TODO decide how to get JNIENV
-    let window_manager = ndk_glue::main_window_manager();
-    let Some(w) = window_manager.as_ref() else {
-      return PhysicalSize::new(0, 0);
-    };
-    let Some(ctx) = ndk_glue::main_android_context() else {
-      return PhysicalSize::new(0, 0);
-    };
-    let Ok(vm) = (unsafe { jni::JavaVM::from_raw(ctx.java_vm.cast()) }) else {
-      return PhysicalSize::new(0, 0);
-    };
-    let Ok(mut env) = vm.attach_current_thread() else {
-      return PhysicalSize::new(0, 0);
-    };
-    let window_manager = w.as_obj();
-
-    let sdk_int = env
-      .get_static_field("android/os/Build$VERSION", "SDK_INT", "I")
-      .and_then(|v| v.i())
-      .unwrap_or(0);
-
-    let metrics_size = if sdk_int >= 30 {
-      current_window_metrics_size(&mut env, window_manager)
-    } else {
-      legacy_display_metrics_size(&mut env, window_manager)
-    };
-
-    if metrics_size.is_none() && env.exception_check().unwrap_or(false) {
-      let _ = env.exception_clear();
+    pub fn name(&self) -> Option<String> {
+        Some("Android Device".to_owned())
     }
 
-    metrics_size.unwrap_or(PhysicalSize::new(0, 0))
-  }
+    pub fn size(&self) -> PhysicalSize<u32> {
+        // TODO: support multi-window (main_window_manager might be incorrect)
 
-  pub fn position(&self) -> PhysicalPosition<i32> {
-    (0, 0).into()
-  }
+        // TODO decide how to get JNIENV
+        let window_manager = ndk_glue::main_window_manager();
+        let Some(w) = window_manager.as_ref() else {
+            return PhysicalSize::new(0, 0);
+        };
+        let Some(ctx) = ndk_glue::main_android_context() else {
+            return PhysicalSize::new(0, 0);
+        };
+        let Ok(vm) = (unsafe { jni::JavaVM::from_raw(ctx.java_vm.cast()) }) else {
+            return PhysicalSize::new(0, 0);
+        };
+        let Ok(mut env) = vm.attach_current_thread() else {
+            return PhysicalSize::new(0, 0);
+        };
+        let window_manager = w.as_obj();
 
-  pub fn scale_factor(&self) -> f64 {
-    let config = CONFIG.read().unwrap();
-    config
-      .density()
-      .map(|dpi| dpi as f64 / 160.0)
-      .unwrap_or(1.0)
-  }
+        let sdk_int = env
+            .get_static_field("android/os/Build$VERSION", "SDK_INT", "I")
+            .and_then(|v| v.i())
+            .unwrap_or(0);
 
-  pub fn video_modes(&self) -> impl Iterator<Item = monitor::VideoMode> {
-    let size = self.size().into();
-    // FIXME this is not the real refresh rate
-    // (it is guarunteed to support 32 bit color though)
-    let v = vec![monitor::VideoMode {
-      video_mode: VideoMode {
-        size,
-        bit_depth: 32,
-        refresh_rate: 60,
-        monitor: self.clone(),
-      },
-    }];
+        let metrics_size = if sdk_int >= 30 {
+            current_window_metrics_size(&mut env, window_manager)
+        } else {
+            legacy_display_metrics_size(&mut env, window_manager)
+        };
 
-    v.into_iter()
-  }
+        if metrics_size.is_none() && env.exception_check().unwrap_or(false) {
+            let _ = env.exception_clear();
+        }
+
+        metrics_size.unwrap_or(PhysicalSize::new(0, 0))
+    }
+
+    pub fn position(&self) -> PhysicalPosition<i32> {
+        (0, 0).into()
+    }
+
+    pub fn scale_factor(&self) -> f64 {
+        let config = CONFIG.read().unwrap();
+        config
+            .density()
+            .map(|dpi| dpi as f64 / 160.0)
+            .unwrap_or(1.0)
+    }
+
+    pub fn video_modes(&self) -> impl Iterator<Item = monitor::VideoMode> {
+        let size = self.size().into();
+        // FIXME this is not the real refresh rate
+        // (it is guarunteed to support 32 bit color though)
+        let v = vec![monitor::VideoMode {
+            video_mode: VideoMode {
+                size,
+                bit_depth: 32,
+                refresh_rate: 60,
+                monitor: self.clone(),
+            },
+        }];
+
+        v.into_iter()
+    }
 }
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub struct VideoMode {
-  size: (u32, u32),
-  bit_depth: u16,
-  refresh_rate: u16,
-  monitor: MonitorHandle,
+    size: (u32, u32),
+    bit_depth: u16,
+    refresh_rate: u16,
+    monitor: MonitorHandle,
 }
 
 impl VideoMode {
-  pub fn size(&self) -> PhysicalSize<u32> {
-    self.size.into()
-  }
-
-  pub fn bit_depth(&self) -> u16 {
-    self.bit_depth
-  }
-
-  pub fn refresh_rate(&self) -> u16 {
-    self.refresh_rate
-  }
-
-  pub fn monitor(&self) -> monitor::MonitorHandle {
-    monitor::MonitorHandle {
-      inner: self.monitor.clone(),
+    pub fn size(&self) -> PhysicalSize<u32> {
+        self.size.into()
     }
-  }
+
+    pub fn bit_depth(&self) -> u16 {
+        self.bit_depth
+    }
+
+    pub fn refresh_rate(&self) -> u16 {
+        self.refresh_rate
+    }
+
+    pub fn monitor(&self) -> monitor::MonitorHandle {
+        monitor::MonitorHandle {
+            inner: self.monitor.clone(),
+        }
+    }
 }
 
 /*
@@ -1482,9 +1484,9 @@ fn keycode_to_location(keycode: ndk::event::Keycode) -> KeyLocation {
 
 // FIXME: Implement android
 pub fn keycode_to_scancode(_code: KeyCode) -> Option<u32> {
-  None
+    None
 }
 
 pub fn keycode_from_scancode(_scancode: u32) -> KeyCode {
-  KeyCode::Unidentified(NativeKeyCode::Unidentified)
+    KeyCode::Unidentified(NativeKeyCode::Unidentified)
 }

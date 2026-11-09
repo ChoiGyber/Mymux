@@ -104,7 +104,9 @@ fn user_data_dir(port: u16) -> PathBuf {
 
 #[cfg(windows)]
 fn known_browser_roots() -> Vec<(&'static str, PathBuf)> {
-    let Some(local) = dirs::data_local_dir() else { return Vec::new() };
+    let Some(local) = dirs::data_local_dir() else {
+        return Vec::new();
+    };
     vec![
         ("Chrome", local.join(r"Google\Chrome\User Data")),
         ("Edge", local.join(r"Microsoft\Edge\User Data")),
@@ -123,7 +125,9 @@ fn browser_profiles_blocking() -> Result<Vec<BrowserProfile>, String> {
     {
         let mut profiles = Vec::new();
         for (browser, root) in known_browser_roots() {
-            let Ok(entries) = std::fs::read_dir(&root) else { continue };
+            let Ok(entries) = std::fs::read_dir(&root) else {
+                continue;
+            };
             for entry in entries.flatten() {
                 let path = entry.path();
                 let name = entry.file_name().to_string_lossy().to_string();
@@ -158,12 +162,20 @@ fn browser_profiles_blocking() -> Result<Vec<BrowserProfile>, String> {
 #[cfg(windows)]
 fn browser_process_running(browser: &str) -> bool {
     use std::os::windows::process::CommandExt;
-    let exe = if browser == "Edge" { "msedge.exe" } else { "chrome.exe" };
+    let exe = if browser == "Edge" {
+        "msedge.exe"
+    } else {
+        "chrome.exe"
+    };
     std::process::Command::new("tasklist")
         .args(["/FI", &format!("IMAGENAME eq {exe}")])
         .creation_flags(0x0800_0000)
         .output()
-        .map(|o| String::from_utf8_lossy(&o.stdout).to_ascii_lowercase().contains(&exe.to_ascii_lowercase()))
+        .map(|o| {
+            String::from_utf8_lossy(&o.stdout)
+                .to_ascii_lowercase()
+                .contains(&exe.to_ascii_lowercase())
+        })
         .unwrap_or(false)
 }
 
@@ -174,8 +186,11 @@ fn copy_profile_tree(source: &Path, destination: &Path) -> Result<(), String> {
         let entry = entry.map_err(|e| e.to_string())?;
         let path = entry.path();
         let name = entry.file_name().to_string_lossy().to_string();
-        if name == "Cache" || name == "Code Cache" || name == "GPUCache"
-            || name.starts_with("Singleton") || name == "LOCK"
+        if name == "Cache"
+            || name == "Code Cache"
+            || name == "GPUCache"
+            || name.starts_with("Singleton")
+            || name == "LOCK"
         {
             continue;
         }
@@ -205,7 +220,10 @@ pub async fn browser_import_profile(
     }
     #[cfg(windows)]
     {
-        return run_browser_blocking(move || browser_import_profile_blocking(browser, profile, port)).await;
+        return run_browser_blocking(move || {
+            browser_import_profile_blocking(browser, profile, port)
+        })
+        .await;
     }
     #[cfg(not(windows))]
     {
@@ -250,7 +268,9 @@ fn browser_import_profile_blocking(
             .map_err(|e| format!("copy Local State: {e}"))?;
     }
     copy_profile_tree(&source_profile, &destination.join("Default"))?;
-    Ok(format!("Imported {browser} {profile} into Mymux browser profile."))
+    Ok(format!(
+        "Imported {browser} {profile} into Mymux browser profile."
+    ))
 }
 
 /// Locate an installed Chromium-based browser. Chrome is preferred over Edge.
@@ -305,7 +325,9 @@ fn find_browser(preferred: Option<&str>) -> Option<(String, String)> {
                 "/Applications/Chromium.app/Contents/MacOS/Chromium",
             ),
         ] {
-            if Path::new(p).exists() { candidates.push((label.to_string(), p.to_string())); }
+            if Path::new(p).exists() {
+                candidates.push((label.to_string(), p.to_string()));
+            }
         }
         if let Some(preferred) = preferred {
             candidates.sort_by_key(|(label, _)| if label == preferred { 0 } else { 1 });
@@ -322,7 +344,9 @@ fn find_browser(preferred: Option<&str>) -> Option<(String, String)> {
             ("Chromium", "chromium-browser"),
             ("Edge", "microsoft-edge"),
         ] {
-            if let Some(path) = which_unix(exe) { candidates.push((label.to_string(), path)); }
+            if let Some(path) = which_unix(exe) {
+                candidates.push((label.to_string(), path));
+            }
         }
         if let Some(preferred) = preferred {
             candidates.sort_by_key(|(label, _)| if label == preferred { 0 } else { 1 });
@@ -350,7 +374,8 @@ pub async fn browser_launch(
     browser: Option<String>,
 ) -> Result<BrowserStatus, String> {
     let manager = Arc::clone(state.inner());
-    run_browser_blocking(move || browser_launch_blocking(manager, port, url, headless, browser)).await
+    run_browser_blocking(move || browser_launch_blocking(manager, port, url, headless, browser))
+        .await
 }
 
 fn browser_launch_blocking(
@@ -379,7 +404,8 @@ fn browser_launch_blocking(
         .ok_or("Chrome/Edge not found. Please install Chrome or Edge.")?;
 
     let profile = user_data_dir(port);
-    std::fs::create_dir_all(&profile).map_err(|e| format!("Failed to create profile directory: {e}"))?;
+    std::fs::create_dir_all(&profile)
+        .map_err(|e| format!("Failed to create profile directory: {e}"))?;
 
     let start_url = url
         .filter(|u| !u.trim().is_empty())
@@ -423,7 +449,9 @@ fn browser_launch_blocking(
 
 /// Current browser state, reaping the handle if the process has exited.
 #[tauri::command]
-pub async fn browser_status(state: State<'_, Arc<BrowserManager>>) -> Result<BrowserStatus, String> {
+pub async fn browser_status(
+    state: State<'_, Arc<BrowserManager>>,
+) -> Result<BrowserStatus, String> {
     let manager = Arc::clone(state.inner());
     run_browser_blocking(move || browser_status_blocking(manager)).await
 }
@@ -474,7 +502,11 @@ fn parse_page_targets(body: &str) -> Result<Vec<PageTarget>, String> {
             Some(PageTarget {
                 ws_url: t.get("webSocketDebuggerUrl")?.as_str()?.to_string(),
                 target_id: t.get("id")?.as_str()?.to_string(),
-                url: t.get("url").and_then(|v| v.as_str()).unwrap_or_default().to_string(),
+                url: t
+                    .get("url")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or_default()
+                    .to_string(),
             })
         })
         .collect())
@@ -496,7 +528,8 @@ fn browser_page_targets_blocking(port: Option<u16>) -> Result<Vec<PageTarget>, S
 /// `--remote-allow-origins=*`).
 #[tauri::command]
 pub async fn browser_page_target(port: Option<u16>) -> Result<PageTarget, String> {
-    browser_page_targets(port).await?
+    browser_page_targets(port)
+        .await?
         .into_iter()
         .next()
         .ok_or("No page target yet (the browser may still be starting)".to_string())
@@ -507,15 +540,32 @@ pub async fn browser_new_tab(port: Option<u16>, url: Option<String>) -> Result<P
     run_browser_blocking(move || {
         let port = port.unwrap_or(9222);
         let requested = url.unwrap_or_else(|| "about:blank".to_string());
-        let body = cdp_http_request(port, "PUT", &format!("/json/new?url={}", percent_encode(&requested)))?;
+        let body = cdp_http_request(
+            port,
+            "PUT",
+            &format!("/json/new?url={}", percent_encode(&requested)),
+        )?;
         let value: serde_json::Value = serde_json::from_str(&body)
             .map_err(|e| format!("Failed to parse new-tab response: {e}"))?;
         Ok(PageTarget {
-            ws_url: value.get("webSocketDebuggerUrl").and_then(|v| v.as_str()).ok_or("New tab websocket URL missing")?.to_string(),
-            target_id: value.get("id").and_then(|v| v.as_str()).unwrap_or_default().to_string(),
-            url: value.get("url").and_then(|v| v.as_str()).unwrap_or_default().to_string(),
+            ws_url: value
+                .get("webSocketDebuggerUrl")
+                .and_then(|v| v.as_str())
+                .ok_or("New tab websocket URL missing")?
+                .to_string(),
+            target_id: value
+                .get("id")
+                .and_then(|v| v.as_str())
+                .unwrap_or_default()
+                .to_string(),
+            url: value
+                .get("url")
+                .and_then(|v| v.as_str())
+                .unwrap_or_default()
+                .to_string(),
         })
-    }).await
+    })
+    .await
 }
 
 #[tauri::command]
@@ -524,12 +574,17 @@ pub async fn browser_close_tab(port: Option<u16>, target_id: String) -> Result<(
         return Err("Invalid browser target id".into());
     }
     run_browser_blocking(move || {
-        let body = cdp_http_request(port.unwrap_or(9222), "GET", &format!("/json/close/{target_id}"))?;
+        let body = cdp_http_request(
+            port.unwrap_or(9222),
+            "GET",
+            &format!("/json/close/{target_id}"),
+        )?;
         if !body.trim().is_empty() && body.trim() != "Target is closing" {
             return Err(body);
         }
         Ok(())
-    }).await
+    })
+    .await
 }
 
 fn percent_encode(value: &str) -> String {
@@ -554,8 +609,12 @@ fn cdp_http_request(port: u16, method: &str, path: &str) -> Result<String, Strin
     let mut stream = std::net::TcpStream::connect(("127.0.0.1", port))
         .map_err(|e| format!("CDP connection failed (:{port}) — is the browser running? {e}"))?;
     let timeout = Some(std::time::Duration::from_secs(2));
-    stream.set_read_timeout(timeout).map_err(|e| e.to_string())?;
-    stream.set_write_timeout(timeout).map_err(|e| e.to_string())?;
+    stream
+        .set_read_timeout(timeout)
+        .map_err(|e| e.to_string())?;
+    stream
+        .set_write_timeout(timeout)
+        .map_err(|e| e.to_string())?;
     let req = format!("{method} {path} HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n");
     stream
         .write_all(req.as_bytes())
@@ -594,7 +653,9 @@ fn parse_url(url: &str) -> Result<tauri::Url, String> {
     } else {
         format!("https://{url}")
     };
-    let parsed: tauri::Url = normalized.parse().map_err(|e| format!("Failed to parse URL: {e}"))?;
+    let parsed: tauri::Url = normalized
+        .parse()
+        .map_err(|e| format!("Failed to parse URL: {e}"))?;
     // Only http/https into the embedded WebView — block file:/data:/about: etc.
     match parsed.scheme() {
         "http" | "https" => Ok(parsed),
@@ -635,7 +696,8 @@ pub async fn browser_pane_open(
 ) -> Result<(), String> {
     let target = parse_url(&url)?;
     if let Some(wv) = window.get_webview(PANE_LABEL) {
-        wv.set_bounds(pane_rect(x, y, width, height)).map_err(|e| e.to_string())?;
+        wv.set_bounds(pane_rect(x, y, width, height))
+            .map_err(|e| e.to_string())?;
         wv.navigate(target).map_err(|e| e.to_string())?;
         wv.show().map_err(|e| e.to_string())?;
     } else {
@@ -739,23 +801,44 @@ pub fn configure_native_control() {
     if std::env::var_os("MYMUX_DISABLE_BROWSER_CDP").is_some() {
         return;
     }
-    let Some(base) = dirs::data_local_dir().or_else(dirs::home_dir) else { return };
+    let Some(base) = dirs::data_local_dir().or_else(dirs::home_dir) else {
+        return;
+    };
     let directory = base.join("mycli");
-    if std::fs::create_dir_all(&directory).is_err() { return; }
+    if std::fs::create_dir_all(&directory).is_err() {
+        return;
+    }
     let helper = directory.join("mymux-browser.mjs");
-    if std::fs::write(&helper, include_str!("../../../scripts/mymux-browser.mjs")).is_err() { return; }
+    if std::fs::write(&helper, include_str!("../../../scripts/mymux-browser.mjs")).is_err() {
+        return;
+    }
 
     #[cfg(windows)]
     {
-        let Ok(listener) = std::net::TcpListener::bind("127.0.0.1:0") else { return };
-        let Ok(addr) = listener.local_addr() else { return };
+        let Ok(listener) = std::net::TcpListener::bind("127.0.0.1:0") else {
+            return;
+        };
+        let Ok(addr) = listener.local_addr() else {
+            return;
+        };
         let inherited = std::env::var("WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS").unwrap_or_default();
-        let arguments = inherited.split_whitespace()
-            .filter(|part| !part.starts_with("--remote-debugging-port") && !part.starts_with("--remote-debugging-address"))
-            .collect::<Vec<_>>().join(" ");
+        let arguments = inherited
+            .split_whitespace()
+            .filter(|part| {
+                !part.starts_with("--remote-debugging-port")
+                    && !part.starts_with("--remote-debugging-address")
+            })
+            .collect::<Vec<_>>()
+            .join(" ");
         // SAFETY: called once from main before the Tauri runtime or worker threads.
         unsafe {
-            std::env::set_var("WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS", format!("{arguments} --remote-debugging-address=127.0.0.1 --remote-debugging-port={}", addr.port()));
+            std::env::set_var(
+                "WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS",
+                format!(
+                    "{arguments} --remote-debugging-address=127.0.0.1 --remote-debugging-port={}",
+                    addr.port()
+                ),
+            );
         }
         drop(listener);
     }
