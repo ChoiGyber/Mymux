@@ -139,6 +139,12 @@ const DEFAULT_WORKLOG_COMMAND: (&str, &str, &str, &str) = (
     "LOG",
 );
 
+const DEFAULT_GYBER_BOT_CLAUDE_COMMAND: (&str, &str, &str) = (
+    "gyber-bot claude",
+    "ssh -o PreferredAuthentications=password -o PubkeyAuthentication=no -t gyber-bot claude",
+    "Connect to gyber-bot and run Claude Code (password prompt)",
+);
+
 /// Seed built-in shortcuts once (tracked by a marker file so deletions stick).
 fn seed_default_commands(s: &CommandStore) {
     let marker = match dirs::home_dir() {
@@ -157,6 +163,25 @@ fn seed_default_commands(s: &CommandStore) {
             }
         }
         let _ = std::fs::write(&marker, b"1");
+    }
+
+    // Add this shortcut to existing installs once without restoring it if the
+    // user later removes it. The SSH password is requested by ssh at runtime;
+    // it is never stored in the saved command.
+    let gyber_bot_marker = marker.with_file_name(".gyber_bot_claude_command_seeded_v1");
+    if !gyber_bot_marker.exists() {
+        let existing = s.list().unwrap_or_default();
+        if !existing
+            .iter()
+            .any(|c| c.command == DEFAULT_GYBER_BOT_CLAUDE_COMMAND.1)
+        {
+            let _ = s.add(SavedCommand::new(
+                DEFAULT_GYBER_BOT_CLAUDE_COMMAND.0.to_string(),
+                DEFAULT_GYBER_BOT_CLAUDE_COMMAND.1.to_string(),
+                DEFAULT_GYBER_BOT_CLAUDE_COMMAND.2.to_string(),
+            ));
+        }
+        let _ = std::fs::write(&gyber_bot_marker, b"1");
     }
 
     // This was added after the original defaults marker existed. Seed it with

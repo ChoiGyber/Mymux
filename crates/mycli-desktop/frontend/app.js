@@ -1213,12 +1213,30 @@ async function setupListeners() {
   // re-arms once done, so there's never more than one pass in flight.
   const pumpTerminals = async () => {
     try {
+      const now = performance.now();
       await Promise.all([...terminals].map(async ([id, t]) => {
+        const tab = findTabForPane(id);
+        const isCurrentTab = tab?.tabIdx === activeTabIdx;
+        const isFocused = id === focusedPaneId;
+        // Keep the focused pane responsive, update other visible panes at
+        // 20fps, and let hidden tabs idle at 4fps. Polling every PTY at 60fps
+        // scales to hundreds of IPC calls per second with ten sessions even
+        // when most of those sessions are not visible.
+        const pollInterval = isFocused ? 16 : isCurrentTab ? 50 : 250;
+        if (now < (t.nextReadAt || 0)) return;
+        t.nextReadAt = now + pollInterval;
         try {
           // Non-destructive read: one byte-offset cursor per pane. A fresh pane
           // (including a reconnect with the same session key) starts at 0 and
           // replays the retained history.
-          const { chunks, next, exited, truncated } = await invoke("pty_read", { id, offset: t.readOffset || 0 });
+          // Bound each xterm write so a burst from one process cannot monopolize
+          // the WebView input thread. Remaining output is drained on later ticks.
+          const maxBytes = isFocused ? 48 * 1024 : isCurrentTab ? 32 * 1024 : 16 * 1024;
+          const { chunks, next, exited, truncated } = await invoke("pty_read", {
+            id,
+            offset: t.readOffset || 0,
+            maxBytes,
+          });
           if (typeof next === "number" && next >= 0) t.readOffset = next;
           if (truncated) {
             t.term.write("\r\n\x1b[2m[Mymux: older output was trimmed]\x1b[0m\r\n");
