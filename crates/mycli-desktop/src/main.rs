@@ -232,6 +232,7 @@ fn main() {
             mobile_gateway::mobile_gateway_approve,
             mobile_gateway::mobile_gateway_revoke,
             terminal::pty_read,
+            terminal::pty_read_many,
             terminal::pty_write,
             terminal::pty_resize,
             terminal::pty_close,

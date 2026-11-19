@@ -50,6 +50,7 @@
     "allow-session-clear",
     "allow-pty-spawn",
     "allow-pty-read",
+    "allow-pty-read-many",
     "allow-pty-write",
     "allow-pty-resize",
     "allow-pty-close",

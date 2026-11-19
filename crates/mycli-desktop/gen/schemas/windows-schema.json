@@ -681,6 +681,12 @@
           "markdownDescription": "Enables the pty_read command without any pre-configured scope."
         },
         {
+          "description": "Enables the pty_read_many command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-pty-read-many",
+          "markdownDescription": "Enables the pty_read_many command without any pre-configured scope."
+        },
+        {
           "description": "Enables the pty_resize command without any pre-configured scope.",
           "type": "string",
           "const": "allow-pty-resize",
@@ -1195,6 +1201,12 @@
           "type": "string",
           "const": "deny-pty-read",
           "markdownDescription": "Denies the pty_read command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the pty_read_many command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-pty-read-many",
+          "markdownDescription": "Denies the pty_read_many command without any pre-configured scope."
         },
         {
           "description": "Denies the pty_resize command without any pre-configured scope.",

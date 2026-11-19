@@ -11,7 +11,9 @@ fn session_path() -> Result<PathBuf, String> {
     let home = dirs::home_dir().ok_or("Home directory not found")?;
     let dir = home.join(".mycli");
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
-    Ok(dir.join("session.json"))
+    // A debug test instance keeps its own layout (see pty_server::instance_suffix)
+    // so that closing it never overwrites the layout of the installed app.
+    Ok(dir.join(format!("session{}.json", crate::pty_server::instance_suffix())))
 }
 
 #[tauri::command]

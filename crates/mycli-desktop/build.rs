@@ -44,6 +44,7 @@ const APP_COMMANDS: &[&str] = &[
     "session_clear",
     "pty_spawn",
     "pty_read",
+    "pty_read_many",
     "pty_write",
     "pty_resize",
     "pty_close",

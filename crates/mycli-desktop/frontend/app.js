@@ -96,6 +96,7 @@ let explorerLoadGeneration = 0;
 // ── State ──
 let editingId = null;
 const terminals = new Map(); // ptyId -> { term, fitAddon, paneEl, type }
+let kickPtyPump = () => {}; // wakes the PTY output pump; set once it exists (setupListeners)
 const tabs = new Map(); // tabIdx -> { root: PaneNode, el: DOM }
 let activeTabIdx = null;
 let activeTermId = null;
@@ -1204,67 +1205,107 @@ async function setupListeners() {
     return tab ? tab.panes : [];
   }
 
-  // PTY polling loop — reads output from all terminals. Self-scheduling (NOT
-  // setInterval): setInterval never awaits its async callback, so when a tick
-  // runs long — many sessions × IPC, or a heavy output burst like a large paste
-  // — the next tick starts before the previous finishes and overlapping loops
-  // pile up, multiplying IPC/render work and tanking throughput (paste crawls,
-  // input lags). Here each tick reads every terminal in PARALLEL and only
-  // re-arms once done, so there's never more than one pass in flight.
+  // ── PTY output pump ───────────────────────────────────────────────────────
+  // Output is polled, and every poll is a webview IPC call that crosses the
+  // WebView2 network stack, the browser process and the Rust side: about 4 ms
+  // and three processes' worth of CPU each. Measured on v0.3.8 with four panes
+  // this loop alone made 181 calls a second and kept ~60% of a core busy while
+  // nothing was happening. So:
+  //   - one batched call per pass covers every pane that is due;
+  //   - a pane with recent input or output is polled fast, a quiet one slowly;
+  //   - a keystroke or a focus change wakes the loop at once (kickPtyPump), so
+  //     slow polling of a quiet pane never delays the echo of what you type;
+  //   - the loop sleeps until the next pane is due instead of ticking at 60 Hz.
+  // Self-scheduling, never setInterval: a pass that runs long must not overlap
+  // the next one.
+  const PTY_ACTIVE_WINDOW_MS = 500; // how long after input/output a pane counts as busy
+  const ptyPollInterval = (t, id, now) => {
+    if (findTabForPane(id)?.tabIdx !== activeTabIdx) return 250; // hidden tab
+    if (now - (t.lastPtyActivityAt || 0) > PTY_ACTIVE_WINDOW_MS) return 100; // visible, quiet
+    return id === focusedPaneId ? 16 : 50;
+  };
+  // Bound each xterm write so a burst from one process cannot monopolize the
+  // WebView input thread. Remaining output is drained on later passes.
+  const ptyReadBudget = (id) =>
+    id === focusedPaneId ? 48 * 1024 : findTabForPane(id)?.tabIdx === activeTabIdx ? 32 * 1024 : 16 * 1024;
+  const applyPtyOutput = (id, t, { chunks, next, exited, truncated }) => {
+    if (typeof next === "number" && next >= 0) t.readOffset = next;
+    if (truncated) {
+      t.term.write("\r\n\x1b[2m[Mymux: older output was trimmed]\x1b[0m\r\n");
+    }
+    if (!chunks || !chunks.length) {
+      if (exited) closeTerminal(id);
+      return;
+    }
+    const data = chunks.join("");
+    const now = performance.now();
+    t.lastPtyActivityAt = now;
+    t.nextReadAt = now + ptyPollInterval(t, id, now); // more is probably coming
+    // ConPTY opens every Windows pane with focus reporting switched on
+    // (CSI ?1004h), before the shell or anything the user runs has said a
+    // word. Undo it once that first output is parsed. The prompt hook
+    // cannot be relied on for this: CMD, ssh and WSL never print an OSC
+    // 133 mark, and codex in the alternate screen gives the buffer hook
+    // no chance either, so it kept receiving `[I` on every focus change.
+    const firstOutput = !t.firstOutputSeen;
+    t.firstOutputSeen = true;
+    // Do not read this pane again until xterm has parsed what it was given;
+    // otherwise a fast producer queues writes faster than they can be drawn.
+    t.outputWritePending = true;
+    t.term.write(data, () => {
+      t.outputWritePending = false;
+      if (terminals.get(id) !== t) return;
+      if (firstOutput && IS_WINDOWS) clearStaleFocusReporting(t.term);
+      scanCtxUsage(id, t, data); // Claude/Codex statusline -> ctx/model badge
+    }); // one write, not per-chunk
+    markPaneActivity(id, t); // unseen badge when this pane is hidden
+    trackOutputSilence(id, t); // flash when sustained output goes quiet
+    if (t.pendingReplay) armReplaySettle(id, t); // SSH: replay once the prompt settles
+  };
+  let pumpTimer = 0;
+  let pumpRunning = false;
   const pumpTerminals = async () => {
+    if (pumpRunning) return;
+    pumpRunning = true;
+    clearTimeout(pumpTimer);
     try {
       const now = performance.now();
-      await Promise.all([...terminals].map(async ([id, t]) => {
-        const tab = findTabForPane(id);
-        const isCurrentTab = tab?.tabIdx === activeTabIdx;
-        const isFocused = id === focusedPaneId;
-        // Keep the focused pane responsive, update other visible panes at
-        // 20fps, and let hidden tabs idle at 4fps. Polling every PTY at 60fps
-        // scales to hundreds of IPC calls per second with ten sessions even
-        // when most of those sessions are not visible.
-        const pollInterval = isFocused ? 16 : isCurrentTab ? 50 : 250;
-        if (now < (t.nextReadAt || 0)) return;
-        t.nextReadAt = now + pollInterval;
-        try {
-          // Non-destructive read: one byte-offset cursor per pane. A fresh pane
-          // (including a reconnect with the same session key) starts at 0 and
-          // replays the retained history.
-          // Bound each xterm write so a burst from one process cannot monopolize
-          // the WebView input thread. Remaining output is drained on later ticks.
-          const maxBytes = isFocused ? 48 * 1024 : isCurrentTab ? 32 * 1024 : 16 * 1024;
-          const { chunks, next, exited, truncated } = await invoke("pty_read", {
-            id,
-            offset: t.readOffset || 0,
-            maxBytes,
-          });
-          if (typeof next === "number" && next >= 0) t.readOffset = next;
-          if (truncated) {
-            t.term.write("\r\n\x1b[2m[Mymux: older output was trimmed]\x1b[0m\r\n");
-          }
-          if (chunks.length) {
-            const data = chunks.join("");
-            // ConPTY opens every Windows pane with focus reporting switched on
-            // (CSI ?1004h), before the shell or anything the user runs has said a
-            // word. Undo it once that first output is parsed. The prompt hook
-            // cannot be relied on for this: CMD, ssh and WSL never print an OSC
-            // 133 mark, and codex in the alternate screen gives the buffer hook
-            // no chance either, so it kept receiving `[I` on every focus change.
-            const firstOutput = !t.firstOutputSeen;
-            t.firstOutputSeen = true;
-            t.term.write(data, () => {
-              if (firstOutput && IS_WINDOWS) clearStaleFocusReporting(t.term);
-              const tt = terminals.get(id);
-              if (tt) scanCtxUsage(id, tt, data); // Claude/Codex statusline -> ctx/model badge
-            }); // one write, not per-chunk
-            markPaneActivity(id, t); // unseen badge when this pane is hidden
-            trackOutputSilence(id, t); // flash when sustained output goes quiet
-            if (t.pendingReplay) armReplaySettle(id, t); // SSH: replay once the prompt settles
-          } else if (exited) closeTerminal(id);
-        } catch {}
-      }));
-    } finally {
-      setTimeout(pumpTerminals, 16); // ~60fps cadence, but never overlapping
+      const due = new Map();
+      for (const [id, t] of terminals) {
+        if (t.outputWritePending || now < (t.nextReadAt || 0)) continue;
+        t.nextReadAt = now + ptyPollInterval(t, id, now);
+        due.set(id, t);
+      }
+      if (due.size) {
+        // Non-destructive read: one byte-offset cursor per pane. A fresh pane
+        // (including a reconnect with the same session key) starts at 0 and
+        // replays the retained history.
+        const reads = [...due].map(([id, t]) => ({ id, offset: t.readOffset || 0, maxBytes: ptyReadBudget(id) }));
+        const replies = await invoke("pty_read_many", { reads });
+        for (const reply of replies || []) {
+          const t = due.get(reply.id);
+          // The pane may have been closed or replaced while the call was out.
+          if (!t || terminals.get(reply.id) !== t || reply.error) continue;
+          try { applyPtyOutput(reply.id, t, reply); } catch { t.outputWritePending = false; }
+        }
+      }
+    } catch {} finally {
+      pumpRunning = false;
+      const now = performance.now();
+      let wait = 250;
+      for (const [, t] of terminals) {
+        // A pane still being parsed is checked again one frame later.
+        wait = Math.min(wait, t.outputWritePending ? 16 : (t.nextReadAt || 0) - now);
+      }
+      pumpTimer = setTimeout(pumpTerminals, Math.max(4, wait));
     }
+  };
+  // Read right away instead of waiting for a quiet pane's slow turn. A pass
+  // that is already out picks up the reset nextReadAt when it reschedules.
+  kickPtyPump = () => {
+    if (pumpRunning) return;
+    clearTimeout(pumpTimer);
+    pumpTimer = setTimeout(pumpTerminals, 0);
   };
   pumpTerminals();
 
@@ -3580,6 +3621,12 @@ async function createPane(parentEl, shell, args, cwd, sessionKey = null) {
     const ti = terminals.get(id);
     if (shouldDropTerminalFocusReport(ti, data)) return;
     if (!IS_MAC && imeDuplicateCommit(ti, data)) return;
+    if (ti) {
+      // The echo is on its way: poll this pane fast again, starting now.
+      ti.lastPtyActivityAt = performance.now();
+      ti.nextReadAt = 0;
+      kickPtyPump();
+    }
     if (/\x1b\[<[0-2];\d+;\d+M/.test(data)) armNotifyCycle(id);
     // Remember the command being submitted so a restored session can offer to
     // re-run it (e.g. relaunch `claude`/`codex`). Two capture paths:
@@ -3710,18 +3757,23 @@ async function createPane(parentEl, shell, args, cwd, sessionKey = null) {
   // syncs whenever xterm focuses itself.
   if (term.textarea) {
     term.textarea.addEventListener("focus", () => { if (focusedPaneId !== id) setFocusedPane(id); });
-    // xterm registers its input handler on the textarea in capture phase, so
-    // mark the event on the terminal ancestor where capture runs first.
-    term.element?.addEventListener("input", (e) => {
-      if (e.target !== term.textarea) return;
-      const ti = terminals.get(id);
-      if (!ti) return;
-      const inputDispatch = {};
-      ti.imeInputDispatch = inputDispatch;
-      queueMicrotask(() => {
-        if (ti.imeInputDispatch === inputDispatch) ti.imeInputDispatch = null;
-      });
-    }, true);
+    // Tell imeDuplicateCommit which of xterm's two paths is sending: the `input`
+    // handler sends synchronously, the keydown-229 fallback from a timer. Mark the
+    // handler call itself. A flag raised by an event listener does not survive
+    // until xterm's own listener runs: for a natively dispatched event the browser
+    // runs microtasks between listeners, so a microtask-cleared flag was already
+    // gone and every send looked like the timer path. Only script-dispatched test
+    // events kept it alive, which is why the checks passed and real typing did not.
+    const xtermCore = term._core;
+    if (xtermCore && typeof xtermCore._inputEvent === "function") {
+      const xtermInputEvent = xtermCore._inputEvent;
+      xtermCore._inputEvent = function (e) {
+        const ti = terminals.get(id);
+        if (ti) ti.imeInputDispatch = true;
+        try { return xtermInputEvent.call(this, e); }
+        finally { if (ti) ti.imeInputDispatch = false; }
+      };
+    }
     // IME (Hangul) composition guard. When returning to the window, the focus
     // keeper blurs+refocuses this textarea; doing that mid-composition makes the
     // IME commit the syllable twice ("글자가 2개씩") and detaches its candidate
@@ -3761,7 +3813,17 @@ async function createPane(parentEl, shell, args, cwd, sessionKey = null) {
         ta.addEventListener(type, (e) => {
           const ti = terminals.get(id);
           if (!ti) return;
-          if (type === "keydown") ti.imeKeySeq = (ti.imeKeySeq || 0) + 1;
+          if (type === "keydown") {
+            ti.imeKeySeq = (ti.imeKeySeq || 0) + 1;
+            const now = performance.now();
+            ti.imePendingDiffs = (ti.imePendingDiffs || []).filter(p => now - p.t < IME_DUP_WINDOW_MS);
+            if (e.keyCode === 229 && !ti.imeComposing) {
+              ti.imePendingDiffs.push({ text: "", t: now });
+            } else {
+              ti.imePendingDiffs = [];
+            }
+          }
+          if (type === "compositionstart" || type === "blur") ti.imePendingDiffs = [];
           imeTrace(ti, type, e.inputType ? [e.inputType, e.data] : (e.data ?? (e.keyCode !== undefined ? e.keyCode : undefined)));
         }, true);
       }
@@ -3998,15 +4060,37 @@ async function createPane(parentEl, shell, args, cwd, sessionKey = null) {
   return id;
 }
 
-// A TUI may park its cursor elsewhere while repainting. xterm normally moves
-// its live IME overlay (and native candidate textarea) on every such repaint.
-// Keep an unfinished composition at the input cell where it started, and keep
-// the preview inside the pane even when it starts at the final column/row.
+// Where the IME preview (and the native candidate window, which tracks the
+// helper textarea) is drawn while a syllable is being composed.
+//
+// A Korean IME commits one syllable and opens the next composition from the same
+// keydown, so `compositionstart` always fires before the program has echoed the
+// syllable just committed. Pinning the preview to the cursor at that moment drew
+// every syllable after the first on top of the previous one. The preview has to
+// keep following the cursor for as long as the composition lasts.
+//
+// It must not follow blindly, though: a TUI repaint moves the cursor around, and
+// a repaint split across two PTY reads can leave it parked somewhere else for a
+// frame. So a move to the right on the same row (the echo) is taken at once, and
+// any other move (wrap inside an input box, deletion, scroll) only once the
+// cursor has rested there longer than a split repaint lasts.
+const IME_ANCHOR_SETTLE_MS = 60;
+
 function compositionPreviewPosition(anchor, cell, bounds, preview) {
   return {
     left: Math.max(0, Math.min(anchor.col * cell.width, bounds.width - Math.min(preview.width, bounds.width))),
     top: Math.max(0, Math.min(anchor.row * cell.height, bounds.height - Math.min(preview.height, bounds.height))),
   };
+}
+
+// The anchor a live composition should have now. `resting` remembers a cursor
+// position that is not trusted yet and since when it has been there.
+function compositionAnchorStep(anchor, resting, cursor, now) {
+  if (cursor.col === anchor.col && cursor.row === anchor.row) return { anchor, resting: null };
+  if (cursor.row === anchor.row && cursor.col > anchor.col) return { anchor: cursor, resting: null };
+  const since = resting && resting.col === cursor.col && resting.row === cursor.row ? resting.since : now;
+  if (now - since >= IME_ANCHOR_SETTLE_MS) return { anchor: cursor, resting: null };
+  return { anchor, resting: { col: cursor.col, row: cursor.row, since } };
 }
 
 function installCompositionAnchor(term) {
@@ -4015,8 +4099,16 @@ function installCompositionAnchor(term) {
   const view = term.element?.querySelector(".composition-view");
   if (!textarea || !screen || !view) return;
   let anchor = null;
+  let resting = null;
+  let settleTimer = 0;
+  const cursor = () => ({ col: Math.min(term.buffer.active.cursorX, term.cols - 1), row: term.buffer.active.cursorY });
   const position = () => {
     if (!anchor || !view.classList.contains("active")) return;
+    const now = performance.now();
+    ({ anchor, resting } = compositionAnchorStep(anchor, resting, cursor(), now));
+    clearTimeout(settleTimer);
+    // Nothing may render again while the cursor rests, so come back by ourselves.
+    if (resting) settleTimer = setTimeout(position, IME_ANCHOR_SETTLE_MS - (now - resting.since) + 1);
     const cell = { width: screen.clientWidth / term.cols, height: screen.clientHeight / term.rows };
     if (!(cell.width > 0 && cell.height > 0)) return;
     const bounds = { width: Math.min(screen.clientWidth, term.element.clientWidth), height: Math.min(screen.clientHeight, term.element.clientHeight) };
@@ -4026,18 +4118,26 @@ function installCompositionAnchor(term) {
       el.style.top = `${point.top}px`;
     }
     view.style.maxWidth = `${bounds.width}px`;
-    view.style.overflow = "hidden";
+    // The fixed xterm line box can be shorter than the fallback CJK font.
+    // Clip only an over-wide composition, leaving normal glyphs unobstructed.
+    view.style.overflow = view.scrollWidth > bounds.width ? "hidden" : "";
   };
   textarea.addEventListener("compositionstart", () => {
-    anchor = { col: Math.min(term.buffer.active.cursorX, term.cols - 1), row: term.buffer.active.cursorY };
+    anchor = cursor();
+    resting = null;
   });
   const positionAfterXterm = () => {
+    if (!anchor) return;
     position();
     // Both compositionupdate and onRender queue xterm's own geometry update.
     setTimeout(position, 0);
   };
   textarea.addEventListener("compositionupdate", positionAfterXterm);
-  const clear = () => { anchor = null; };
+  const clear = () => {
+    anchor = null;
+    resting = null;
+    clearTimeout(settleTimer);
+  };
   textarea.addEventListener("compositionend", clear);
   textarea.addEventListener("blur", clear);
   term.onRender(positionAfterXterm);
@@ -4084,6 +4184,9 @@ function imeDuplicateCommit(ti, data) {
   const fresh = (e) => !!e && e.seq === seq && now - e.t < IME_DUP_WINDOW_MS;
   let dup = false;
   if (via === "input") {
+    for (const pending of ti.imePendingDiffs || []) {
+      if (now - pending.t < IME_DUP_WINDOW_MS) pending.text += data;
+    }
     // What the `input` path has sent since the last keydown. The timer path
     // diffs the whole textarea, so when several commits pile up before it fires
     // it re-sends all of them as one string — compare against the running total,
@@ -4091,8 +4194,12 @@ function imeDuplicateCommit(ti, data) {
     const buf = fresh(ti.imeInputBuf) ? ti.imeInputBuf : (ti.imeInputBuf = { text: "", seq, t: now });
     buf.text += data;
     buf.t = now;
-  } else if (fresh(ti.imeInputBuf) && ti.imeInputBuf.text === data) {
-    dup = true;
+  } else {
+    // A 229 timer observes every input since *its* keydown, even if another
+    // keydown ran before the timer. Consume its matching span only once.
+    const match = ti.imePendingDiffs?.findIndex(p => now - p.t < IME_DUP_WINDOW_MS && p.text === data) ?? -1;
+    if (match >= 0) ti.imePendingDiffs.splice(match, 1);
+    dup = match >= 0 || (fresh(ti.imeInputBuf) && ti.imeInputBuf.text === data);
   }
   const prev = ti.imeLastEmit;
   if (!dup && fresh(prev) && prev.data === data && [...data].length === 1 &&
@@ -4133,6 +4240,7 @@ function shouldDropTerminalFocusReport(t, data) {
 }
 
 function restoreTerminalFocusState(t, textarea) {
+  if (t.restoringTerminalFocus) return;
   t.restoringTerminalFocus = true;
   try { textarea.dispatchEvent(new FocusEvent("focus")); }
   finally { t.restoringTerminalFocus = false; }
@@ -4144,6 +4252,9 @@ function setFocusedPane(ptyId) {
   document.querySelectorAll(".pane-leaf").forEach((el) => el.classList.remove("focused"));
   const t = terminals.get(ptyId);
   if (t) {
+    t.lastPtyActivityAt = performance.now();
+    t.nextReadAt = 0;
+    kickPtyPump();
     t.paneEl.classList.add("focused");
     t.term.focus();
     if (t.unseen) {
@@ -4206,7 +4317,7 @@ function startFocusKeeper() {
   // hidden tab), skip if it's off-screen, then bounce the helper textarea so
   // xterm re-registers focus. `force` re-focuses even when xterm still looks
   // focused — needed on return, where activeElement/class are stale.
-  const restore = (force) => {
+  const restoreNow = (force) => {
     if (browserTabActive || viewerActive) return;
     let pid = focusedPaneId;
     const tab = tabs.get(activeTabIdx);
@@ -4259,6 +4370,18 @@ function startFocusKeeper() {
     if (vp && savedTop != null && vp.scrollTop !== savedTop) vp.scrollTop = savedTop;
     if (focusedPaneId !== pid) { try { setFocusedPane(pid); } catch {} }
   };
+  // Every focus call in restoreNow fires a focus event, and the window-level
+  // focus listener below answers each focus event with another restore. With
+  // more than one pane the panes fought over focus from inside each other's
+  // event dispatch until the call stack overflowed, and every nested round sent
+  // a focus report to the program in the pane. A restore that is already running
+  // is the one handling whatever its own focus calls cause.
+  let restoring = false;
+  const restore = (force) => {
+    if (restoring) return;
+    restoring = true;
+    try { restoreNow(force); } finally { restoring = false; }
+  };
   // On return, retry across a few frames — WebView2 can move focus to <body> a
   // tick after the window comes back, overriding an immediate restore. Up to ~5
   // independent signals (Rust refocus, onFocusChanged, hasFocus flip,
@@ -4285,7 +4408,12 @@ function startFocusKeeper() {
   };
   window.addEventListener("focus", (e) => {
     if (!e.target || e.target === window || e.target === document || e.target === document.body) onReturn();
-    else restore();
+    // A terminal that just took focus needs no restoring. "Restoring" from inside
+    // its focus event is what set two panes against each other while one was
+    // being opened: the new pane is focused before its tab lists it, so restore
+    // sent focus back to the old pane, whose focus then handed it to the new one
+    // again, nested, until the call stack overflowed.
+    else if (!e.target.classList?.contains("xterm-helper-textarea")) restore();
   }, true);
   // Idle backstop; also poll document.hasFocus() — a false→true flip means the
   // window returned even when no focus event fired.
@@ -5608,16 +5736,22 @@ async function loadCodexModelSetting() {
   } catch { /* no Codex config — badge simply omits the fallback model */ }
 }
 
+async function pollUsageAfterCompletion(refresh, interval) {
+  try {
+    await refresh();
+  } finally {
+    setTimeout(() => pollUsageAfterCompletion(refresh, interval), interval);
+  }
+}
+
 function initCtxUsage() {
   ensureMymuxStatusline();
   loadClaudeEffort();
   setInterval(loadClaudeEffort, 60_000);
   loadCodexModelSetting();
   setInterval(loadCodexModelSetting, 60_000);
-  loadCodexLimits();
-  setInterval(loadCodexLimits, 5_000);
-  loadCodexResetCredits();
-  setInterval(loadCodexResetCredits, 60_000);
+  pollUsageAfterCompletion(loadCodexLimits, 5_000);
+  pollUsageAfterCompletion(loadCodexResetCredits, 60_000);
   loadClaudeUsageApi();
   setInterval(loadClaudeUsageApi, 60_000);
   setInterval(() => { if (claudeLimitsApi?.fiveHResetAt) updateGlobalUsageUi(); }, 1000);
@@ -8424,7 +8558,11 @@ function openCdp(wsUrl) {
       // enough that image transfer/decode cannot starve terminal interaction.
       maxWidth: Math.max(320, Math.min(1280, Math.round(document.getElementById("browser-viewport").clientWidth))),
       maxHeight: Math.max(200, Math.min(720, Math.round(document.getElementById("browser-viewport").clientHeight))),
-      everyNthFrame: 4,
+      // Every frame, never every 4th: Chrome drops the skipped frames for good,
+      // so a click that repaints the page once or twice left the old picture on
+      // screen until something else moved ("click, then it freezes"). The frame
+      // rate is bounded by pacing the acks instead (acknowledgeFrame).
+      everyNthFrame: 1,
     });
     bindScreenInput();
   };
@@ -8459,10 +8597,22 @@ function handleCdpMessage(data) {
   }
 }
 
+// Chrome sends the next screencast frame only once the previous one is
+// acknowledged, so the ack rate is the frame rate. Spacing acks keeps a page
+// that never stops animating at ~20 fps (measured: 20 fps / 225 KB/s, against
+// 58 fps / 645 KB/s unpaced) without ever losing the final frame.
+const SCREENCAST_MIN_FRAME_MS = 50;
 function acknowledgeFrame(state, sessionId) {
-  if (state.ws.readyState === WebSocket.OPEN) {
-    state.ws.send(JSON.stringify({ id: ++cdpMsgId, method: "Page.screencastFrameAck", params: { sessionId } }));
-  }
+  const now = performance.now();
+  const at = Math.max(now, state.nextAckAt || 0);
+  state.nextAckAt = at + SCREENCAST_MIN_FRAME_MS;
+  const send = () => {
+    if (state.ws.readyState === WebSocket.OPEN) {
+      state.ws.send(JSON.stringify({ id: ++cdpMsgId, method: "Page.screencastFrameAck", params: { sessionId } }));
+    }
+  };
+  if (at > now) setTimeout(send, at - now);
+  else send();
 }
 
 async function paintCdpFrame(state) {

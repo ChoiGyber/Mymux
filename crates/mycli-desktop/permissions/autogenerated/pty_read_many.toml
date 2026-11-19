@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-pty-read-many"
+description = "Enables the pty_read_many command without any pre-configured scope."
+commands.allow = ["pty_read_many"]
+
+[[permission]]
+identifier = "deny-pty-read-many"
+description = "Denies the pty_read_many command without any pre-configured scope."
+commands.deny = ["pty_read_many"]

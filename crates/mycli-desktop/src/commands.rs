@@ -328,7 +328,9 @@ pub fn delete_command(id: String) -> Result<(), String> {
 /// Read a text/code file for the in-app viewer. Returns Err("BINARY") for
 /// non-text files (so the frontend can open them with the OS default app),
 /// and Err on files larger than ~2 MB.
-#[tauri::command]
+///
+/// Off the main thread: a slow disk or network path must not hold up typing.
+#[tauri::command(async)]
 pub fn read_text_file(path: String) -> Result<String, String> {
     use std::io::Read;
     let meta = std::fs::metadata(&path).map_err(|e| e.to_string())?;
@@ -572,7 +574,13 @@ fn select_rollout_candidate(
 /// exact match exists. Rollouts exceed the general text-reader cap, hence a
 /// dedicated tail reader.
 #[tauri::command]
-pub fn codex_rollout_tail(max_bytes: Option<u64>, cwd: Option<String>) -> Result<String, String> {
+pub async fn codex_rollout_tail(max_bytes: Option<u64>, cwd: Option<String>) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || read_codex_rollout_tail(max_bytes, cwd))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+fn read_codex_rollout_tail(max_bytes: Option<u64>, cwd: Option<String>) -> Result<String, String> {
     use std::io::{Read, Seek, SeekFrom};
     let max_bytes = max_bytes.unwrap_or(65536).min(1_000_000);
     let sessions = dirs::home_dir()
@@ -588,7 +596,7 @@ pub fn codex_rollout_tail(max_bytes: Option<u64>, cwd: Option<String>) -> Result
     let start = len.saturating_sub(max_bytes);
     f.seek(SeekFrom::Start(start)).map_err(|e| e.to_string())?;
     let mut buf = Vec::new();
-    f.read_to_end(&mut buf).map_err(|e| e.to_string())?;
+    f.take(max_bytes).read_to_end(&mut buf).map_err(|e| e.to_string())?;
     Ok(String::from_utf8_lossy(&buf).to_string())
 }
 
@@ -835,7 +843,13 @@ fn initialize_codex_app_server(
 }
 
 #[tauri::command]
-pub fn codex_reset_credits() -> Result<CodexResetCredits, String> {
+pub async fn codex_reset_credits() -> Result<CodexResetCredits, String> {
+    tauri::async_runtime::spawn_blocking(read_codex_reset_credits)
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+fn read_codex_reset_credits() -> Result<CodexResetCredits, String> {
     let (mut child, mut stdin, mut reader) = start_codex_app_server()?;
     let result = (|| {
         initialize_codex_app_server(&mut child, &mut stdin, &mut reader)?;
@@ -878,11 +892,18 @@ pub fn codex_reset_credits() -> Result<CodexResetCredits, String> {
         })
     })();
     let _ = child.kill();
+    let _ = child.wait();
     result
 }
 
 #[tauri::command]
-pub fn codex_consume_reset_credit(credit_id: Option<String>) -> Result<String, String> {
+pub async fn codex_consume_reset_credit(credit_id: Option<String>) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || consume_codex_reset_credit(credit_id))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+fn consume_codex_reset_credit(credit_id: Option<String>) -> Result<String, String> {
     let (mut child, mut stdin, mut reader) = start_codex_app_server()?;
     let result = (|| {
         initialize_codex_app_server(&mut child, &mut stdin, &mut reader)?;

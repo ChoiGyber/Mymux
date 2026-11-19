@@ -75,15 +75,22 @@ impl OutputHistory {
         self.base = self.chunks.front().map(|(s, _)| *s).unwrap_or(self.end);
     }
 
+    fn chunks_from(&self, offset: u64) -> impl Iterator<Item = &(u64, String)> {
+        let first = if offset == self.end {
+            self.chunks.len()
+        } else {
+            self.chunks.partition_point(|(start, text)| {
+                start.saturating_add(text.len() as u64) <= offset
+            })
+        };
+        self.chunks.range(first..)
+    }
+
     pub(crate) fn read_after(&self, offset: u64) -> (Vec<String>, u64, bool) {
         let truncated = offset < self.base || offset > self.end;
         let from = if truncated { self.base } else { offset };
         let mut out = Vec::new();
-        for (start, text) in &self.chunks {
-            let chunk_end = start.saturating_add(text.len() as u64);
-            if chunk_end <= from {
-                continue;
-            }
+        for (start, text) in self.chunks_from(from) {
             if *start >= from {
                 out.push(text.clone());
             } else {
@@ -111,11 +118,8 @@ impl OutputHistory {
         let mut out = Vec::new();
         let mut cursor = from;
         let mut total = 0usize;
-        'chunks: for (start, text) in &self.chunks {
+        'chunks: for (start, text) in self.chunks_from(from) {
             let chunk_end = start.saturating_add(text.len() as u64);
-            if chunk_end <= cursor {
-                continue;
-            }
             let mut rel = ((cursor.saturating_sub(*start)) as usize).min(text.len());
             while rel < text.len() && !text.is_char_boundary(rel) {
                 rel += 1;
@@ -1018,7 +1022,97 @@ pub fn pty_mobile_agents_update(
     Ok(())
 }
 
-#[tauri::command]
+/// One pane's cursor in a batched read.
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PtyReadRequest {
+    pub id: u32,
+    pub offset: Option<u64>,
+    pub max_bytes: Option<u64>,
+}
+
+#[derive(serde::Serialize)]
+pub struct PtyReadManyReply {
+    pub id: u32,
+    pub chunks: Vec<String>,
+    pub next: u64,
+    pub exited: bool,
+    pub truncated: bool,
+    /// Set when this pane could not be read, e.g. it was closed meanwhile.
+    pub error: Option<String>,
+}
+
+fn read_many_reply(id: u32, response: &serde_json::Value) -> PtyReadManyReply {
+    PtyReadManyReply {
+        id,
+        chunks: response
+            .get("data")
+            .cloned()
+            .and_then(|data| serde_json::from_value(data).ok())
+            .unwrap_or_default(),
+        next: response.get("next").and_then(serde_json::Value::as_u64).unwrap_or(0),
+        exited: response.get("exited").and_then(serde_json::Value::as_bool).unwrap_or(false),
+        truncated: response.get("truncated").and_then(serde_json::Value::as_bool).unwrap_or(false),
+        error: response.get("error").and_then(serde_json::Value::as_str).map(str::to_owned),
+    }
+}
+
+/// Read every pane the window is polling in one IPC round trip.
+///
+/// Each webview IPC call crosses the WebView2 network stack, the browser
+/// process and this process, about 4 ms and three processes' worth of CPU.
+/// Polling each pane separately made that cost scale with the number of
+/// sessions (181 calls a second with four panes). Runs off the main thread so
+/// output polling never queues in front of a keystroke.
+#[tauri::command(async)]
+pub fn pty_read_many(reads: Vec<PtyReadRequest>) -> Result<Vec<PtyReadManyReply>, String> {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    static BATCH_UNSUPPORTED: AtomicBool = AtomicBool::new(false);
+
+    if reads.is_empty() {
+        return Ok(Vec::new());
+    }
+    let read_json = |read: &PtyReadRequest| {
+        serde_json::json!({
+            "id": read.id, "offset": read.offset.unwrap_or(0), "maxBytes": read.max_bytes,
+        })
+    };
+    if !BATCH_UNSUPPORTED.load(Ordering::Relaxed) {
+        let payload = serde_json::json!({ "reads": reads.iter().map(read_json).collect::<Vec<_>>() });
+        match crate::pty_server::request("readMany", payload) {
+            Ok(response) => {
+                let replies = response
+                    .get("replies")
+                    .and_then(serde_json::Value::as_array)
+                    .map(|list| {
+                        list.iter()
+                            .filter_map(|reply| {
+                                let id = reply.get("id").and_then(serde_json::Value::as_u64)?;
+                                Some(read_many_reply(id as u32, reply))
+                            })
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                return Ok(replies);
+            }
+            // A server left running by an older build does not know the
+            // operation. Fall back to one request per pane for this run.
+            Err(error) if error.starts_with("unknown PTY server operation") => {
+                BATCH_UNSUPPORTED.store(true, Ordering::Relaxed);
+            }
+            Err(error) => return Err(error),
+        }
+    }
+    Ok(reads
+        .iter()
+        .map(|read| match crate::pty_server::request("read", read_json(read)) {
+            Ok(response) => read_many_reply(read.id, &response),
+            Err(error) => read_many_reply(read.id, &serde_json::json!({ "error": error })),
+        })
+        .collect())
+}
+
+#[tauri::command(async)]
 pub fn pty_read(
     _state: tauri::State<'_, Arc<TerminalManager>>,
     id: u32,
@@ -1145,7 +1239,10 @@ pub fn terminal_shutdown() -> Result<(), String> {
 /// the same pane would still count as Claude. The process tree can't go stale
 /// like that. Only the Windows wheel workaround asks (#40), so elsewhere the
 /// table is empty and the answer is always None.
-#[tauri::command]
+///
+/// Off the main thread: the answer needs a snapshot of every process on the
+/// machine, and nothing else may wait behind that.
+#[tauri::command(async)]
 pub fn pty_ai_process(
     _state: tauri::State<'_, Arc<TerminalManager>>,
     id: u32,
