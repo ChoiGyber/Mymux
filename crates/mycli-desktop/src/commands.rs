@@ -145,6 +145,46 @@ const DEFAULT_GYBER_BOT_CLAUDE_COMMAND: (&str, &str, &str) = (
     "Connect to gyber-bot and run Claude Code (password prompt)",
 );
 
+/// True when an ssh config names `host` in one of its `Host` lines, exactly
+/// (no pattern matching; a negated `!host` does not count).
+fn ssh_config_defines_host(config: &str, host: &str) -> bool {
+    let separator = |c: char| c.is_whitespace() || c == '=';
+    config.trim_start_matches('\u{feff}').lines().any(|line| {
+        let Some((keyword, names)) = line.trim().split_once(separator) else {
+            return false;
+        };
+        keyword.eq_ignore_ascii_case("host")
+            && names
+                .trim_start_matches(separator)
+                .split_whitespace()
+                .any(|name| name == host)
+    })
+}
+
+fn user_ssh_config_defines_host(host: &str) -> bool {
+    dirs::home_dir()
+        .and_then(|home| std::fs::read_to_string(home.join(".ssh").join("config")).ok())
+        .is_some_and(|config| ssh_config_defines_host(&config, host))
+}
+
+#[cfg(test)]
+mod ssh_config_host_tests {
+    use super::ssh_config_defines_host;
+
+    #[test]
+    fn finds_a_host_alias_only_when_it_is_declared() {
+        let config = "\u{feff}Host server-a\n    HostName 10.0.0.1\n\nHost gyber-bot 49.247.132.224\n    HostName 49.247.132.224\n";
+        assert!(ssh_config_defines_host(config, "gyber-bot"), "alias among several names, BOM at start");
+        assert!(ssh_config_defines_host("host=gyber-bot", "gyber-bot"), "keyword is case-insensitive, '=' allowed");
+        assert!(ssh_config_defines_host("Host = gyber-bot", "gyber-bot"));
+        assert!(!ssh_config_defines_host("Host gyber-bot-2\n", "gyber-bot"), "no prefix match");
+        assert!(!ssh_config_defines_host("Host !gyber-bot *\n", "gyber-bot"), "a negated pattern is not a declaration");
+        assert!(!ssh_config_defines_host("    HostName gyber-bot\n", "gyber-bot"), "HostName is not Host");
+        assert!(!ssh_config_defines_host("# Host gyber-bot\n", "gyber-bot"), "comments are ignored");
+        assert!(!ssh_config_defines_host("", "gyber-bot"));
+    }
+}
+
 /// Seed built-in shortcuts once (tracked by a marker file so deletions stick).
 fn seed_default_commands(s: &CommandStore) {
     let marker = match dirs::home_dir() {
@@ -168,8 +208,13 @@ fn seed_default_commands(s: &CommandStore) {
     // Add this shortcut to existing installs once without restoring it if the
     // user later removes it. The SSH password is requested by ssh at runtime;
     // it is never stored in the saved command.
+    //
+    // Only where ~/.ssh/config defines the host. Everyone else would get a
+    // shortcut that asks for a password on whatever `gyber-bot` resolves to on
+    // their network. The marker is written only once the shortcut was offered,
+    // so a PC that adds the host to its ssh config later still receives it.
     let gyber_bot_marker = marker.with_file_name(".gyber_bot_claude_command_seeded_v1");
-    if !gyber_bot_marker.exists() {
+    if !gyber_bot_marker.exists() && user_ssh_config_defines_host("gyber-bot") {
         let existing = s.list().unwrap_or_default();
         if !existing
             .iter()

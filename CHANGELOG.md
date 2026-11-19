@@ -1,6 +1,6 @@
 # Changelog
 
-## v0.3.9 - 2026-11-19
+## v0.3.9 - 2026-11-20
 
 ### Fixed
 
@@ -14,6 +14,7 @@
 ### Changed
 
 - The Mobile button is hidden until the mobile gateway is finished.
+- A developer's SSH shortcut (`gyber-bot claude`) is added to the command list only on PCs whose `~/.ssh/config` defines that host. The first v0.3.9 build added it everywhere.
 
 ## v0.3.8 - 2026-11-09
 
