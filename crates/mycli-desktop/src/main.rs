@@ -461,12 +461,47 @@ mod security_regression_tests {
             .collect()
     }
 
+    /// Registered, but deliberately left out of the ACL manifest until the mobile
+    /// gateway is finished and reviewed (issue #50). With an app manifest present,
+    /// Tauri rejects any command that is not in it, so the webview cannot start a
+    /// LAN listener that exposes the PTYs. Move a command out of this list only
+    /// together with adding it to build.rs and to a capability.
+    const NOT_YET_EXPOSED: &[&str] = &[
+        "mobile_gateway_start",
+        "mobile_gateway_stop",
+        "mobile_gateway_status",
+        "mobile_gateway_approve",
+        "mobile_gateway_revoke",
+        "pty_list",
+        "pty_mobile_agents_update",
+    ];
+
     #[test]
     fn app_manifest_covers_every_registered_custom_command() {
-        let registered = registered_commands();
+        let mut registered = registered_commands();
+        for command in NOT_YET_EXPOSED {
+            assert!(registered.remove(*command), "{command} is no longer registered; drop it from NOT_YET_EXPOSED");
+        }
         let manifest = manifest_commands();
         assert_eq!(manifest, registered);
         assert!(!registered.contains("execute_command"));
+    }
+
+    #[test]
+    fn unfinished_mobile_gateway_stays_unreachable_from_every_webview() {
+        let manifest = manifest_commands();
+        let capabilities = [
+            include_str!("../capabilities/default.json"),
+            include_str!("../capabilities/sessions-window.json"),
+            include_str!("../capabilities/buddy-overlay.json"),
+        ];
+        for command in NOT_YET_EXPOSED {
+            assert!(!manifest.contains(*command), "{command} must not be in the ACL manifest yet");
+            let permission = format!("allow-{}", command.replace('_', "-"));
+            for capability in capabilities {
+                assert!(!capability.contains(&permission), "{permission} must not be granted yet");
+            }
+        }
     }
 
     #[test]
