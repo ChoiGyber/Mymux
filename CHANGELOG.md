@@ -1,5 +1,20 @@
 # Changelog
 
+## v0.3.9 - 2026-11-19
+
+### Fixed
+
+- **Hangul drawn on top of the previous character.** While a syllable was being composed, its preview stayed where the composition had started, which is before the previous syllable was echoed. The preview now follows the cursor.
+- **The app kept a CPU core busy while idle and froze for 0.8 s every minute.** Terminal output was polled with one IPC call per pane (181 calls a second with four panes); it is now one batched call that slows down when panes are quiet and wakes at once on a keystroke (about 10 calls a second). The Codex credit lookup that blocked the main thread now runs in the background.
+- **Clicking a pane sent dozens of focus reports to the program in it**, and splitting a pane overflowed the call stack: focus restoring reacted to the focus events it caused itself.
+- **Hangul typed while the UI was stalled could arrive several times over** when the IME delivered text without composition events.
+- **Built-in browser view froze after a click.** The view received only every fourth frame, so a page that repainted once or twice never showed the result.
+- Keystrokes no longer wait behind output reads: the PTY client waits for a busy pipe instead of failing, and no longer starts a thread and a health check for every read and key press.
+
+### Changed
+
+- The Mobile button is hidden until the mobile gateway is finished.
+
 ## v0.3.8 - 2026-11-09
 
 ### Improved
