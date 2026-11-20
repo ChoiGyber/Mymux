@@ -732,6 +732,8 @@ html[data-theme="light"] #toolbar-actions #btn-update:hover {
 }
 @container (max-width: 130px) {
   .pane-statusbar .pane-label { display: none; }
+  /* The recording waveform would otherwise push the close button out. */
+  .pane-statusbar .pane-mic-wave { width: 20px; }
 }
 #drop-indicator {
   position: fixed;
@@ -2603,7 +2605,8 @@ html[data-theme="dark"] .pane-command-shortcut {
 }
 /* Per-pane voice input: 🎙 when idle, the live input waveform while recording
    (no text), a dimmed icon with moving dots while transcribing. Never hidden in
-   narrow panes; the container queries below leave it alone. */
+   narrow panes; below 130px only its waveform narrows (see the container
+   queries near .pane-grip). */
 .pane-mic { display: inline-flex; align-items: center; gap: 2px; }
 .pane-mic-icon { display: inline-flex; }
 .pane-mic-icon .icon { width: 12px; height: 12px; vertical-align: 0; }
