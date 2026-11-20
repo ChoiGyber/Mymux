@@ -1,5 +1,15 @@
 # Changelog
 
+## v0.3.10 - 2026-11-20
+
+### Added
+
+- **A mic button on every pane.** Click to record, click again to transcribe into that pane (pasted, no Enter). While recording the button shows the live microphone waveform; while transcribing, a dimmed icon with moving dots. Uses the engine, model and language set in the 🎙 popover. One recording at a time: another pane's button stops the running one, and closing the pane or its tab drops the recording.
+
+### Fixed
+
+- **Ctrl+Space push-to-talk also sent the key to the program in the pane.** Every press, and every auto-repeat while held, reached the terminal as NUL (PowerShell opened its completion menu). The shortcut is now consumed before the terminal sees it.
+
 ## v0.3.9 - 2026-11-20
 
 ### Fixed
