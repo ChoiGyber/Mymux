@@ -11,7 +11,7 @@ const here = path.dirname(fileURLToPath(import.meta.url));
 const types = { ".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8", ".css": "text/css; charset=utf-8", ".png": "image/png", ".svg": "image/svg+xml", ".woff2": "font/woff2", ".ttf": "font/ttf", ".json": "application/json" };
 export const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-export async function boot(frontendDir, { query = "", size = "1400,900" } = {}) {
+export async function boot(frontendDir, { query = "", size = "1400,900", chromeArgs = [] } = {}) {
   const root = path.resolve(frontendDir);
   const server = http.createServer((req, res) => {
     let p = decodeURIComponent(new URL(req.url, "http://x").pathname);
@@ -29,7 +29,7 @@ export async function boot(frontendDir, { query = "", size = "1400,900" } = {}) 
   const profile = fs.mkdtempSync(path.join(os.tmpdir(), "mymux-h-"));
   const child = spawn("C:/Program Files/Google/Chrome/Application/chrome.exe", [
     "--headless=new", "--remote-debugging-port=0", `--user-data-dir=${profile}`, `--window-size=${size}`,
-    "--no-first-run", "--disable-gpu", `http://127.0.0.1:${appPort}/index.html${query}`,
+    "--no-first-run", "--disable-gpu", ...chromeArgs, `http://127.0.0.1:${appPort}/index.html${query}`,
   ], { stdio: "ignore" });
   const close = () => {
     try { execFileSync("taskkill", ["/PID", String(child.pid), "/T", "/F"], { stdio: "ignore" }); } catch {}
