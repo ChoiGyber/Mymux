@@ -409,6 +409,30 @@ function voiceButtonAction(state, paneId) {
   return "start";
 }
 
+// The one recording, shared by the pane mic buttons, the 🎙 popover's record
+// button and Ctrl+Space. The target pane is fixed when recording starts.
+// `discard` drops the recording without transcribing (its pane was closed).
+// voiceStart/voiceStop are filled in by setupVoiceInput().
+let voiceState = { phase: "idle", target: null };
+let voiceStart = async (_paneId, _options) => {};
+let voiceStop = () => {};
+
+function onPaneMicClick(paneId) {
+  const action = voiceButtonAction(voiceState, paneId);
+  if (action === "start") voiceStart(paneId, { fromPane: true });
+  else if (action === "stop") voiceStop();
+}
+
+function renderPaneMicButtons() {
+  for (const [id, t] of terminals) {
+    const button = t.paneEl?.querySelector(".pane-mic");
+    if (!button) continue;
+    const mine = voiceState.target === id;
+    button.classList.toggle("recording", mine && voiceState.phase === "recording");
+    button.classList.toggle("transcribing", mine && voiceState.phase === "transcribing");
+  }
+}
+
 function setupVoiceInput() {
   const $ = (id) => document.getElementById(id);
   const pop = $("voice-popover");
@@ -628,10 +652,56 @@ function setupVoiceInput() {
   let stream = null;
   let recorder = null;
   let chunks = [];
-  let target = null;
+  let audioContext = null;
+  let waveFrame = 0;
+  let stopRequested = false; // stop pressed while the microphone was still opening
   const showRecording = (on) => indicator.classList.toggle("hidden", !on);
-  const stop = () => {
-    if (recorder && recorder.state === "recording") recorder.stop();
+  const setPhase = (phase) => {
+    voiceState = phase === "idle" ? { phase, target: null } : { ...voiceState, phase };
+    renderPaneMicButtons();
+  };
+  const releaseMicrophone = () => {
+    cancelAnimationFrame(waveFrame);
+    waveFrame = 0;
+    if (audioContext) {
+      audioContext.close().catch(() => {});
+      audioContext = null;
+    }
+    stream?.getTracks().forEach((t) => t.stop());
+    stream = null;
+  };
+  // The live input level, drawn every frame into the recording pane's button.
+  const drawWave = (analyser, target) => {
+    const samples = new Uint8Array(analyser.fftSize);
+    const color = getComputedStyle(document.documentElement).getPropertyValue("--accent").trim() || "#4ea1ff";
+    const width = 56, height = 16;
+    const tick = () => {
+      const canvas = terminals.get(target)?.paneEl.querySelector(".pane-mic-wave");
+      if (canvas) {
+        const dpr = window.devicePixelRatio || 1;
+        if (canvas.width !== Math.round(width * dpr)) {
+          canvas.width = Math.round(width * dpr);
+          canvas.height = Math.round(height * dpr);
+        }
+        const g = canvas.getContext("2d");
+        g.setTransform(dpr, 0, 0, dpr, 0, 0);
+        g.clearRect(0, 0, width, height);
+        analyser.getByteTimeDomainData(samples);
+        g.strokeStyle = color;
+        g.lineWidth = 1.5;
+        g.beginPath();
+        for (let i = 0; i < samples.length; i++) {
+          const x = (i / (samples.length - 1)) * width;
+          // Speech uses a small part of the range; scale it up so ordinary talk shows.
+          const level = Math.max(-1, Math.min(1, ((samples[i] - 128) / 128) * 3));
+          const y = height / 2 + level * (height / 2 - 1);
+          if (i) g.lineTo(x, y); else g.moveTo(x, y);
+        }
+        g.stroke();
+      }
+      waveFrame = requestAnimationFrame(tick);
+    };
+    tick();
   };
 
   async function transcribe(blob) {
@@ -682,22 +752,43 @@ function setupVoiceInput() {
     });
   }
 
-  rec.onpointerdown = async (event) => {
-    event.preventDefault();
-    if (recorder) return;
+  voiceStop = () => {
+    if (recorder && recorder.state === "recording") recorder.stop();
+    else if (voiceState.phase === "recording") stopRequested = true;
+  };
+  voiceStart = async (paneId, { fromPane = false } = {}) => {
+    if (voiceState.phase !== "idle") return;
+    const target = paneId;
+    if (!target || !terminals.has(target)) {
+      status.textContent = "터미널 패인을 먼저 선택하세요.";
+      if (fromPane) toast(status.textContent, true);
+      return;
+    }
+    stopRequested = false;
+    voiceState = { phase: "recording", target, discard: false };
+    renderPaneMicButtons();
     try {
-      target = focusedPaneId;
-      if (!target || !terminals.has(target)) throw Error("터미널 패인을 먼저 선택하세요.");
       stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      // Stopped, or the pane closed, before the microphone even opened.
+      if (stopRequested || voiceState.discard) {
+        releaseMicrophone();
+        setPhase("idle");
+        return;
+      }
       chunks = [];
       recorder = new MediaRecorder(stream);
       const mr = recorder;
       mr.ondataavailable = (x) => { if (x.data.size) chunks.push(x.data); };
       mr.onstop = async () => {
         recorder = null;
-        stream?.getTracks().forEach((t) => t.stop());
-        stream = null;
+        releaseMicrophone();
         showRecording(false);
+        if (voiceState.discard) {
+          status.textContent = "";
+          setPhase("idle");
+          return;
+        }
+        setPhase("transcribing");
         status.textContent = "인식 중…";
         try {
           const blob = new Blob(chunks, { type: mr.mimeType || "audio/webm" });
@@ -709,22 +800,38 @@ function setupVoiceInput() {
         } catch (e) {
           status.textContent = String(e);
           toast("음성 인식 실패: " + String(e), true);
+        } finally {
+          setPhase("idle");
         }
       };
       mr.start();
-      showRecording(true);
+      try {
+        audioContext = new AudioContext();
+        const analyser = audioContext.createAnalyser();
+        analyser.fftSize = 256;
+        audioContext.createMediaStreamSource(stream).connect(analyser);
+        drawWave(analyser, target);
+      } catch {} // the waveform is only a display; recording goes on without it
+      // A pane button shows the waveform instead of the floating indicator.
+      if (!fromPane) showRecording(true);
       status.textContent = "녹음 중 — 떼면 인식합니다.";
     } catch (e) {
-      stream?.getTracks().forEach((t) => t.stop());
-      stream = null;
       recorder = null;
+      releaseMicrophone();
       showRecording(false);
       status.textContent = String(e);
+      toast("마이크를 열 수 없습니다: " + String(e), true);
+      setPhase("idle");
     }
   };
-  rec.onpointerup = stop;
-  rec.onpointercancel = stop;
-  rec.onpointerleave = (e) => { if (e.buttons === 0) stop(); };
+
+  rec.onpointerdown = (event) => {
+    event.preventDefault();
+    voiceStart(focusedPaneId);
+  };
+  rec.onpointerup = () => voiceStop();
+  rec.onpointercancel = () => voiceStop();
+  rec.onpointerleave = (e) => { if (e.buttons === 0) voiceStop(); };
 
   // Push-to-talk is global, so it can be switched off: it otherwise swallows
   // Ctrl+Space from whatever is running in the focused pane.
@@ -3440,6 +3547,7 @@ async function createPane(parentEl, shell, args, cwd, sessionKey = null) {
     <span class="pane-label">${esc(sessionLabel)}</span>
     ${shell !== "ssh" ? `<span class="pane-cwd">${esc(cwdText)}</span>` : ""}
     <span class="pane-actions">
+      <button class="pane-btn pane-mic" title="음성 입력 (누르면 녹음, 다시 누르면 인식)" aria-label="음성 입력"><span class="pane-mic-icon">🎙</span><canvas class="pane-mic-wave" width="56" height="16"></canvas></button>
       <button class="pane-btn split-h" title="Split horizontally (Ctrl+Shift+D)">&#8596;</button>
       <button class="pane-btn split-v" title="Split vertically (Ctrl+Shift+E)">&#8597;</button>
       <button class="pane-btn flip" title="분할 방향 전환 상하 ↔ 좌우 (Ctrl+Shift+O)">&#8635;</button>
@@ -3452,6 +3560,7 @@ async function createPane(parentEl, shell, args, cwd, sessionKey = null) {
   statusBar.querySelector(".split-v").addEventListener("click", (e) => { e.stopPropagation(); setFocusedPane(id); splitPane("vertical"); });
   statusBar.querySelector(".flip").addEventListener("click", (e) => { e.stopPropagation(); setFocusedPane(id); flipSplitDirection(); });
   statusBar.querySelector(".close").addEventListener("click", (e) => { e.stopPropagation(); closePane(id); });
+  statusBar.querySelector(".pane-mic").addEventListener("click", (e) => { e.stopPropagation(); onPaneMicClick(id); });
 
   // Mouse-drag the status bar onto another pane's edge (top/bottom/left/right)
   // to re-tile. Mouse-based (not HTML5 DnD) so it reliably works over the xterm
@@ -6680,6 +6789,10 @@ function equalizeActiveTabSplits(direction) {
 function closePane(ptyId) {
   const tInfo = terminals.get(ptyId);
   if (!tInfo) return;
+  if (voiceState.target === ptyId && voiceState.phase === "recording") {
+    voiceState.discard = true; // nothing it heard may land in another pane
+    voiceStop();
+  }
   if (memoPopover && Number(memoPopover.dataset.ptyId) === ptyId) closeMemoPopover();
   clearPaneZoom(); // layout is about to change — drop any zoom overlay first
 

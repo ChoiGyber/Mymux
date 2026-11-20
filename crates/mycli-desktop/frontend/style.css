@@ -2601,6 +2601,30 @@ html[data-theme="dark"] .pane-command-shortcut {
   color: #fff;
   border-color: var(--accent);
 }
+/* Per-pane voice input: 🎙 when idle, the live input waveform while recording
+   (no text), a dimmed icon with moving dots while transcribing. Never hidden in
+   narrow panes; the container queries below leave it alone. */
+.pane-mic { display: inline-flex; align-items: center; gap: 2px; }
+.pane-mic-wave { display: none; width: 56px; height: 16px; }
+.pane-mic.recording { border-color: var(--red); background: var(--bg); }
+.pane-mic.recording:hover { background: var(--bg); }
+.pane-mic.recording .pane-mic-icon { display: none; }
+.pane-mic.recording .pane-mic-wave { display: inline-block; }
+.pane-mic.transcribing { cursor: progress; }
+.pane-mic.transcribing .pane-mic-icon { opacity: 0.45; }
+.pane-mic.transcribing::after {
+  content: "";
+  display: inline-block;
+  width: 1.4em;
+  text-align: left;
+  animation: pane-mic-dots 1.2s steps(1) infinite;
+}
+@keyframes pane-mic-dots {
+  0% { content: ""; }
+  25% { content: "."; }
+  50% { content: ".."; }
+  75% { content: "..."; }
+}
 .pane-btn.close:hover {
   background: var(--red);
   border-color: var(--red);

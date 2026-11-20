@@ -38,12 +38,28 @@
         if (printable && ECHO_MS !== null) setTimeout(() => push(args.id, printable.replace(/\r/g, "\r\n> ")), ECHO_MS);
         return null;
       }
+      case "voice_managed_status": return { python: "C:/stub/python.exe", models: ["small"] };
+      case "voice_transcribe_local": {
+        window.__voiceCalls.push({ bytes: (args.audioBase64 || "").length, mode: args.mode, model: args.model });
+        await new Promise((r) => setTimeout(r, 300));
+        return "안녕하세요";
+      }
       case "tool_installed": return true;
       case "list_commands": return [];
       case "session_load": return null;
       case "explorer_home_dir": return "C:/stub";
       default: return null;
     }
+  }
+  // ?voice=1: a finished local voice setup, so the mic buttons have an engine.
+  // Transcription answers after VOICE_MS with a fixed sentence and logs its call.
+  window.__voiceCalls = [];
+  if (new URLSearchParams(location.search).get("voice")) {
+    try {
+      localStorage.setItem("mymux.voice.provider", "faster-whisper");
+      localStorage.setItem("mymux.voice.localMode", "python");
+      localStorage.setItem("mymux.voice.runner.python", "C:/stub/python.exe");
+    } catch {}
   }
   window.__stubPush = push; // inject raw PTY output from a test
   window.__TAURI__ = {
