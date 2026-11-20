@@ -410,9 +410,46 @@ function voiceButtonAction(state, paneId) {
   return "start";
 }
 
+// When a recording stops by itself. One started with a pane's mic button
+// (click to start, click again to stop) also stops once the speaker has been
+// heard and then stays quiet for silenceMs. Every recording, push-to-talk
+// included, stops at maxMs: a forgotten 4½-minute recording once ran past
+// the transcription timeout. An object so the harness can shorten it.
+const VOICE_LIMITS = { silenceMs: 3000, maxMs: 120000, minSpeechMs: 400 };
+
+// One step of the silence detector, called once per animation frame with the
+// input level (RMS of the analyser's latest window, 0..1) and the time in ms.
+// `s` is the detector's state and starts as {}. Returns true when the
+// recording should stop: at least minSpeechMs of speech has been heard (a
+// click or a cough is not enough), and nothing since for silenceMs.
+function voiceSilenceStep(s, rms, now, limits) {
+  if (s.last === undefined) {
+    Object.assign(s, { last: now, lastVoice: now, floor: rms, speechMs: 0 });
+    return false;
+  }
+  const dt = now - s.last;
+  s.last = now;
+  // No frames run while the window is hidden; that time is not silence.
+  if (dt > 500) {
+    s.lastVoice += dt;
+    return false;
+  }
+  // The noise floor drops with every quieter frame and rises only slowly, so
+  // a noisy room raises the bar for what counts as speech while the pauses
+  // between words keep pulling the floor back down.
+  s.floor = rms < s.floor ? rms : s.floor + (rms - s.floor) * 0.002;
+  if (rms > Math.max(0.012, s.floor * 4)) {
+    s.speechMs += dt;
+    s.lastVoice = now;
+  }
+  return s.speechMs >= limits.minSpeechMs && now - s.lastVoice >= limits.silenceMs;
+}
+
 // The one recording, shared by the pane mic buttons, the 🎙 popover's record
 // button and Ctrl+Space. The target pane is fixed when recording starts.
 // `discard` drops the recording without transcribing (its pane was closed).
+// `fromPane`/`autoStop` mark a pane-button recording, which also stops on
+// silence (see VOICE_LIMITS).
 // voiceStart/voiceStop are filled in by setupVoiceInput().
 let voiceState = { phase: "idle", target: null };
 let voiceStart = async (_paneId, _options) => {};
@@ -684,37 +721,53 @@ function setupVoiceInput() {
     stream?.getTracks().forEach((t) => t.stop());
     stream = null;
   };
-  // The input level over the last few seconds, drawn into the recording pane's
-  // button as a bar graph that scrolls left: newest bar on the right, one bar
-  // every BAR_MS, bar height = loudness. (A raw oscilloscope trace jitters every
-  // frame and reads as noise, not as "I am being heard".)
-  const drawWave = (analyser, target) => {
+  // Watches the input once per animation frame while recording:
+  // - draws the level over the last few seconds into the recording pane's
+  //   button as a bar graph that scrolls left: newest bar on the right, one bar
+  //   every BAR_MS, bar height = loudness. (A raw oscilloscope trace jitters
+  //   every frame and reads as noise, not as "I am being heard".) The bars fill
+  //   whatever width the canvas has; a narrow pane gives it less.
+  // - stops a pane-button recording once the speaker has gone quiet.
+  // - shows the floating indicator for a pane-button recording while that
+  //   pane is out of sight (another tab, the browser view), since its button,
+  //   the only other sign that the microphone is open, can't be seen then.
+  const watchInput = (analyser, target, session) => {
     const samples = new Uint8Array(analyser.fftSize);
     const color = getComputedStyle(document.documentElement).getPropertyValue("--accent").trim() || "#4ea1ff";
-    const width = 56, height = 16;
+    const height = 16;
     const BAR_W = 2, GAP = 1, BAR_MS = 70;
-    const levels = new Array(Math.floor(width / (BAR_W + GAP))).fill(0);
+    const levels = new Array(Math.floor(56 / (BAR_W + GAP))).fill(0);
+    const silence = {};
     let peak = 0;
     let lastBar = performance.now();
     const tick = () => {
+      if (voiceState.session !== session || voiceState.phase !== "recording") return;
       analyser.getByteTimeDomainData(samples);
       let sum = 0;
       for (let i = 0; i < samples.length; i++) {
         const v = (samples[i] - 128) / 128;
         sum += v * v;
       }
+      const rms = Math.sqrt(sum / samples.length);
+      const now = performance.now();
+      if (voiceState.autoStop && voiceSilenceStep(silence, rms, now, VOICE_LIMITS)) {
+        voiceStop();
+        return;
+      }
       // Speech sits at a small RMS; scale it up and soften it so ordinary talk
       // reaches most of the height while room noise stays near the floor.
-      peak = Math.max(peak, Math.min(1, Math.sqrt(Math.sqrt(sum / samples.length) * 6)));
-      const now = performance.now();
+      peak = Math.max(peak, Math.min(1, Math.sqrt(rms * 6)));
       if (now - lastBar >= BAR_MS) {
         lastBar = now;
         levels.shift();
         levels.push(peak);
         peak = 0;
       }
-      const canvas = terminals.get(target)?.paneEl.querySelector(".pane-mic-wave");
-      if (canvas) {
+      const pane = terminals.get(target)?.paneEl;
+      if (voiceState.fromPane) showRecording(!pane?.getClientRects().length);
+      const canvas = pane?.querySelector(".pane-mic-wave");
+      const width = canvas?.clientWidth || 0;
+      if (width) {
         const dpr = window.devicePixelRatio || 1;
         if (canvas.width !== Math.round(width * dpr)) {
           canvas.width = Math.round(width * dpr);
@@ -724,9 +777,10 @@ function setupVoiceInput() {
         g.setTransform(dpr, 0, 0, dpr, 0, 0);
         g.clearRect(0, 0, width, height);
         g.fillStyle = color;
-        const offset = width - levels.length * (BAR_W + GAP);
-        for (let i = 0; i < levels.length; i++) {
-          const h = Math.max(2, levels[i] * (height - 2));
+        const shown = Math.min(levels.length, Math.floor(width / (BAR_W + GAP)));
+        const offset = width - shown * (BAR_W + GAP);
+        for (let i = 0; i < shown; i++) {
+          const h = Math.max(2, levels[levels.length - shown + i] * (height - 2));
           g.fillRect(offset + i * (BAR_W + GAP), (height - h) / 2, BAR_W, h);
         }
       }
@@ -734,6 +788,22 @@ function setupVoiceInput() {
     };
     tick();
   };
+
+  // What keeps the chosen engine from transcribing, or "" when nothing does.
+  // Checked before recording too, so the user hears about it before speaking
+  // rather than after. (Deepgram's key can only be checked over the network.)
+  const engineProblem = () => {
+    if (provider.value === "deepgram") return "";
+    const runnerPath = read(VOICE_KEYS.runner(localMode()), "");
+    if (!runnerPath) return "아직 설치되지 않았습니다. 🎙 에서 [자동 설치하고 바로 연결] 을 눌러 주세요.";
+    // A model that was never downloaded would be fetched mid-dictation and hit
+    // the backend's timeout, so say what to do instead.
+    if (managed && runnerPath === managed.python && !managed.models.includes(model.value)) {
+      return `${model.value} 모델을 아직 받지 않았습니다. 🎙 에서 [${model.value} 모델 받기] 를 눌러 주세요.`;
+    }
+    return "";
+  };
+  const durationText = (ms) => (ms >= 60000 && ms % 60000 === 0 ? `${ms / 60000}분` : `${Math.round(ms / 1000)}초`);
 
   async function transcribe(blob) {
     if (provider.value === "deepgram") {
@@ -766,14 +836,11 @@ function setupVoiceInput() {
         ws.onclose = () => finish();
       });
     }
+    // Checked again: the settings may have changed while recording.
+    const problem = engineProblem();
+    if (problem) throw Error(problem);
     const mode = localMode();
     const runnerPath = read(VOICE_KEYS.runner(mode), "");
-    if (!runnerPath) throw Error("아직 설치되지 않았습니다. 🎙 에서 [자동 설치하고 바로 연결] 을 눌러 주세요.");
-    // A model that was never downloaded would be fetched mid-dictation and hit
-    // the backend's timeout, so say what to do instead.
-    if (managed && runnerPath === managed.python && !managed.models.includes(model.value)) {
-      throw Error(`${model.value} 모델을 아직 받지 않았습니다. 🎙 에서 [${model.value} 모델 받기] 를 눌러 주세요.`);
-    }
     return await invoke("voice_transcribe_local", {
       audioBase64: await blobToWav16k(blob),
       mode,
@@ -799,10 +866,19 @@ function setupVoiceInput() {
       if (fromPane) toast(status.textContent, true);
       return;
     }
+    const problem = engineProblem();
+    if (problem) {
+      status.textContent = problem;
+      toast("음성 입력을 시작할 수 없습니다. " + problem, true);
+      return;
+    }
     stopRequested = false;
     const session = ++voiceSession;
-    voiceState = { phase: "recording", target, discard: false, session };
+    // A pane button is click-to-start, click-to-stop, so silence also stops
+    // it. Push-to-talk and the popover button stop when released.
+    voiceState = { phase: "recording", target, discard: false, session, fromPane, autoStop: fromPane };
     renderPaneMicButtons();
+    let maxTimer = 0;
     try {
       stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       // Stopped, or the pane closed, before the microphone even opened.
@@ -817,6 +893,7 @@ function setupVoiceInput() {
       const recorded = chunks; // the next recording gets a fresh array
       mr.ondataavailable = (x) => { if (x.data.size) recorded.push(x.data); };
       mr.onstop = async () => {
+        clearTimeout(maxTimer);
         recorder = null;
         releaseMicrophone();
         showRecording(false);
@@ -842,17 +919,30 @@ function setupVoiceInput() {
         }
       };
       mr.start();
+      maxTimer = setTimeout(() => {
+        if (voiceState.session !== session || voiceState.phase !== "recording") return;
+        const note = `녹음이 최대 길이(${durationText(VOICE_LIMITS.maxMs)})에 도달해 멈췄습니다. 지금까지 녹음한 내용을 인식합니다.`;
+        toast(note);
+        voiceStop();
+      }, VOICE_LIMITS.maxMs);
       try {
         audioContext = new AudioContext();
         const analyser = audioContext.createAnalyser();
-        analyser.fftSize = 256;
+        // ~43 ms at 48 kHz: one window per frame covers the input without
+        // gaps, so the silence detector does not miss short syllables.
+        analyser.fftSize = 2048;
         audioContext.createMediaStreamSource(stream).connect(analyser);
-        drawWave(analyser, target);
-      } catch {} // the waveform is only a display; recording goes on without it
-      // A pane button shows the waveform instead of the floating indicator.
+        watchInput(analyser, target, session);
+      } catch {} // only the waveform and the silence stop; recording goes on without them
+      // A pane button shows the waveform instead of the floating indicator,
+      // which watchInput brings up only while that pane is out of sight.
+      indicator.textContent = fromPane ? "🎤 녹음 중… 말을 멈추면 자동으로 인식합니다" : "🎤 녹음 중…";
       if (!fromPane) showRecording(true);
-      status.textContent = "녹음 중 — 떼면 인식합니다.";
+      status.textContent = fromPane
+        ? "녹음 중 — 말을 멈추면 자동으로 인식합니다. 패인의 마이크 버튼을 다시 눌러도 됩니다."
+        : "녹음 중 — 떼면 인식합니다.";
     } catch (e) {
+      clearTimeout(maxTimer);
       recorder = null;
       releaseMicrophone();
       showRecording(false);
@@ -862,13 +952,23 @@ function setupVoiceInput() {
     }
   };
 
+  // Hold to talk. Only a press that began on this button (or Ctrl+Space) is
+  // released here: a mouse merely passing over it must not stop a recording
+  // that a pane's mic button started.
+  let recHeld = false;
+  const releaseRec = () => {
+    if (!recHeld) return;
+    recHeld = false;
+    voiceStop();
+  };
   rec.onpointerdown = (event) => {
     event.preventDefault();
+    recHeld = true;
     voiceStart(focusedPaneId);
   };
-  rec.onpointerup = () => voiceStop();
-  rec.onpointercancel = () => voiceStop();
-  rec.onpointerleave = (e) => { if (e.buttons === 0) voiceStop(); };
+  rec.onpointerup = releaseRec;
+  rec.onpointercancel = releaseRec;
+  rec.onpointerleave = (e) => { if (e.buttons === 0) releaseRec(); };
 
   // Push-to-talk is global, so it can be switched off: it otherwise swallows
   // Ctrl+Space from whatever is running in the focused pane.
@@ -3590,7 +3690,7 @@ async function createPane(parentEl, shell, args, cwd, sessionKey = null) {
     <span class="pane-label">${esc(sessionLabel)}</span>
     ${shell !== "ssh" ? `<span class="pane-cwd">${esc(cwdText)}</span>` : ""}
     <span class="pane-actions">
-      <button class="pane-btn pane-mic" title="음성 입력 (누르면 녹음, 다시 누르면 인식)" aria-label="음성 입력"><span class="pane-mic-icon">${ICON.mic}</span><canvas class="pane-mic-wave" width="56" height="16"></canvas></button>
+      <button class="pane-btn pane-mic" title="음성 입력 (누르면 녹음, 말을 멈추거나 다시 누르면 인식)" aria-label="음성 입력"><span class="pane-mic-icon">${ICON.mic}</span><canvas class="pane-mic-wave" width="56" height="16"></canvas></button>
       <button class="pane-btn split-h" title="Split horizontally (Ctrl+Shift+D)">&#8596;</button>
       <button class="pane-btn split-v" title="Split vertically (Ctrl+Shift+E)">&#8597;</button>
       <button class="pane-btn flip" title="분할 방향 전환 상하 ↔ 좌우 (Ctrl+Shift+O)">&#8635;</button>

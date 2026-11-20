@@ -38,6 +38,17 @@ jobs:
       - name: Check vendored tao deadlock fix is intact
         run: node scripts/check-vendored-tao.mjs
 
+  # The pane mic buttons share one recording, and a click-started recording
+  # stops by itself on silence. Both rules are pure functions in app.js that
+  # this runs without a browser. Cheap, runs first.
+  voice-buttons:
+    name: voice button rules
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check pane mic button and silence-stop rules
+        run: node scripts/check-voice-buttons.mjs
+
   build:
     name: build (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
