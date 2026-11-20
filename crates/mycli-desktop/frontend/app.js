@@ -399,6 +399,16 @@ async function blobToWav16k(blob) {
   return btoa(binary);
 }
 
+// What a click on a pane's mic button does. There is one microphone, so one
+// recording at a time: a click while recording always stops that recording
+// (never starts a second), and nothing can start while the last one is still
+// being transcribed.
+function voiceButtonAction(state, paneId) {
+  if (state.phase === "transcribing") return "ignore";
+  if (state.phase === "recording") return "stop";
+  return "start";
+}
+
 function setupVoiceInput() {
   const $ = (id) => document.getElementById(id);
   const pop = $("voice-popover");
