@@ -1,5 +1,19 @@
 # Changelog
 
+## v0.3.12 - 2026-11-21
+
+### Added
+
+- **Voice recordings stop by themselves.** A recording started with a pane's mic button now ends once you have spoken and then stay quiet for 3 seconds, and is transcribed straight away; clicking the button again still works. Every recording, push-to-talk included, stops at 2 minutes with a notice, and what was recorded is still transcribed. Push-to-talk (Ctrl+Space) and the popover's hold button still stop only when released.
+
+### Fixed
+
+- **Moving the mouse over the 🎙 popover's record button stopped a pane recording.** Only a press that began on that button ends there now.
+- **No sign of a recording after switching tabs.** While the recording pane is out of sight, a "recording" badge shows at the bottom of the window.
+- **In very narrow panes the recording waveform pushed the close button out.** Below 130 px the waveform narrows instead.
+- **The popover said "release to transcribe" during a pane recording.** It now describes the pane button.
+- **A missing voice engine or model was reported only after you had finished speaking.** The local engine and model are now checked when you press the button, before anything is recorded.
+
 ## v0.3.11 - 2026-11-20
 
 ### Fixed
