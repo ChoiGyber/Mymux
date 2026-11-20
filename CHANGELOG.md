@@ -1,5 +1,15 @@
 # Changelog
 
+## v0.3.11 - 2026-11-20
+
+### Fixed
+
+- **Voice input never reached the pane after a long recording.** Local transcription had a fixed 90-second limit, and a large model on a CPU (large-v3 takes about three times the speech length) ran past it on anything longer than about half a minute; the error then blamed a missing model. The limit now grows with the recording length and the model size (up to 30 minutes), and a timeout says how long the recording was and suggests a shorter one or the small model.
+
+### Changed
+
+- **The pane mic button shows a bar graph.** The input level scrolls left as bars, newest on the right, instead of a raw waveform that jittered every frame.
+
 ## v0.3.10 - 2026-11-20
 
 ### Added
