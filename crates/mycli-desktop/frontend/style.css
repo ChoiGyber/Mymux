@@ -2605,6 +2605,8 @@ html[data-theme="dark"] .pane-command-shortcut {
    (no text), a dimmed icon with moving dots while transcribing. Never hidden in
    narrow panes; the container queries below leave it alone. */
 .pane-mic { display: inline-flex; align-items: center; gap: 2px; }
+.pane-mic-icon { display: inline-flex; }
+.pane-mic-icon .icon { width: 12px; height: 12px; vertical-align: 0; }
 .pane-mic-wave { display: none; width: 56px; height: 16px; }
 .pane-mic.recording { border-color: var(--red); background: var(--bg); }
 .pane-mic.recording:hover { background: var(--bg); }
