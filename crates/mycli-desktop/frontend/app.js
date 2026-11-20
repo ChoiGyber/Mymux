@@ -417,6 +417,15 @@ let voiceState = { phase: "idle", target: null };
 let voiceStart = async (_paneId, _options) => {};
 let voiceStop = () => {};
 
+// Every way a pane goes away (closePane, closeTab) calls this, so a recording
+// never outlives its pane: it stops, and nothing it heard is transcribed.
+function voiceDropIfTarget(ptyId) {
+  if (voiceState.target === ptyId && voiceState.phase === "recording") {
+    voiceState.discard = true;
+    voiceStop();
+  }
+}
+
 function onPaneMicClick(paneId) {
   const action = voiceButtonAction(voiceState, paneId);
   if (action === "start") voiceStart(paneId, { fromPane: true });
@@ -656,7 +665,11 @@ function setupVoiceInput() {
   let waveFrame = 0;
   let stopRequested = false; // stop pressed while the microphone was still opening
   const showRecording = (on) => indicator.classList.toggle("hidden", !on);
-  const setPhase = (phase) => {
+  // Each recording has a session number. A transcription that finishes after a
+  // newer recording has started must not reset that recording's state.
+  let voiceSession = 0;
+  const setPhase = (phase, session) => {
+    if (voiceState.session !== session) return;
     voiceState = phase === "idle" ? { phase, target: null } : { ...voiceState, phase };
     renderPaneMicButtons();
   };
@@ -757,7 +770,11 @@ function setupVoiceInput() {
     else if (voiceState.phase === "recording") stopRequested = true;
   };
   voiceStart = async (paneId, { fromPane = false } = {}) => {
-    if (voiceState.phase !== "idle") return;
+    if (voiceState.phase === "recording") return;
+    // A pane button waits for the previous result (its moving dots say why).
+    // Push-to-talk and the popover may start the next utterance while the last
+    // one is still being recognised, as they always could.
+    if (voiceState.phase === "transcribing" && fromPane) return;
     const target = paneId;
     if (!target || !terminals.has(target)) {
       status.textContent = "터미널 패인을 먼저 선택하세요.";
@@ -765,33 +782,35 @@ function setupVoiceInput() {
       return;
     }
     stopRequested = false;
-    voiceState = { phase: "recording", target, discard: false };
+    const session = ++voiceSession;
+    voiceState = { phase: "recording", target, discard: false, session };
     renderPaneMicButtons();
     try {
       stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       // Stopped, or the pane closed, before the microphone even opened.
       if (stopRequested || voiceState.discard) {
         releaseMicrophone();
-        setPhase("idle");
+        setPhase("idle", session);
         return;
       }
       chunks = [];
       recorder = new MediaRecorder(stream);
       const mr = recorder;
-      mr.ondataavailable = (x) => { if (x.data.size) chunks.push(x.data); };
+      const recorded = chunks; // the next recording gets a fresh array
+      mr.ondataavailable = (x) => { if (x.data.size) recorded.push(x.data); };
       mr.onstop = async () => {
         recorder = null;
         releaseMicrophone();
         showRecording(false);
         if (voiceState.discard) {
           status.textContent = "";
-          setPhase("idle");
+          setPhase("idle", session);
           return;
         }
-        setPhase("transcribing");
+        setPhase("transcribing", session);
         status.textContent = "인식 중…";
         try {
-          const blob = new Blob(chunks, { type: mr.mimeType || "audio/webm" });
+          const blob = new Blob(recorded, { type: mr.mimeType || "audio/webm" });
           let text = String(await transcribe(blob))
             .replace(/[\r\n\x00-\x1f]+/g, " ")
             .trim();
@@ -801,7 +820,7 @@ function setupVoiceInput() {
           status.textContent = String(e);
           toast("음성 인식 실패: " + String(e), true);
         } finally {
-          setPhase("idle");
+          setPhase("idle", session);
         }
       };
       mr.start();
@@ -821,7 +840,7 @@ function setupVoiceInput() {
       showRecording(false);
       status.textContent = String(e);
       toast("마이크를 열 수 없습니다: " + String(e), true);
-      setPhase("idle");
+      setPhase("idle", session);
     }
   };
 
@@ -6795,10 +6814,7 @@ function equalizeActiveTabSplits(direction) {
 function closePane(ptyId) {
   const tInfo = terminals.get(ptyId);
   if (!tInfo) return;
-  if (voiceState.target === ptyId && voiceState.phase === "recording") {
-    voiceState.discard = true; // nothing it heard may land in another pane
-    voiceStop();
-  }
+  voiceDropIfTarget(ptyId);
   if (memoPopover && Number(memoPopover.dataset.ptyId) === ptyId) closeMemoPopover();
   clearPaneZoom(); // layout is about to change — drop any zoom overlay first
 
@@ -9634,6 +9650,7 @@ function closeTab(tabIdx) {
   for (const ptyId of [...tabInfo.panes]) {
     const tInfo = terminals.get(ptyId);
     if (tInfo) {
+      voiceDropIfTarget(ptyId);
       detachPaneSftp(ptyId);
       invoke("pty_close", { id: ptyId });
       tInfo.term.dispose();

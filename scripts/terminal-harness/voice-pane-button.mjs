@@ -115,6 +115,53 @@ try {
   else if ((await ev(`window.__voiceCalls.length`)) !== 1) fail("ctrl-space-shares-button", "transcribed more than once");
   else pass("ctrl-space-shares-button", {});
 
+  // 7. Closing a whole tab (not just a pane) while one of its panes records:
+  //    nothing is typed, the state is idle, and the very next click records.
+  await reset();
+  await ev(`spawnNewTerminalTab()`);
+  await sleep(700);
+  await ev(`splitPane("horizontal")`);
+  await sleep(700);
+  const tabPane = await ev(`focusedPaneId`);
+  const tabIdx = await ev(`findTabForPane(${tabPane}).tabIdx`);
+  await click(tabPane);
+  await sleep(300);
+  await ev(`closeTab(${tabIdx})`);
+  const idle7 = await waitIdle();
+  await sleep(400);
+  const w7 = await writes();
+  const survivor = await ev(`focusedPaneId`);
+  await click(survivor);
+  await sleep(300);
+  const next7 = await button(survivor);
+  await click(survivor);
+  await waitIdle();
+  await sleep(200);
+  const w7b = await writes();
+  if (!idle7) fail("tab-closed-while-recording", "state stayed " + (await ev(`voiceState.phase`)));
+  else if (w7.length) fail("tab-closed-while-recording", "typed into: " + JSON.stringify(w7));
+  else if (!next7.cls.includes("recording")) fail("tab-closed-while-recording", "the next click did not start recording: " + next7.cls);
+  else if (w7b.map((w) => `${w.id}:${w.data}`).join("|") !== `${survivor}:안녕하세요`) fail("tab-closed-while-recording", "after: " + JSON.stringify(w7b));
+  else pass("tab-closed-while-recording", {});
+
+  // 8. Push-to-talk again while the previous utterance is still being
+  //    recognised: the new one records (as before this feature), both arrive.
+  await reset();
+  const p8 = await ev(`focusedPaneId`);
+  await ev(`terminals.get(${p8}).term.focus()`);
+  const key = (type) => send("Input.dispatchKeyEvent", { type, modifiers: 2, key: " ", code: "Space", windowsVirtualKeyCode: 32 });
+  await key("rawKeyDown"); await sleep(300); await key("keyUp");
+  await sleep(60); // first utterance is now transcribing (the stub takes 300 ms)
+  await key("rawKeyDown"); await sleep(250);
+  const phase8 = await ev(`voiceState.phase`);
+  await key("keyUp");
+  await waitIdle();
+  await sleep(500);
+  const w8 = await writes();
+  if (phase8 !== "recording") fail("ptt-during-transcription", "second press did not record, phase " + phase8);
+  else if (w8.map((w) => `${w.id}:${w.data}`).join("|") !== `${p8}:안녕하세요|${p8}:안녕하세요`) fail("ptt-during-transcription", "writes: " + JSON.stringify(w8));
+  else pass("ptt-during-transcription", {});
+
   // 5. Microphone refused: idle again, the reason is shown, nothing left running.
   await reset();
   await ev(`(() => { navigator.mediaDevices.getUserMedia = () => Promise.reject(new DOMException("Permission denied", "NotAllowedError")); })()`);
