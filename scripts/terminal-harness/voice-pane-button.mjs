@@ -41,7 +41,9 @@ try {
   await click(other);
   await sleep(250);
   const frames = [];
-  for (let i = 0; i < 4; i++) { frames.push(await button(other)); await sleep(150); }
+  // Chrome's fake microphone beeps about once a second and is silent between,
+  // so sample long enough to always include a beep.
+  for (let i = 0; i < 10; i++) { frames.push(await button(other)); await sleep(150); }
   const distinct = new Set(frames.map((f) => f.wave)).size;
   const b1 = frames[0];
   if (!b1.cls.includes("recording")) fail("record-other-pane", "button is not in recording state: " + b1.cls);
@@ -91,6 +93,27 @@ try {
   if (!idle4) fail("closed-while-recording", "state did not return to idle");
   else if (w4.length) fail("closed-while-recording", "typed into: " + JSON.stringify(w4));
   else pass("closed-while-recording", { transcribeCalls: await ev(`window.__voiceCalls.length`) });
+
+  // 6. Ctrl+Space starts the same shared recording: that pane's button shows the
+  //    waveform, and clicking it stops and pastes into that pane.
+  await reset();
+  const pttPane = await ev(`focusedPaneId`);
+  await ev(`terminals.get(${pttPane}).term.focus()`);
+  await send("Input.dispatchKeyEvent", { type: "rawKeyDown", modifiers: 2, key: " ", code: "Space", windowsVirtualKeyCode: 32 });
+  await sleep(200);
+  // Holding the keys: Windows sends auto-repeat keydowns, which must not reach the program either.
+  for (let i = 0; i < 3; i++) await send("Input.dispatchKeyEvent", { type: "rawKeyDown", modifiers: 2, key: " ", code: "Space", windowsVirtualKeyCode: 32, autoRepeat: true });
+  await sleep(200);
+  const b6 = await button(pttPane);
+  await click(pttPane);
+  await waitIdle();
+  await send("Input.dispatchKeyEvent", { type: "keyUp", modifiers: 2, key: " ", code: "Space", windowsVirtualKeyCode: 32 });
+  await sleep(200);
+  const w6 = await writes();
+  if (!b6.cls.includes("recording") || !b6.waveShown) fail("ctrl-space-shares-button", "button not showing the Ctrl+Space recording: " + b6.cls);
+  else if (w6.map((w) => `${w.id}:${w.data}`).join("|") !== `${pttPane}:안녕하세요`) fail("ctrl-space-shares-button", "writes: " + JSON.stringify(w6));
+  else if ((await ev(`window.__voiceCalls.length`)) !== 1) fail("ctrl-space-shares-button", "transcribed more than once");
+  else pass("ctrl-space-shares-button", {});
 
   // 5. Microphone refused: idle again, the reason is shown, nothing left running.
   await reset();

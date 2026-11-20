@@ -16,6 +16,8 @@
 //   ime-busy-compose   ordinary composition under the same stall (was already fine)
 //   focus-panes        43 focus reports to the PTY per pane click, call-stack overflow on split
 //   browser-click-e2e  a click in the browser panel never updated the picture
+//   voice-pane-button  (added later) per-pane mic button, its waveform, and Ctrl+Space
+//                      push-to-talk, which on v0.3.8 also sent NUL to the program
 import { spawnSync } from "node:child_process";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -29,6 +31,7 @@ const checks = [
   ["ime-busy-compose", null],
   ["focus-panes", (o) => o.split.uncaughtErrors === 0 && o.clickOtherPane.focusReportsToPty <= 2 && o.windowReturns.focusReportsToPty === 0 && o.focusedPaneStillTyped],
   ["browser-click-e2e", null],
+  ["voice-pane-button", null],
 ];
 let failed = 0;
 for (const [name, judge] of checks) {

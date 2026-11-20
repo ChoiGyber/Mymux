@@ -836,15 +836,21 @@ function setupVoiceInput() {
   // Push-to-talk is global, so it can be switched off: it otherwise swallows
   // Ctrl+Space from whatever is running in the focused pane.
   let shortcutActive = false;
+  // The shortcut is swallowed here, before the terminal sees it: preventDefault
+  // alone let xterm turn every press, and every auto-repeat while held, into a
+  // NUL for the program (PowerShell opens its completion menu on Ctrl+Space).
   document.addEventListener("keydown", (e) => {
-    if (!ptt.checked || !e.ctrlKey || e.altKey || e.shiftKey || e.code !== "Space" || e.repeat) return;
+    if (!ptt.checked || !e.ctrlKey || e.altKey || e.shiftKey || e.code !== "Space") return;
     e.preventDefault();
+    e.stopPropagation();
+    if (e.repeat) return;
     shortcutActive = true;
     rec.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, pointerId: 0, buttons: 1 }));
   }, true);
   document.addEventListener("keyup", (e) => {
     if (!shortcutActive || (e.code !== "Space" && e.key !== "Control")) return;
     e.preventDefault();
+    e.stopPropagation();
     shortcutActive = false;
     rec.dispatchEvent(new PointerEvent("pointerup", { bubbles: true, pointerId: 0, buttons: 0 }));
   }, true);
