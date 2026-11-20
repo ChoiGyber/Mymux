@@ -288,6 +288,7 @@ pub async fn voice_transcribe_local(
     if data.len() > 15_000_000 {
         return Err("Audio recording is too large".into());
     }
+    let data_len = data.len();
     let mode = LocalMode::parse(&mode)?;
     let runner = PathBuf::from(runner_path);
     validate_runner(&runner, mode)?;
@@ -352,12 +353,17 @@ pub async fn voice_transcribe_local(
     #[cfg(windows)]
     command.creation_flags(no_console());
 
-    let result = tokio::time::timeout(Duration::from_secs(90), command.output()).await;
+    let audio_secs = wav_duration_secs(data_len);
+    let limit = transcribe_timeout(&model, audio_secs);
+    let result = tokio::time::timeout(limit, command.output()).await;
     let outcome = (|| {
         let output = result
             .map_err(|_| {
-                "Local transcription timed out. 처음 쓰는 모델이면 🎙 의 [자동 설치] 를 다시 눌러 모델을 미리 받아 주세요."
-                    .to_string()
+                format!(
+                    "Local transcription timed out ({}s). {:.0}초 녹음을 {model} 모델로 인식하다 시간이 다 됐습니다. 녹음을 짧게 끊거나 🎙 에서 더 작은 모델(small)을 고르세요.",
+                    limit.as_secs(),
+                    audio_secs
+                )
             })?
             .map_err(|e| e.to_string())?;
         if !output.status.success() {
@@ -396,6 +402,49 @@ pub async fn voice_transcribe_local(
     })();
     let _ = std::fs::remove_dir_all(&work);
     outcome
+}
+
+/// Length of the 16 kHz mono 16-bit WAV the frontend sends (44-byte header).
+fn wav_duration_secs(bytes: usize) -> f64 {
+    bytes.saturating_sub(44) as f64 / 32_000.0
+}
+
+/// How long one transcription may run. It grows with the recording, because
+/// the model is loaded per run and then decodes at a model-dependent pace: on a
+/// CPU, large-v3 took 24 s for 8 s of speech, so a fixed 90 s limit failed any
+/// recording longer than about half a minute.
+fn transcribe_timeout(model: &str, audio_secs: f64) -> Duration {
+    let per_audio_sec = match model {
+        "large-v2" | "large-v3" => 4.0,
+        "medium" => 2.5,
+        _ => 1.5,
+    };
+    let secs = 90.0 + audio_secs.max(0.0) * per_audio_sec;
+    Duration::from_secs(secs.min(1800.0) as u64)
+}
+
+#[cfg(test)]
+mod transcribe_timeout_tests {
+    use super::*;
+
+    #[test]
+    fn short_recordings_keep_the_old_floor() {
+        assert_eq!(transcribe_timeout("small", 0.0), Duration::from_secs(90));
+        assert_eq!(wav_duration_secs(10), 0.0);
+    }
+
+    #[test]
+    fn grows_with_length_and_model_size() {
+        let secs = wav_duration_secs(44 + 32_000 * 60); // one minute
+        assert_eq!(secs, 60.0);
+        assert_eq!(transcribe_timeout("small", secs), Duration::from_secs(180));
+        assert_eq!(transcribe_timeout("large-v3", secs), Duration::from_secs(330));
+    }
+
+    #[test]
+    fn capped_at_half_an_hour() {
+        assert_eq!(transcribe_timeout("large-v3", 3600.0), Duration::from_secs(1800));
+    }
 }
 
 /// Pick the transcript out of the run directory. `-f txt` is requested, but a

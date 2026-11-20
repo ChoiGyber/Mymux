@@ -684,12 +684,35 @@ function setupVoiceInput() {
     stream?.getTracks().forEach((t) => t.stop());
     stream = null;
   };
-  // The live input level, drawn every frame into the recording pane's button.
+  // The input level over the last few seconds, drawn into the recording pane's
+  // button as a bar graph that scrolls left: newest bar on the right, one bar
+  // every BAR_MS, bar height = loudness. (A raw oscilloscope trace jitters every
+  // frame and reads as noise, not as "I am being heard".)
   const drawWave = (analyser, target) => {
     const samples = new Uint8Array(analyser.fftSize);
     const color = getComputedStyle(document.documentElement).getPropertyValue("--accent").trim() || "#4ea1ff";
     const width = 56, height = 16;
+    const BAR_W = 2, GAP = 1, BAR_MS = 70;
+    const levels = new Array(Math.floor(width / (BAR_W + GAP))).fill(0);
+    let peak = 0;
+    let lastBar = performance.now();
     const tick = () => {
+      analyser.getByteTimeDomainData(samples);
+      let sum = 0;
+      for (let i = 0; i < samples.length; i++) {
+        const v = (samples[i] - 128) / 128;
+        sum += v * v;
+      }
+      // Speech sits at a small RMS; scale it up and soften it so ordinary talk
+      // reaches most of the height while room noise stays near the floor.
+      peak = Math.max(peak, Math.min(1, Math.sqrt(Math.sqrt(sum / samples.length) * 6)));
+      const now = performance.now();
+      if (now - lastBar >= BAR_MS) {
+        lastBar = now;
+        levels.shift();
+        levels.push(peak);
+        peak = 0;
+      }
       const canvas = terminals.get(target)?.paneEl.querySelector(".pane-mic-wave");
       if (canvas) {
         const dpr = window.devicePixelRatio || 1;
@@ -700,18 +723,12 @@ function setupVoiceInput() {
         const g = canvas.getContext("2d");
         g.setTransform(dpr, 0, 0, dpr, 0, 0);
         g.clearRect(0, 0, width, height);
-        analyser.getByteTimeDomainData(samples);
-        g.strokeStyle = color;
-        g.lineWidth = 1.5;
-        g.beginPath();
-        for (let i = 0; i < samples.length; i++) {
-          const x = (i / (samples.length - 1)) * width;
-          // Speech uses a small part of the range; scale it up so ordinary talk shows.
-          const level = Math.max(-1, Math.min(1, ((samples[i] - 128) / 128) * 3));
-          const y = height / 2 + level * (height / 2 - 1);
-          if (i) g.lineTo(x, y); else g.moveTo(x, y);
+        g.fillStyle = color;
+        const offset = width - levels.length * (BAR_W + GAP);
+        for (let i = 0; i < levels.length; i++) {
+          const h = Math.max(2, levels[i] * (height - 2));
+          g.fillRect(offset + i * (BAR_W + GAP), (height - h) / 2, BAR_W, h);
         }
-        g.stroke();
       }
       waveFrame = requestAnimationFrame(tick);
     };
