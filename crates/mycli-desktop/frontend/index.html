@@ -59,19 +59,7 @@
   </header>
 
   <div id="voice-popover" class="voice-popover hidden" role="dialog" aria-label="음성 입력 설정">
-    <label>인식 엔진
-      <select id="voice-provider">
-        <option value="deepgram">Deepgram 클라우드</option>
-        <option value="faster-whisper">로컬 faster-whisper</option>
-      </select>
-    </label>
-
-    <label id="voice-key-row">Deepgram API 키
-      <input id="voice-api-key" type="password" autocomplete="off">
-    </label>
-    <button id="voice-save-key" type="button">키 암호화 저장</button>
-
-    <div id="voice-local" class="hidden">
+    <div id="voice-local">
       <div class="voice-two">
         <label>모델
           <select id="voice-model">

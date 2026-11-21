@@ -56,7 +56,6 @@
   window.__voiceCalls = [];
   if (new URLSearchParams(location.search).get("voice")) {
     try {
-      localStorage.setItem("mymux.voice.provider", "faster-whisper");
       localStorage.setItem("mymux.voice.localMode", "python");
       localStorage.setItem("mymux.voice.runner.python", "C:/stub/python.exe");
     } catch {}

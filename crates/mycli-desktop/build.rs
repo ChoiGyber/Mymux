@@ -91,8 +91,6 @@ const APP_COMMANDS: &[&str] = &[
     "update_check",
     "update_install",
     "tool_installed",
-    "voice_store_deepgram_key",
-    "voice_deepgram_token",
     "voice_transcribe_local",
     "voice_check_local",
     "voice_pick_runner",

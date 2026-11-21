@@ -279,8 +279,6 @@ fn main() {
             update::update_check,
             update::update_install,
             tools::tool_installed,
-            voice::voice_store_deepgram_key,
-            voice::voice_deepgram_token,
             voice::voice_transcribe_local,
             voice::voice_check_local,
             voice::voice_pick_runner,

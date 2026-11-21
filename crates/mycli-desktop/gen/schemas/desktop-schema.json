@@ -861,12 +861,6 @@
           "markdownDescription": "Enables the voice_check_local command without any pre-configured scope."
         },
         {
-          "description": "Enables the voice_deepgram_token command without any pre-configured scope.",
-          "type": "string",
-          "const": "allow-voice-deepgram-token",
-          "markdownDescription": "Enables the voice_deepgram_token command without any pre-configured scope."
-        },
-        {
           "description": "Enables the voice_managed_status command without any pre-configured scope.",
           "type": "string",
           "const": "allow-voice-managed-status",
@@ -883,12 +877,6 @@
           "type": "string",
           "const": "allow-voice-setup-local",
           "markdownDescription": "Enables the voice_setup_local command without any pre-configured scope."
-        },
-        {
-          "description": "Enables the voice_store_deepgram_key command without any pre-configured scope.",
-          "type": "string",
-          "const": "allow-voice-store-deepgram-key",
-          "markdownDescription": "Enables the voice_store_deepgram_key command without any pre-configured scope."
         },
         {
           "description": "Enables the voice_transcribe_local command without any pre-configured scope.",
@@ -1383,12 +1371,6 @@
           "markdownDescription": "Denies the voice_check_local command without any pre-configured scope."
         },
         {
-          "description": "Denies the voice_deepgram_token command without any pre-configured scope.",
-          "type": "string",
-          "const": "deny-voice-deepgram-token",
-          "markdownDescription": "Denies the voice_deepgram_token command without any pre-configured scope."
-        },
-        {
           "description": "Denies the voice_managed_status command without any pre-configured scope.",
           "type": "string",
           "const": "deny-voice-managed-status",
@@ -1405,12 +1387,6 @@
           "type": "string",
           "const": "deny-voice-setup-local",
           "markdownDescription": "Denies the voice_setup_local command without any pre-configured scope."
-        },
-        {
-          "description": "Denies the voice_store_deepgram_key command without any pre-configured scope.",
-          "type": "string",
-          "const": "deny-voice-store-deepgram-key",
-          "markdownDescription": "Denies the voice_store_deepgram_key command without any pre-configured scope."
         },
         {
           "description": "Denies the voice_transcribe_local command without any pre-configured scope.",
