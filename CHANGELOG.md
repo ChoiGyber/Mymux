@@ -1,5 +1,15 @@
 # Changelog
 
+## v0.3.13 - 2026-11-21
+
+### Removed
+
+- **The Deepgram cloud voice engine.** Voice input now runs only on the local faster-whisper engine, and the 🎙 settings open straight on its setup: no engine choice, no API key. If you used Deepgram, set up the local engine with "⚡ 자동 설치하고 바로 연결" in 🎙. The encrypted key you saved stays in `%APPDATA%\mymux\deepgram.key.dpapi`; delete that file if you no longer need it.
+
+### Changed
+
+- **The red dot on 🎙 waits until you have opened the voice settings.** It marks an unfinished voice setup, and no longer shows for someone who has never used voice input.
+
 ## v0.3.12 - 2026-11-21
 
 ### Added
