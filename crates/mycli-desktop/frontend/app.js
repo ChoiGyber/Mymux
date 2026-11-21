@@ -332,8 +332,9 @@ window.addEventListener("DOMContentLoaded", async () => {
 });
 
 // ── Voice input 🎙 ────────────────────────────────────────────────────────────
-// Hold the button (or Ctrl+Space) to dictate into the focused pane. Two
-// engines: Deepgram in the cloud, or faster-whisper on this machine.
+// Hold the button (or Ctrl+Space) to dictate into the focused pane. The
+// engine is faster-whisper on this machine. (A Deepgram cloud engine was
+// removed in v0.3.13.)
 //
 // The local path used to be unusable. It demanded an absolute path to an
 // executable literally named faster-whisper.exe — something Mymux never
@@ -341,7 +342,7 @@ window.addEventListener("DOMContentLoaded", async () => {
 // suggested a python command that could not pass that check. The popover now
 // states what to install, links it, and can verify the result.
 const VOICE_KEYS = {
-  provider: "mymux.voice.provider",
+  opened: "mymux.voice.opened", // "1" once the user has opened the 🎙 settings
   localMode: "mymux.voice.localMode",
   runner: (mode) => `mymux.voice.runner.${mode}`,
   model: "mymux.voice.model",
@@ -484,10 +485,6 @@ function setupVoiceInput() {
   const $ = (id) => document.getElementById(id);
   const pop = $("voice-popover");
   const toggle = $("btn-voice-input");
-  const provider = $("voice-provider");
-  const key = $("voice-api-key");
-  const saveKey = $("voice-save-key");
-  const localBox = $("voice-local");
   const runner = $("voice-runner");
   const browse = $("voice-browse");
   const model = $("voice-model");
@@ -502,9 +499,13 @@ function setupVoiceInput() {
   const read = (k, fallback) => localStorage.getItem(k) ?? fallback;
   const localMode = () =>
     pop.querySelector('input[name="voice-local-mode"]:checked')?.value || "standalone";
-  const isLocal = () => provider.value === "faster-whisper";
 
-  provider.value = read(VOICE_KEYS.provider, "deepgram");
+  // Before v0.3.13 the user picked between Deepgram and the local engine.
+  // Someone who had picked the local engine has started setting it up.
+  if (localStorage.getItem("mymux.voice.provider") === "faster-whisper") {
+    localStorage.setItem(VOICE_KEYS.opened, "1");
+  }
+  localStorage.removeItem("mymux.voice.provider");
   const savedMode = read(VOICE_KEYS.localMode, "standalone");
   const savedModeInput = pop.querySelector(`input[name="voice-local-mode"][value="${savedMode}"]`);
   if (savedModeInput) savedModeInput.checked = true;
@@ -512,16 +513,13 @@ function setupVoiceInput() {
   language.value = read(VOICE_KEYS.language, "ko");
   ptt.checked = read(VOICE_KEYS.pushToTalk, "1") !== "0";
 
-  // The 🎙 button carries a dot while the local engine has no runner picked,
-  // so a half-finished setup is visible without opening the popover.
+  // The 🎙 button carries a dot while no runner is picked, so a half-finished
+  // setup is visible without opening the popover. Only once the user has
+  // opened the settings: someone who never uses voice input gets no dot.
   const syncReadiness = () => {
-    toggle.classList.toggle("not-ready", isLocal() && !runner.value);
+    toggle.classList.toggle("not-ready", !runner.value && read(VOICE_KEYS.opened, "") === "1");
   };
   const sync = () => {
-    const local = isLocal();
-    $("voice-key-row").classList.toggle("hidden", local);
-    saveKey.classList.toggle("hidden", local);
-    localBox.classList.toggle("hidden", !local);
     const mode = localMode();
     $("voice-guide-standalone").classList.toggle("hidden", mode !== "standalone");
     $("voice-guide-python").classList.toggle("hidden", mode !== "python");
@@ -597,10 +595,8 @@ function setupVoiceInput() {
       const done = await invoke("voice_setup_local", { model: model.value });
       localStorage.setItem(VOICE_KEYS.runner("python"), done.python);
       localStorage.setItem(VOICE_KEYS.localMode, "python");
-      localStorage.setItem(VOICE_KEYS.provider, "faster-whisper");
       const radio = pop.querySelector('input[name="voice-local-mode"][value="python"]');
       if (radio) radio.checked = true;
-      provider.value = "faster-whisper";
       autoBar.value = autoBar.max;
       let version = "";
       try {
@@ -618,10 +614,10 @@ function setupVoiceInput() {
     }
   });
 
-  toggle.onclick = () => pop.classList.toggle("hidden");
-  provider.onchange = () => {
-    localStorage.setItem(VOICE_KEYS.provider, provider.value);
-    sync();
+  toggle.onclick = () => {
+    pop.classList.toggle("hidden");
+    localStorage.setItem(VOICE_KEYS.opened, "1");
+    syncReadiness();
   };
   for (const radio of pop.querySelectorAll('input[name="voice-local-mode"]')) {
     radio.addEventListener("change", () => {
@@ -685,16 +681,6 @@ function setupVoiceInput() {
       status.textContent = "❌ " + String(e);
     }
   });
-
-  saveKey.onclick = async () => {
-    try {
-      await invoke("voice_store_deepgram_key", { key: key.value });
-      key.value = "";
-      status.textContent = "키를 암호화해 저장했습니다.";
-    } catch (e) {
-      status.textContent = String(e);
-    }
-  };
 
   let stream = null;
   let recorder = null;
@@ -789,11 +775,10 @@ function setupVoiceInput() {
     tick();
   };
 
-  // What keeps the chosen engine from transcribing, or "" when nothing does.
+  // What keeps the engine from transcribing, or "" when nothing does.
   // Checked before recording too, so the user hears about it before speaking
-  // rather than after. (Deepgram's key can only be checked over the network.)
+  // rather than after.
   const engineProblem = () => {
-    if (provider.value === "deepgram") return "";
     const runnerPath = read(VOICE_KEYS.runner(localMode()), "");
     if (!runnerPath) return "아직 설치되지 않았습니다. 🎙 에서 [자동 설치하고 바로 연결] 을 눌러 주세요.";
     // A model that was never downloaded would be fetched mid-dictation and hit
@@ -806,36 +791,6 @@ function setupVoiceInput() {
   const durationText = (ms) => (ms >= 60000 && ms % 60000 === 0 ? `${ms / 60000}분` : `${Math.round(ms / 1000)}초`);
 
   async function transcribe(blob) {
-    if (provider.value === "deepgram") {
-      const token = await invoke("voice_deepgram_token");
-      const ws = new WebSocket(
-        "wss://api.deepgram.com/v1/listen?model=nova-3&language=ko-KR&smart_format=true&interim_results=false&token=" +
-          encodeURIComponent(token)
-      );
-      return await new Promise((resolve, reject) => {
-        let all = "";
-        let done = false;
-        const finish = (err) => {
-          if (done) return;
-          done = true;
-          clearTimeout(timer);
-          try { ws.close(); } catch {}
-          if (err) reject(err); else resolve(all);
-        };
-        const timer = setTimeout(() => finish(Error("Transcription timeout")), 30000);
-        ws.onopen = () => { ws.send(blob); ws.send(JSON.stringify({ type: "CloseStream" })); };
-        ws.onmessage = (event) => {
-          try {
-            const data = JSON.parse(event.data);
-            const part = data.channel?.alternatives?.[0]?.transcript;
-            if (part) all += (all ? " " : "") + part;
-            if (data.speech_final || data.is_final) finish();
-          } catch {}
-        };
-        ws.onerror = () => finish(Error("Deepgram connection failed"));
-        ws.onclose = () => finish();
-      });
-    }
     // Checked again: the settings may have changed while recording.
     const problem = engineProblem();
     if (problem) throw Error(problem);
