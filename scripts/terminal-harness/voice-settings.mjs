@@ -43,6 +43,17 @@ try {
     setup: document.getElementById("voice-auto-setup").getClientRects().length > 0,
   }))()`);
   const dotOpen = await dot();
+  // The push-to-talk checkbox sits on the same line as its text, before it.
+  const ptt = await ev(`(() => {
+    const box = document.getElementById("voice-ptt");
+    const label = box.closest("label");
+    const text = [...label.childNodes].find((n) => n.nodeType === 3 && n.textContent.trim());
+    const range = document.createRange(); range.selectNodeContents(text);
+    const b = box.getBoundingClientRect(), t = range.getBoundingClientRect();
+    return { display: getComputedStyle(label).display, boxTop: b.top, boxBottom: b.bottom, boxRight: b.right, textTop: t.top, textBottom: t.bottom, textLeft: t.left };
+  })()`);
+  const boxMid = (ptt.boxTop + ptt.boxBottom) / 2;
+  check("ptt-checkbox-inline", boxMid > ptt.textTop && boxMid < ptt.textBottom && ptt.boxRight <= ptt.textLeft, ptt);
   await ev(`document.getElementById("btn-voice-input").click()`);
   await sleep(100);
   const dotClosed = await dot();

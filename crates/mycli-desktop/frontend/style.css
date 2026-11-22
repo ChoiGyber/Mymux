@@ -1006,9 +1006,11 @@ html[data-theme="light"] #toolbar-actions #btn-update:hover {
 .voice-popover button { background:var(--bg); color:var(--text); border:1px solid var(--border); border-radius:6px; padding:5px; font-size:12px; cursor:pointer; }
 .voice-popover button:hover { border-color:var(--accent); color:var(--accent); }
 #voice-local { display:grid; gap:8px; }
-/* Radio rows read as one line, unlike the stacked grid the other labels use. */
+/* Radio and checkbox rows read as one line, unlike the stacked grid the other
+   labels use. .voice-chk needs .voice-popover in front, or the grid rule above
+   wins on specificity and puts the checkbox on its own row above the text. */
 .voice-modes { display:flex; gap:12px; }
-.voice-modes label, .voice-chk { display:flex; align-items:center; gap:5px; }
+.voice-modes label, .voice-popover .voice-chk { display:flex; align-items:center; gap:5px; }
 .voice-modes input, .voice-chk input { width:auto; }
 .voice-guide { border:1px solid var(--border); border-radius:6px; padding:6px 8px; background:var(--bg); }
 .voice-guide.hidden { display:none; }
