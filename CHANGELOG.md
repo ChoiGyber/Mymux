@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.3.14 - 2026-11-22
+
+### Fixed
+
+- **The "Ctrl+Space 눌러서 말하기" checkbox in 🎙 settings sits on the line of its text again.** It had been laid out on a row of its own above the text.
+
 ## v0.3.13 - 2026-11-21
 
 ### Removed
