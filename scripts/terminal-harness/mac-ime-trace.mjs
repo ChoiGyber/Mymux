@@ -5,7 +5,8 @@
 // the way it would reach xterm if the IME never saw the keystroke.
 //   1. The first separate jamo sent to the program writes ~/.mycli/ime-incidents.log
 //      with the native focus report and the keystrokes, in time order.
-//   2. A composed syllable or plain ASCII writes nothing.
+//   2. A composed syllable or plain ASCII writes nothing, and ASCII that is in
+//      the record anyway is masked (it may be a password).
 //   3. Without a Mac user agent nothing is recorded (Windows untouched).
 import { boot, sleep } from "./harness.mjs";
 
@@ -67,6 +68,12 @@ const ready = async (ev) => {
       { log: log.slice(0, 1500) });
     check("record-in-time-order", at("window:native") >= 0 && at("window:native") < at('keydown ["ㅎ",71') &&
       at('keydown ["ㅎ",71') < at('emit "ㅎ"'), {});
+
+    // ASCII typed before the jamo ("한글 abc", then the key "a") is masked: no
+    // character and no key code that would spell it out.
+    check("ascii-masked",
+      !/abc|"a"|,65\b/.test(log) && log.includes('emit "한글****"') && log.includes('keydown ["ascii"'),
+      { log: log.slice(0, 1500) });
 
     // A second jamo right away does not write again (one record per 30s per pane).
     await ev(KEY("ㄴ", 83));

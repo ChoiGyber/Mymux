@@ -4411,6 +4411,13 @@ const MAC_IME_INCIDENT_GAP_MS = 30000;
 const MAC_IME_INCIDENT_DELAY_MS = 1500; // let the record catch the keystrokes that follow
 const imeWindowTrace = [];
 
+// The record goes to a file the user is asked to send. Only the Hangul matters
+// to the diagnosis, so every printable ASCII character is masked: whatever else
+// was typed in the last few seconds, a password included, stays out of it.
+function imeRedact(s) {
+  return typeof s === "string" ? s.replace(/[\x20-\x7E]/g, "*") : s;
+}
+
 function imeWindowNote(tag, detail) {
   imeWindowTrace.push(`${Math.round(performance.now())} window:${tag}${detail === undefined ? "" : " " + JSON.stringify(detail)}`);
   if (imeWindowTrace.length > 40) imeWindowTrace.shift();
@@ -4427,7 +4434,7 @@ function startMacImeTrace() {
   };
   const value = (ta) => {
     const v = ta.value || "";
-    return v.length > 12 ? `…${v.slice(-12)}(${v.length})` : v;
+    return imeRedact(v.length > 12 ? `…${v.slice(-12)}(${v.length})` : v);
   };
   for (const type of ["keydown", "keypress", "keyup", "compositionstart", "compositionupdate", "compositionend", "beforeinput", "input", "focus", "blur"]) {
     window.addEventListener(type, (e) => {
@@ -4439,16 +4446,18 @@ function startMacImeTrace() {
       if (!ti) return;
       let d;
       if (type.startsWith("key")) {
-        d = [e.key, e.keyCode];
+        // An ASCII key keeps neither its character nor its key code, which
+        // would spell it out (a password typed into sudo, say).
+        d = e.key && e.key.length === 1 && e.key.charCodeAt(0) < 0x80 ? ["ascii"] : [e.key, e.keyCode];
         if (type === "keypress") d.push("char " + e.charCode);
         if (e.isComposing) d.push("composing");
         if (e.metaKey) d.push("meta");
       } else if (type.startsWith("composition")) {
-        d = [e.data];
+        d = [imeRedact(e.data)];
       } else if (type === "focus" || type === "blur") {
         d = [document.hasFocus() ? "docFocus" : "docNoFocus"];
       } else {
-        d = [e.inputType, e.data, e.isComposing ? "composing" : "notComposing"];
+        d = [e.inputType, imeRedact(e.data), e.isComposing ? "composing" : "notComposing"];
       }
       d.push("ta=" + value(e.target));
       imeTrace(ti, type, d);
@@ -4463,7 +4472,7 @@ function startMacImeTrace() {
 
 function macImeWatch(ti, data) {
   if (!ti) return;
-  imeTrace(ti, "emit", data.length > 12 ? data.length + " chars" : data);
+  imeTrace(ti, "emit", data.length > 12 ? data.length + " chars" : imeRedact(data));
   if (!MAC_JAMO_RE.test(data) || ti.macImeIncidentTimer) return;
   if (performance.now() - (ti.macImeIncidentAt ?? -Infinity) < MAC_IME_INCIDENT_GAP_MS) return;
   ti.macImeIncidentTimer = setTimeout(() => {
@@ -4481,7 +4490,7 @@ async function recordMacImeIncident(ti, data) {
   const lines = [...(ti.imeTraceBuf || []), ...imeWindowTrace]
     .sort((a, b) => parseInt(a, 10) - parseInt(b, 10));
   imeIncidents.push(
-    `[${new Date().toISOString()}] separate jamo "${data}" sent to the program` +
+    `[${new Date().toISOString()}] separate jamo "${imeRedact(data)}" sent to the program` +
     ` (Mymux ${version}, now ${Math.round(performance.now())}ms)\n` +
     `  docFocus=${document.hasFocus()} xtermFocus=${!!el && el.classList.contains("focus")}` +
     ` active=${ae ? ae.tagName + "." + (ae.className || "") : "none"} program=${ti.ctxSource || "?"}\n` +
