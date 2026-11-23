@@ -20,6 +20,7 @@
 //                      push-to-talk, which on v0.3.8 also sent NUL to the program
 //   voice-auto-stop    (added later) a pane-button recording ends on silence, push-to-talk does not
 //   voice-settings     (added later) 🎙 settings with only the local engine, and when 🎙 shows its dot
+//   mac-ime-trace      (added later) macOS diagnostic record for Hangul splitting after Cmd+Tab
 import { spawnSync } from "node:child_process";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -36,6 +37,7 @@ const checks = [
   ["voice-pane-button", null],
   ["voice-auto-stop", null],
   ["voice-settings", null],
+  ["mac-ime-trace", null],
 ];
 let failed = 0;
 for (const [name, judge] of checks) {

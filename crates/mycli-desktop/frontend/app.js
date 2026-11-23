@@ -327,6 +327,7 @@ window.addEventListener("DOMContentLoaded", async () => {
   setTimeout(() => remeasureFontCells(), 150);
 
   startFocusKeeper();
+  startMacImeTrace();
   setupSessionResizer();
   setupCloseHandler();
 });
@@ -3836,6 +3837,7 @@ async function createPane(parentEl, shell, args, cwd, sessionKey = null) {
     // inside a mouse-tracking TUI (picking a Claude Code menu option is input
     // too). SGR press reports only; hover/move/wheel reports must not re-arm.
     const ti = terminals.get(id);
+    if (IS_MAC) macImeWatch(ti, data);
     if (shouldDropTerminalFocusReport(ti, data)) return;
     if (!IS_MAC && imeDuplicateCommit(ti, data)) return;
     if (ti) {
@@ -4046,6 +4048,7 @@ async function createPane(parentEl, shell, args, cwd, sessionKey = null) {
       }
     }
 
+
     // ── macOS WKWebView Korean/CJK IME fix ────────────────────────────────────
     // macOS-only. On WebKit (WKWebView) the very FIRST character of a typing run
     // arrives as a committed `input` event of type `insertText` (isComposing
@@ -4084,12 +4087,14 @@ async function createPane(parentEl, shell, args, cwd, sessionKey = null) {
         if (isImeInsert) {
           // Seed the first jamo into the textarea; the following composition
           // absorbs it and xterm emits the finished syllable.
+          imeTrace(terminals.get(id), "fix:seed", imeRedact(d));
           try { ta.value = d; if (ta.setSelectionRange) ta.setSelectionRange(d.length, d.length); } catch {}
           liveLen = 0;
           return;
         }
         // insertReplacementText (rare once composition engages): erase our partial
         // and send the refined syllable through xterm's pipeline.
+        imeTrace(terminals.get(id), "fix:replace", [liveLen, imeRedact(d)]);
         feed("\x7f".repeat(liveLen) + d);
         liveLen = [...d].length;
         try { ta.value = ""; } catch {}
@@ -4387,7 +4392,123 @@ function imeTrace(ti, tag, detail) {
   if (!ti) return;
   const buf = ti.imeTraceBuf || (ti.imeTraceBuf = []);
   buf.push(`${Math.round(performance.now())} ${tag}${detail === undefined ? "" : " " + JSON.stringify(detail)}`);
-  if (buf.length > IME_TRACE_LEN) buf.shift();
+  if (buf.length > (IS_MAC ? MAC_IME_TRACE_LEN : IME_TRACE_LEN)) buf.shift();
+}
+
+// ── macOS IME trace (diagnostic) ─────────────────────────────────────────────
+// After a Cmd+Tab return, Hangul typed on a Mac can reach the program as
+// separate jamo ("ㅎㅏㄴ") until the next Cmd+Tab. Apple's Korean input method
+// is known to split the first input after a window gains focus, but which path
+// the jamo take here (keypress without the input method, insertText, or the IME
+// fix in createPane) has not been seen yet. Each pane's textarea events go into
+// its trace; window focus changes, including the key window and first responder
+// the Rust side reports, go into imeWindowTrace. The first
+// separate jamo sent to a program writes both, merged by time, to
+// ~/.mycli/ime-incidents.log. Nothing here changes what is typed.
+const MAC_IME_TRACE_LEN = 150; // about 25 keystrokes
+const MAC_JAMO_RE = /[ㄱ-ㆎ]/; // Hangul compatibility jamo
+const MAC_IME_INCIDENT_GAP_MS = 30000;
+const MAC_IME_INCIDENT_DELAY_MS = 1500; // let the record catch the keystrokes that follow
+const imeWindowTrace = [];
+
+// The record goes to a file the user is asked to send. Only the Hangul matters
+// to the diagnosis, so every printable ASCII character is masked: whatever else
+// was typed in the last few seconds, a password included, stays out of it.
+function imeRedact(s) {
+  return typeof s === "string" ? s.replace(/[\x20-\x7E]/g, "*") : s;
+}
+
+function imeWindowNote(tag, detail) {
+  imeWindowTrace.push(`${Math.round(performance.now())} window:${tag}${detail === undefined ? "" : " " + JSON.stringify(detail)}`);
+  if (imeWindowTrace.length > 40) imeWindowTrace.shift();
+}
+
+function startMacImeTrace() {
+  if (!IS_MAC) return;
+  // Capture on window runs before every listener on the textarea itself, xterm's
+  // and the IME fix's included, so the trace shows each event as it arrived and
+  // in the order it arrived.
+  const paneOf = (target) => {
+    for (const ti of terminals.values()) if (ti.term && ti.term.textarea === target) return ti;
+    return null;
+  };
+  const value = (ta) => {
+    const v = ta.value || "";
+    return imeRedact(v.length > 12 ? `…${v.slice(-12)}(${v.length})` : v);
+  };
+  for (const type of ["keydown", "keypress", "keyup", "compositionstart", "compositionupdate", "compositionend", "beforeinput", "input", "focus", "blur"]) {
+    window.addEventListener(type, (e) => {
+      if (e.target === window) {
+        if (type === "focus" || type === "blur") imeWindowNote(type);
+        return;
+      }
+      const ti = paneOf(e.target);
+      if (!ti) return;
+      let d;
+      if (type.startsWith("key")) {
+        // An ASCII key keeps neither its character nor its key code, which
+        // would spell it out (a password typed into sudo, say).
+        const ascii = (e.key && e.key.length === 1 && e.key.charCodeAt(0) < 0x80) ||
+          (e.charCode >= 0x20 && e.charCode < 0x7F);
+        d = ascii ? ["ascii"] : [e.key, e.keyCode];
+        if (type === "keypress" && !ascii) d.push("char " + e.charCode);
+        if (e.isComposing) d.push("composing");
+        if (e.metaKey) d.push("meta");
+      } else if (type.startsWith("composition")) {
+        d = [imeRedact(e.data)];
+      } else if (type === "focus" || type === "blur") {
+        d = [document.hasFocus() ? "docFocus" : "docNoFocus"];
+      } else {
+        d = [e.inputType, imeRedact(e.data), e.isComposing ? "composing" : "notComposing"];
+      }
+      d.push("ta=" + value(e.target));
+      imeTrace(ti, type, d);
+    }, true);
+  }
+  document.addEventListener("visibilitychange", () => imeWindowNote("visibility", document.visibilityState));
+  try {
+    const ev = window.__TAURI__ && window.__TAURI__.event;
+    if (ev && ev.listen) ev.listen("mymux-mac-focus", (e) => imeWindowNote("native", e && e.payload));
+  } catch {}
+}
+
+function macImeWatch(ti, data) {
+  if (!ti) return;
+  imeTrace(ti, "emit", data.length > 12 ? data.length + " chars" : imeRedact(data));
+  if (!MAC_JAMO_RE.test(data) || ti.macImeIncidentTimer) return;
+  if (performance.now() - (ti.macImeIncidentAt ?? -Infinity) < MAC_IME_INCIDENT_GAP_MS) return;
+  ti.macImeIncidentTimer = setTimeout(() => {
+    ti.macImeIncidentTimer = null;
+    ti.macImeIncidentAt = performance.now();
+    recordMacImeIncident(ti, data);
+  }, MAC_IME_INCIDENT_DELAY_MS);
+}
+
+async function recordMacImeIncident(ti, data) {
+  const el = ti.term && ti.term.element;
+  const ae = document.activeElement;
+  let version = "?";
+  try { version = await window.__TAURI__.app.getVersion(); } catch {}
+  const lines = [...(ti.imeTraceBuf || []), ...imeWindowTrace]
+    .sort((a, b) => parseInt(a, 10) - parseInt(b, 10));
+  imeIncidents.push(
+    `[${new Date().toISOString()}] separate jamo "${imeRedact(data)}" sent to the program` +
+    ` (Mymux ${version}, now ${Math.round(performance.now())}ms)\n` +
+    `  docFocus=${document.hasFocus()} xtermFocus=${!!el && el.classList.contains("focus")}` +
+    ` active=${ae ? ae.tagName + "." + (ae.className || "") : "none"} program=${ti.ctxSource || "?"}\n` +
+    lines.map((l) => "  " + l).join("\n")
+  );
+  if (imeIncidents.length > 20) imeIncidents.shift();
+  if (performance.now() - imeLastToast > 60000) {
+    imeLastToast = performance.now();
+    toast("한글 입력 진단 기록을 남겼습니다: ~/.mycli/ime-incidents.log");
+  }
+  invoke("explorer_home_dir")
+    .then((home) => invoke("write_text_file", {
+      path: `${home}/.mycli/ime-incidents.log`,
+      content: imeIncidents.join("\n\n") + "\n",
+    }))
+    .catch(() => {});
 }
 
 // True when `data` is the duplicate half of one committed character.

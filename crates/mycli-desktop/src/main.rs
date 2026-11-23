@@ -147,6 +147,43 @@ fn clamp_new_window_to_work_area<R: tauri::Runtime>(win: &tauri::WebviewWindow<R
     }
 }
 
+/// Which object holds the keyboard in the main window, and which window is key.
+/// AppKit hands key events to the first responder; the input method composes
+/// Hangul only through a responder that speaks NSTextInputClient (the web view).
+/// Call on the main thread.
+#[cfg(target_os = "macos")]
+fn mac_input_state(win: &tauri::WebviewWindow) -> String {
+    use objc2::msg_send;
+    use objc2::runtime::AnyObject;
+    let Ok(ptr) = win.ns_window() else {
+        return "no NSWindow".into();
+    };
+    let class_of = |obj: *mut AnyObject| -> String {
+        if obj.is_null() {
+            "nil".into()
+        } else {
+            unsafe { (*obj).class().name().to_string_lossy().into_owned() }
+        }
+    };
+    unsafe {
+        let window = ptr as *mut AnyObject;
+        let is_key: bool = msg_send![window, isKeyWindow];
+        let responder: *mut AnyObject = msg_send![window, firstResponder];
+        let app: *mut AnyObject = msg_send![objc2::class!(NSApplication), sharedApplication];
+        let key_window: *mut AnyObject = if app.is_null() {
+            std::ptr::null_mut()
+        } else {
+            msg_send![app, keyWindow]
+        };
+        format!(
+            "mainIsKey={is_key} firstResponder={} keyWindow={}{}",
+            class_of(responder),
+            class_of(key_window),
+            if key_window == window { " (main)" } else { "" }
+        )
+    }
+}
+
 fn main() {
     if pty_server::is_server_invocation() {
         pty_server::run_server();
@@ -414,6 +451,33 @@ fn main() {
                             }
                         });
                     }
+                }
+            }
+            // macOS diagnostic: Hangul typed after a Cmd+Tab return can arrive as
+            // separate jamo until the next Cmd+Tab. Report which view holds the
+            // keyboard each time the main window gains or loses focus, at once and
+            // again after AppKit has settled, so the frontend's IME trace shows
+            // whether the input method was talking to the web view at all.
+            #[cfg(target_os = "macos")]
+            {
+                use tauri::{Emitter, Manager, WindowEvent};
+                if let Some(win) = _app.get_webview_window("main") {
+                    let w = win.clone();
+                    let app_handle = _app.handle().clone();
+                    win.on_window_event(move |event| {
+                        if let WindowEvent::Focused(focused) = event {
+                            let focused = *focused;
+                            let _ = w.emit("mymux-mac-focus", format!("focused={focused} at once: {}", mac_input_state(&w)));
+                            let later = w.clone();
+                            let ah = app_handle.clone();
+                            std::thread::spawn(move || {
+                                std::thread::sleep(std::time::Duration::from_millis(300));
+                                let _ = ah.run_on_main_thread(move || {
+                                    let _ = later.emit("mymux-mac-focus", format!("focused={focused} +300ms: {}", mac_input_state(&later)));
+                                });
+                            });
+                        }
+                    });
                 }
             }
             Ok(())
