@@ -3321,7 +3321,7 @@ dependencies = [
 
 [[package]]
 name = "mycli-desktop"
-version = "0.3.14"
+version = "0.3.15"
 dependencies = [
  "aes-gcm",
  "async-trait",

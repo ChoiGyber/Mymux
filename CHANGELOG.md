@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.3.15 - 2026-11-23
+
+### Added
+
+- **A diagnostic record for Hangul that splits into jamo on a Mac after Cmd+Tab.** macOS only; typing works as before. When a separate jamo such as "ㅎ" reaches a program, Mymux writes the last few seconds of input events, together with which view held the keyboard when the window regained focus, to `~/.mycli/ime-incidents.log` and says so in a toast. Every ASCII character in the record is masked as `*`, so a password typed nearby stays out of it. Send that file along with the report; the record is removed once the cause is fixed.
+
 ## v0.3.14 - 2026-11-22
 
 ### Fixed
