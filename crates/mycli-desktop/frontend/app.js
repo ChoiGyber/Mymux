@@ -4087,14 +4087,14 @@ async function createPane(parentEl, shell, args, cwd, sessionKey = null) {
         if (isImeInsert) {
           // Seed the first jamo into the textarea; the following composition
           // absorbs it and xterm emits the finished syllable.
-          imeTrace(terminals.get(id), "fix:seed", d);
+          imeTrace(terminals.get(id), "fix:seed", imeRedact(d));
           try { ta.value = d; if (ta.setSelectionRange) ta.setSelectionRange(d.length, d.length); } catch {}
           liveLen = 0;
           return;
         }
         // insertReplacementText (rare once composition engages): erase our partial
         // and send the refined syllable through xterm's pipeline.
-        imeTrace(terminals.get(id), "fix:replace", [liveLen, d]);
+        imeTrace(terminals.get(id), "fix:replace", [liveLen, imeRedact(d)]);
         feed("\x7f".repeat(liveLen) + d);
         liveLen = [...d].length;
         try { ta.value = ""; } catch {}
@@ -4448,8 +4448,10 @@ function startMacImeTrace() {
       if (type.startsWith("key")) {
         // An ASCII key keeps neither its character nor its key code, which
         // would spell it out (a password typed into sudo, say).
-        d = e.key && e.key.length === 1 && e.key.charCodeAt(0) < 0x80 ? ["ascii"] : [e.key, e.keyCode];
-        if (type === "keypress") d.push("char " + e.charCode);
+        const ascii = (e.key && e.key.length === 1 && e.key.charCodeAt(0) < 0x80) ||
+          (e.charCode >= 0x20 && e.charCode < 0x7F);
+        d = ascii ? ["ascii"] : [e.key, e.keyCode];
+        if (type === "keypress" && !ascii) d.push("char " + e.charCode);
         if (e.isComposing) d.push("composing");
         if (e.metaKey) d.push("meta");
       } else if (type.startsWith("composition")) {

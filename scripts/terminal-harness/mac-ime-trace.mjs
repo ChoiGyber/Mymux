@@ -47,6 +47,8 @@ const ready = async (ev) => {
     // Composed text and ASCII are ordinary typing: no record.
     await ev(`terminals.get(focusedPaneId).term.input("한글 abc", true)`);
     await ev(KEY("a", 65));
+    // A keypress the keydown did not cancel, as WebKit can deliver it.
+    await ev(`terminals.get(focusedPaneId).term.textarea.dispatchEvent(new KeyboardEvent("keypress", { key: "b", charCode: 98, keyCode: 98, bubbles: true, cancelable: true }))`);
     await sleep(1900);
     check("no-record-for-composed-or-ascii", (await ev(`window.__written.length`)) === 0, {});
 
@@ -72,7 +74,7 @@ const ready = async (ev) => {
     // ASCII typed before the jamo ("한글 abc", then the key "a") is masked: no
     // character and no key code that would spell it out.
     check("ascii-masked",
-      !/abc|"a"|,65\b/.test(log) && log.includes('emit "한글****"') && log.includes('keydown ["ascii"'),
+      !/abc|"a"|"b"|,65\b|char (9[0-9]|1[01][0-9])\b/.test(log) && log.includes('emit "한글****"') && log.includes('keydown ["ascii"'),
       { log: log.slice(0, 1500) });
 
     // A second jamo right away does not write again (one record per 30s per pane).
