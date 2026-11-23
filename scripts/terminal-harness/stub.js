@@ -61,9 +61,12 @@
     } catch {}
   }
   window.__stubPush = push; // inject raw PTY output from a test
+  // Deliver a Tauri event to what the app listens for, as the Rust side would.
+  window.__stubListeners = {};
+  window.__stubEmit = (name, payload) => (window.__stubListeners[name] || []).forEach((cb) => cb({ event: name, payload }));
   window.__TAURI__ = {
     core: { invoke, convertFileSrc: (p) => p },
-    event: { listen: async () => () => {}, emit: noop },
+    event: { listen: async (name, cb) => { (window.__stubListeners[name] ||= []).push(cb); return () => {}; }, emit: noop },
     app: { getVersion: async () => "0.0.0-harness" },
     window: { getCurrentWindow: () => winObj },
     webview: { getCurrentWebview: () => winObj },

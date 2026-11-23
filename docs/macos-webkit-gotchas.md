@@ -177,6 +177,25 @@ Canvas 렌더러는 **xterm 5.x에만 존재**한다. xterm 6.0.0이 이를 삭�
 `isComposing`을 파일(`write_text_file`)로 남기고 읽으면, shell/TUI 각각에서 무엇이
 오는지 즉시 보인다. (이 문서의 §1 근본 원인도 그렇게 확정했다.) 확정 후 진단 코드는 제거.
 
+### 6.1 Cmd+Tab 복귀 후 자모 분리 (진단 중, 2026-11-23)
+
+증상: 맥에서 Cmd+Tab 으로 다른 앱에 갔다 돌아오면 한글이 자모로 분리되어 입력되고,
+**다시 Cmd+Tab 으로 나갔다 와야** 정상으로 돌아온다. Apple 의 기본 한국어 입력기가
+포커스를 받은 직후 첫 입력을 쪼개는 문제가 알려져 있지만
+([Apple 포럼](https://developer.apple.com/forums/thread/783005), 해결책 없음),
+이 앱에서 자모가 어느 경로로 나가는지는 아직 보지 못했다.
+
+그래서 맥에서만 도는 진단 기록을 넣었다(입력 동작은 바꾸지 않는다):
+- `app.js` `startMacImeTrace()`: window 캡처 단계에서 각 패인 textarea 의 key·composition·
+  input·focus 이벤트를 패인별로 기록한다. window focus/blur 와 visibility 도 기록한다.
+- `main.rs` `mac_input_state()`: 메인 창의 포커스가 바뀔 때마다(즉시, 300ms 뒤) 키 창과
+  first responder 클래스를 `mymux-mac-focus` 이벤트로 보낸다. first responder 가 웹뷰
+  (`WryWebView`)가 아니면 입력기가 키를 보지 못한다.
+- 분리된 자모(U+3131–U+318E)가 프로그램으로 처음 나가면 1.5초 뒤 두 기록을 시간순으로
+  합쳐 `~/.mycli/ime-incidents.log` 에 쓴다(패인당 30초에 한 번).
+
+원인을 확정하고 고치면 이 기록 코드는 지운다. 검사: `scripts/terminal-harness/mac-ime-trace.mjs`.
+
 ---
 
 ## 7. 자동 가드 (CI) — 이 문서의 불변조건을 기계로 지킨다

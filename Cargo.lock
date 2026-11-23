@@ -3333,6 +3333,7 @@ dependencies = [
  "futures-util",
  "image",
  "mycli-core",
+ "objc2",
  "portable-pty",
  "qrcode",
  "reqwest",

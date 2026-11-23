@@ -54,5 +54,10 @@ aes-gcm = "0.10"
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_UI_WindowsAndMessaging", "Win32_Graphics_Gdi", "Win32_Storage_FileSystem", "Win32_Security_Cryptography", "Win32_System_Diagnostics_ToolHelp", "Win32_System_Pipes"] }
 
+# Reads the key window and first responder for the macOS IME diagnostic
+# (main.rs mac_input_state). Already in the tree through Tauri.
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = "0.6"
+
 [build-dependencies]
 tauri-build = { version = "2.6.3", features = [] }
