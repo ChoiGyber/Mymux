@@ -184,6 +184,30 @@ fn mac_input_state(win: &tauri::WebviewWindow) -> String {
     }
 }
 
+#[cfg(target_os = "macos")]
+fn watch_mac_input_source(win: tauri::WebviewWindow) {
+    use block2::RcBlock;
+    use objc2_app_kit::NSTextInputContextKeyboardSelectionDidChangeNotification;
+    use objc2_foundation::{NSNotification, NSNotificationCenter};
+    use std::ptr::NonNull;
+    use tauri::Emitter;
+
+    let notify = RcBlock::new(move |_: NonNull<NSNotification>| {
+        let _ = win.emit("mymux-mac-input-source-changed", ());
+    });
+    // The default center keeps the observer and its copied block for the
+    // lifetime of the app. Closing the main window exits this process.
+    unsafe {
+        let _observer = NSNotificationCenter::defaultCenter()
+            .addObserverForName_object_queue_usingBlock(
+                Some(NSTextInputContextKeyboardSelectionDidChangeNotification),
+                None,
+                None,
+                &notify,
+            );
+    }
+}
+
 fn main() {
     if pty_server::is_server_invocation() {
         pty_server::run_server();
@@ -462,6 +486,7 @@ fn main() {
             {
                 use tauri::{Emitter, Manager, WindowEvent};
                 if let Some(win) = _app.get_webview_window("main") {
+                    watch_mac_input_source(win.clone());
                     let w = win.clone();
                     let app_handle = _app.handle().clone();
                     win.on_window_event(move |event| {

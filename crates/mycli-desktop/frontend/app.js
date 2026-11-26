@@ -222,6 +222,10 @@ window.addEventListener("DOMContentLoaded", async () => {
   }
 
   invoke = window.__TAURI__.core.invoke;
+  if (IS_MAC && window.__TAURI__.event) {
+    window.__TAURI__.event.listen("mymux-mac-input-source-changed", refreshMacTerminalInputSource)
+      .catch((e) => console.warn("Keyboard input source listener unavailable", e));
+  }
 
   // DOM refs
   sidebar = document.getElementById("sidebar");
@@ -4068,6 +4072,7 @@ async function createPane(parentEl, shell, args, cwd, sessionKey = null) {
     // broke Backspace and auto-inserted shortcuts).
     if (IS_MAC) {
       const ta = term.textarea;
+      const ti = terminals.get(id);
       let liveLen = 0; // chars of the in-progress syllable already sent to the PTY
       const feed = (data) => {
         if (!data) return;
@@ -4075,7 +4080,19 @@ async function createPane(parentEl, shell, args, cwd, sessionKey = null) {
         try { term._core.coreService.triggerDataEvent(data, true); return; } catch {}
         invoke("pty_write", { id, data });
       };
-      const commit = () => { liveLen = 0; };
+      const commit = () => { liveLen = 0; ti.macImeSeedPending = false; };
+      ta.addEventListener("compositionstart", () => { ti.macImeSeedPending = false; });
+      // xterm registers its keydown listener first. For keyCode 229 outside a
+      // composition it queues a timer that reads the change in textarea.value.
+      ta.addEventListener("keydown", (e) => {
+        if (e.keyCode === 229 && !ti.imeComposing) {
+          clearTimeout(ti.macImeDiffTimer);
+          ti.macImeDiffTimer = setTimeout(() => { ti.macImeDiffTimer = null; }, 0);
+        } else if (!e.isComposing && /^[ -~]$/.test(e.key) &&
+                   !e.ctrlKey && !e.altKey && !e.metaKey) {
+          ti.macImeSeedPending = false;
+        }
+      }, true);
       ta.addEventListener("beforeinput", (e) => {
         const it = e.inputType;
         const d = e.data || "";
@@ -4089,12 +4106,14 @@ async function createPane(parentEl, shell, args, cwd, sessionKey = null) {
           // absorbs it and xterm emits the finished syllable.
           imeTrace(terminals.get(id), "fix:seed", imeRedact(d));
           try { ta.value = d; if (ta.setSelectionRange) ta.setSelectionRange(d.length, d.length); } catch {}
+          ti.macImeSeedPending = true;
           liveLen = 0;
           return;
         }
         // insertReplacementText (rare once composition engages): erase our partial
         // and send the refined syllable through xterm's pipeline.
         imeTrace(terminals.get(id), "fix:replace", [liveLen, imeRedact(d)]);
+        ti.macImeSeedPending = false;
         feed("\x7f".repeat(liveLen) + d);
         liveLen = [...d].length;
         try { ta.value = ""; } catch {}
@@ -4421,6 +4440,25 @@ function imeRedact(s) {
 function imeWindowNote(tag, detail) {
   imeWindowTrace.push(`${Math.round(performance.now())} window:${tag}${detail === undefined ? "" : " " + JSON.stringify(detail)}`);
   if (imeWindowTrace.length > 40) imeWindowTrace.shift();
+}
+
+// Changing the input source leaves DOM focus on the same helper textarea.
+// Reattach that editor to WebKit's text input context once per native switch.
+function refreshMacTerminalInputSource() {
+  const ti = terminals.get(focusedPaneId);
+  const ta = ti?.term.textarea;
+  if (!ta || document.activeElement !== ta || !document.hasFocus()) return;
+  // xterm clears the textarea on blur. Its deferred compositionend handler
+  // may still need the final syllable even after the DOM composition ended.
+  if (ti.macImeSeedPending || ti.macImeDiffTimer || ti.imeComposing ||
+      ti.term._core?._compositionHelper?._isSendingComposition) return;
+  ti.restoringTerminalFocus = true;
+  try {
+    ta.blur();
+    ta.focus({ preventScroll: true });
+  } finally {
+    ti.restoringTerminalFocus = false;
+  }
 }
 
 function startMacImeTrace() {

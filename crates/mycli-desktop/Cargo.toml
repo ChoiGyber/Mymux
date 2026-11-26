@@ -1,6 +1,6 @@
 [package]
 name = "mycli-desktop"
-version = "0.3.15"
+version = "0.3.16"
 edition = "2024"
 
 # The executable (and therefore the OS process / Task Manager name) is "Mymux".
@@ -58,6 +58,9 @@ windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_UI_Wind
 # (main.rs mac_input_state). Already in the tree through Tauri.
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = "0.6"
+block2 = "0.6"
+objc2-app-kit = { version = "0.3", default-features = false, features = ["NSTextInputContext"] }
+objc2-foundation = { version = "0.3", default-features = false, features = ["NSNotification", "NSOperation", "NSString", "block2"] }
 
 [build-dependencies]
 tauri-build = { version = "2.6.3", features = [] }

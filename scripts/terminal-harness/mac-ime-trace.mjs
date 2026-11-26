@@ -81,6 +81,89 @@ const ready = async (ev) => {
     await ev(KEY("ㄴ", 83));
     await sleep(1900);
     check("rate-limited", (await ev(`window.__written.length`)) === 1, {});
+
+    // Simulate the native source-change notification while xterm already owns
+    // focus. Chromium supplies the composition events; this checks Mymux's
+    // response to the notification, not the macOS input method itself.
+    await ev(`(async () => {
+      const term = terminals.get(focusedPaneId).term;
+      term.focus();
+      await new Promise(resolve => term.write("\\x1b[?1004h", resolve));
+      window.__sourceFocus = [];
+      for (const type of ["blur", "focus"]) {
+        term.textarea.addEventListener(type, () => window.__sourceFocus.push(type));
+      }
+      window.__ptyWrites.length = 0;
+    })()`);
+    const switchSource = () => ev(`window.__stubEmit("mymux-mac-input-source-changed", null)`);
+    const compose = (text) => h.send("Input.imeSetComposition", {
+      text, selectionStart: text.length, selectionEnd: text.length,
+    });
+    for (let round = 0; round < 2; round++) {
+      await switchSource();
+      await ev(KEY("a", 65));
+      await switchSource();
+      for (const sequence of [["ㅎ", "하", "한"], ["ㄱ", "그", "글"]]) {
+        for (const draft of sequence) await compose(draft);
+        // A notification during marked text must leave the composition intact.
+        await switchSource();
+        await h.send("Input.insertText", { text: sequence.at(-1) });
+        await sleep(20);
+      }
+    }
+    const focus = await ev(`window.__sourceFocus.slice()`);
+    check("rebinds-on-every-switch-outside-composition",
+      focus.join(",") === Array(4).fill("blur,focus").join(","), { focus });
+    const input = await ev(`window.__ptyWrites.map(w => w.data).join("")`);
+    check("repeated-switch-input-without-focus-bytes", input === "a한글a한글", { input });
+    // WebKit's first jamo may already be in the textarea when the Tauri
+    // notification arrives, before there is any compositionstart to observe.
+    const seed = await ev(`(() => {
+      const ta = terminals.get(focusedPaneId).term.textarea;
+      const count = window.__sourceFocus.length;
+      ta.dispatchEvent(new InputEvent("beforeinput", {
+        inputType: "insertText", data: "ㅎ", bubbles: true, cancelable: true,
+      }));
+      const before = ta.value;
+      window.__stubEmit("mymux-mac-input-source-changed", null);
+      return { before, after: ta.value, focusEvents: window.__sourceFocus.length - count };
+    })()`);
+    check("source-change-preserves-first-jamo-seed",
+      seed.before === "ㅎ" && seed.after === "ㅎ" && seed.focusEvents === 0, seed);
+    await ev(KEY("a", 65));
+    const focusBeforeSwitch = await ev(`window.__sourceFocus.length`);
+    await switchSource();
+    check("source-change-resumes-after-ordinary-typing",
+      await ev(`window.__sourceFocus.length`) === focusBeforeSwitch + 2, {});
+    const imeKeyFocus = await ev(`(() => {
+      const ta = terminals.get(focusedPaneId).term.textarea;
+      ta.value = "a";
+      window.__ptyWrites.length = 0;
+      const count = window.__sourceFocus.length;
+      ta.dispatchEvent(new KeyboardEvent("keydown", {
+        key: "Process", keyCode: 229, bubbles: true, cancelable: true,
+      }));
+      window.__stubEmit("mymux-mac-input-source-changed", null);
+      return window.__sourceFocus.length - count;
+    })()`);
+    check("source-change-preserves-pending-ime-key", imeKeyFocus === 0, { imeKeyFocus });
+    await sleep(20);
+    const fallbackInput = await ev(`window.__ptyWrites.map(w => w.data).join("")`);
+    check("pending-ime-key-generates-no-deletion", fallbackInput === "", { fallbackInput });
+    const afterFallback = await ev(`window.__sourceFocus.length`);
+    await switchSource();
+    check("source-change-resumes-after-ime-key-settles",
+      await ev(`window.__sourceFocus.length`) === afterFallback + 2, {});
+    const keptField = await ev(`(() => {
+      const field = document.createElement("input");
+      document.body.append(field);
+      field.focus();
+      window.__stubEmit("mymux-mac-input-source-changed", null);
+      const kept = document.activeElement === field;
+      field.remove();
+      return kept;
+    })()`);
+    check("source-change-preserves-other-input-focus", keptField, {});
     if (h.errors.length) fail("page-errors", h.errors.slice(0, 3));
   } catch (e) {
     fail("harness-mac", String(e));

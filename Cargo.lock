@@ -3321,11 +3321,12 @@ dependencies = [
 
 [[package]]
 name = "mycli-desktop"
-version = "0.3.15"
+version = "0.3.16"
 dependencies = [
  "aes-gcm",
  "async-trait",
  "base64 0.22.1",
+ "block2",
  "cap-fs-ext",
  "cap-std",
  "dirs",
@@ -3334,6 +3335,8 @@ dependencies = [
  "image",
  "mycli-core",
  "objc2",
+ "objc2-app-kit",
+ "objc2-foundation",
  "portable-pty",
  "qrcode",
  "reqwest",

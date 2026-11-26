@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.3.16 - 2026-11-26
+
+### Fixed
+
+- On macOS, switching keyboard input sources now refreshes the focused terminal input field to address Hangul splitting into separate consonants and vowels after typing in English. A switch that arrives during composition preserves the syllable being entered.
+
 ## v0.3.15 - 2026-11-23
 
 ### Added
